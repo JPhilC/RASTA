@@ -1,0 +1,61 @@
+﻿<Window x:Class="RASTA.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RASTA.App"
+        mc:Ignorable="d"
+        Title="RASTA"
+        Width="1200" Height="800"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Sidebar -->
+        <StackPanel Grid.Column="0"
+                    Background="#1E1E1E"
+                    Margin="10"
+                    VerticalAlignment="Stretch">
+
+            <TextBlock Text="RASTA"
+                       Foreground="White"
+                       FontSize="28"
+                       FontWeight="Bold"
+                       Margin="10"/>
+
+            <Button Content="Prepare"
+                    Margin="5"
+                    Padding="10"
+                    Command="{Binding NavigatePrepareCommand}"/>
+
+            <Button Content="Plan"
+                    Margin="5"
+                    Padding="10"
+                    Command="{Binding NavigatePlanCommand}"/>
+
+            <Button Content="Observe"
+                    Margin="5"
+                    Padding="10"
+                    Command="{Binding NavigateObserveCommand}"/>
+
+            <Button Content="Process"
+                    Margin="5"
+                    Padding="10"
+                    Command="{Binding NavigateProcessCommand}"/>
+
+            <Button Content="Visualise"
+                    Margin="5"
+                    Padding="10"
+                    Command="{Binding NavigateVisualiseCommand}"/>
+        </StackPanel>
+
+        <!-- Main Content -->
+        <ContentControl Grid.Column="1"
+                        Content="{Binding CurrentViewModel}"
+                        Margin="10"/>
+    </Grid>
+</Window>

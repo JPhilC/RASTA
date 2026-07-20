@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="RASTA.App/RASTA.App.csproj" />
+  <Project Path="RASTA.Core/RASTA.Core.csproj" Id="c35f092b-7cb4-44c9-948b-6a965bbecba5" />
+  <Project Path="RASTA.Infrastructure/RASTA.Infrastructure.csproj" />
+  <Project Path="RASTA.Processing/RASTA.Processing.csproj" />
+  <Project Path="RASTA.Simulators/RASTA.Simulators.csproj" />
+  <Project Path="RASTA.Tests/RASTA.Tests.csproj" />
+</Solution>
