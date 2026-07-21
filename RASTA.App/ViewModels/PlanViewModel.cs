@@ -9,6 +9,8 @@ namespace RASTA.App.ViewModels;
 
 public partial class PlanViewModel : ObservableObject
 {
+    public SettingsViewModel Settings { get; }
+
     private readonly SweepPlanner _planner;
 
     [ObservableProperty]
@@ -17,9 +19,17 @@ public partial class PlanViewModel : ObservableObject
     [ObservableProperty]
     private List<TargetPoint>? plannedPoints;
 
-    public PlanViewModel(SweepPlanner planner)
+    public PlanViewModel(SweepPlanner planner, SettingsViewModel settings)
     {
         _planner = planner;
+        Settings = settings;
+
+        Range = new TargetRange
+        {
+            Mode = settings.CoordinateMode,
+            StepDeg = 5.0, // sensible default
+            DwellTime = TimeSpan.FromSeconds(1)
+        };
     }
 
     [RelayCommand]
@@ -28,6 +38,10 @@ public partial class PlanViewModel : ObservableObject
         if (Range is null)
             return;
 
+        // Ensure the range mode matches the current settings
+        Range.Mode = Settings.CoordinateMode;
+
         PlannedPoints = _planner.BuildSweep(Range).ToList();
     }
+
 }

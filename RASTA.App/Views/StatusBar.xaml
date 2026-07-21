@@ -1,0 +1,27 @@
+﻿<UserControl x:Class="RASTA.App.Views.StatusBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Border Background="#2D2D2D" Padding="8">
+        <DockPanel>
+
+            <!-- Telescope connection -->
+            <TextBlock Text="{Binding TelescopeStatus}"
+                       Foreground="White"
+                       Margin="10,0"
+                       DockPanel.Dock="Left"/>
+
+            <!-- Pointing -->
+            <TextBlock Text="{Binding PointingStatus}"
+                       Foreground="White"
+                       Margin="10,0"
+                       DockPanel.Dock="Left"/>
+
+            <!-- Capture -->
+            <TextBlock Text="{Binding CaptureStatus}"
+                       Foreground="White"
+                       Margin="10,0"
+                       DockPanel.Dock="Right"/>
+        </DockPanel>
+    </Border>
+</UserControl>

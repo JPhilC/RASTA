@@ -51,13 +51,15 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // ViewModels
             // ---------------------------------------------------------
+            services.AddSingleton<StatusBarViewModel>();
+            services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<PrepareViewModel>();
             services.AddSingleton<PlanViewModel>();
             services.AddSingleton<ObserveViewModel>();
             services.AddSingleton<ProcessViewModel>();
             services.AddSingleton<VisualiseViewModel>();
-            services.AddSingleton<NavigationViewModel>();
             services.AddSingleton<NavigationService>();
+            services.AddSingleton<NavigationViewModel>();
 
             Services = services.BuildServiceProvider();
 

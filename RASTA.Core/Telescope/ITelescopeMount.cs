@@ -6,6 +6,7 @@ public interface ITelescopeMount
 {
     Task ConnectAsync();
     Task DisconnectAsync();
+    Task<CoordinateMode> DetectCoordinateModeAsync();
     Task SlewToAzElAsync(double azDeg, double elDeg);
     Task SlewToRaDecAsync(double raHours, double decDeg);
     Task SlewToTargetAsync(TargetPoint target);

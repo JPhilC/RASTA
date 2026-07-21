@@ -2,40 +2,62 @@
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Services;
 
-public partial class NavigationViewModel : ObservableObject
+namespace RASTA.App.ViewModels
 {
-    private readonly NavigationService _nav;
-
-    [ObservableProperty]
-    private object? currentViewModel;
-
-    public NavigationViewModel(NavigationService nav)
+    public partial class NavigationViewModel : ObservableObject
     {
-        _nav = nav;
+        private readonly NavigationService _nav;
+
+        public SettingsViewModel Settings { get; }
+
+        public StatusBarViewModel StatusBarViewModel { get; }
+
+        [ObservableProperty]
+        private object? currentViewModel;
+
+        public NavigationViewModel(NavigationService nav, SettingsViewModel settings, StatusBarViewModel statusBarViewModel)
+        {
+            _nav = nav;
+            Settings = settings;
+            StatusBarViewModel = statusBarViewModel;
+        }
+
+        private void UpdateView() =>
+            CurrentViewModel = _nav.CurrentViewModel;
+
+        [RelayCommand]
+        private void NavigatePrepare()
+        {
+            _nav.NavigateTo<PrepareViewModel>();
+            UpdateView();
+        }
+
+        [RelayCommand]
+        private void NavigatePlan()
+        {
+            _nav.NavigateTo<PlanViewModel>();
+            UpdateView();
+        }
+
+        [RelayCommand]
+        private void NavigateObserve()
+        {
+            _nav.NavigateTo<ObserveViewModel>();
+            UpdateView();
+        }
+
+        [RelayCommand]
+        private void NavigateProcess()
+        {
+            _nav.NavigateTo<ProcessViewModel>();
+            UpdateView();
+        }
+
+        [RelayCommand]
+        private void NavigateVisualise()
+        {
+            _nav.NavigateTo<VisualiseViewModel>();
+            UpdateView();
+        }
     }
-
-    public void Navigate(object vm)
-    {
-        CurrentViewModel = vm;
-    }
-
-    [RelayCommand]
-    private void NavigatePrepare() =>
-        _nav.NavigateToPrepare();
-
-    [RelayCommand]
-    private void NavigatePlan() =>
-        _nav.NavigateToPlan();
-
-    [RelayCommand]
-    private void NavigateObserve() =>
-        _nav.NavigateToObserve();
-
-    [RelayCommand]
-    private void NavigateProcess() =>
-        _nav.NavigateToProcess();
-
-    [RelayCommand]
-    private void NavigateVisualise() =>
-        _nav.NavigateToVisualise();
 }

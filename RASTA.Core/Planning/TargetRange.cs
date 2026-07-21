@@ -1,35 +1,54 @@
 ﻿using System;
+using CommunityToolkit.Mvvm.ComponentModel;
 using RASTA.Core.Telescope;
 
 namespace RASTA.Core.Planning
 {
-    public class TargetRange
+    public partial class TargetRange : ObservableObject
     {
-        public CoordinateMode Mode { get; set; }
+        // Mode (Equatorial or AltAz)
+        [ObservableProperty]
+        private CoordinateMode mode;
 
-        // Alt/Az ranges
-        public double StartAzimuthDeg { get; set; }
-        public double EndAzimuthDeg { get; set; }
-        public double StartElevationDeg { get; set; }
-        public double EndElevationDeg { get; set; }
+        // Equatorial
+        [ObservableProperty]
+        private double rAStartHours;
 
-        // RA/Dec ranges
-        public double StartRightAscensionHours { get; set; }
-        public double EndRightAscensionHours { get; set; }
-        public double StartDeclinationDeg { get; set; }
-        public double EndDeclinationDeg { get; set; }
+        [ObservableProperty]
+        private double rAEndHours;
 
-        // Step size for sweeps
-        public double StepDegrees { get; set; }
+        [ObservableProperty]
+        private double decStartDeg;
+
+        [ObservableProperty]
+        private double decEndDeg;
+
+        // Horizontal
+        [ObservableProperty]
+        private double azimuthStartDeg;
+
+        [ObservableProperty]
+        private double azimuthEndDeg;
+
+        [ObservableProperty]
+        private double altitudeStartDeg;
+
+        [ObservableProperty]
+        private double altitudeEndDeg;
+
+        // Common
+        [ObservableProperty]
+        private double stepDeg;
 
         // Optional dwell time per point
-        public TimeSpan DwellTime { get; set; } = TimeSpan.FromSeconds(1);
+        [ObservableProperty]
+        private TimeSpan dwellTime = TimeSpan.FromSeconds(1);
 
         public override string ToString()
         {
-            return Mode == CoordinateMode.AltAz
-                ? $"AltAz Range: Az {StartAzimuthDeg}→{EndAzimuthDeg}, El {StartElevationDeg}→{EndElevationDeg}, Step {StepDegrees}°"
-                : $"Equatorial Range: RA {StartRightAscensionHours}→{EndRightAscensionHours}h, Dec {StartDeclinationDeg}→{EndDeclinationDeg}°, Step {StepDegrees}°";
+            return mode == CoordinateMode.AltAz
+                ? $"AltAz Range: Az {azimuthStartDeg}→{azimuthEndDeg}, El {altitudeStartDeg}→{altitudeEndDeg}, Step {stepDeg}°"
+                : $"Equatorial Range: RA {rAStartHours}→{rAEndHours}h, Dec {decStartDeg}→{decEndDeg}°, Step {stepDeg}°";
         }
     }
 }

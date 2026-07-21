@@ -10,8 +10,8 @@ namespace RASTA.Processing.Planning
     {
         public IEnumerable<TargetPoint> BuildSweep(TargetRange range)
         {
-            if (range.StepDegrees <= 0)
-                throw new ArgumentException("StepDegrees must be > 0.");
+            if (range.StepDeg <= 0)
+                throw new ArgumentException("StepSize must be > 0.");
 
             if (range.Mode == CoordinateMode.AltAz)
                 return BuildAltAzSweep(range);
@@ -23,9 +23,9 @@ namespace RASTA.Processing.Planning
         {
             var points = new List<TargetPoint>();
 
-            for (double el = range.StartElevationDeg; el <= range.EndElevationDeg; el += range.StepDegrees)
+            for (double el = range.AltitudeStartDeg; el <= range.AltitudeEndDeg; el += range.StepDeg)
             {
-                for (double az = range.StartAzimuthDeg; az <= range.EndAzimuthDeg; az += range.StepDegrees)
+                for (double az = range.AzimuthStartDeg; az <= range.AzimuthEndDeg; az += range.StepDeg)
                 {
                     points.Add(new TargetPoint
                     {
@@ -43,9 +43,9 @@ namespace RASTA.Processing.Planning
         {
             var points = new List<TargetPoint>();
 
-            for (double dec = range.StartDeclinationDeg; dec <= range.EndDeclinationDeg; dec += range.StepDegrees)
+            for (double dec = range.DecStartDeg; dec <= range.DecEndDeg; dec += range.StepDeg)
             {
-                for (double ra = range.StartRightAscensionHours; ra <= range.EndRightAscensionHours; ra += DegreesToHours(range.StepDegrees))
+                for (double ra = range.RAStartHours; ra <= range.RAEndHours; ra += DegreesToHours(range.StepDeg))
                 {
                     points.Add(new TargetPoint
                     {

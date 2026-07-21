@@ -6,13 +6,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <StartupObject>RASTA.App.App</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
     <Folder Include="Controls\" />
-    <Folder Include="Converters\" />
     <Folder Include="Styles\" />
-    <Folder Include="Views\" />
   </ItemGroup>
 
   <ItemGroup>

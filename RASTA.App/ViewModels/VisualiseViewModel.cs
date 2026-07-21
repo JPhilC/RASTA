@@ -6,6 +6,8 @@ using RASTA.Core.Capture;
 using RASTA.Processing.VisualisationData;
 using RASTA.Processing.Gridding;
 
+namespace RASTA.App.ViewModels;
+
 public partial class VisualiseViewModel : ObservableObject
 {
     private readonly SpectrumImageBuilder _spectrumBuilder;

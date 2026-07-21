@@ -11,13 +11,12 @@ namespace RASTA.App
         {
             InitializeComponent();
 
-            var nav = App.Services.GetRequiredService<NavigationService>();
             var navigationVM = App.Services.GetRequiredService<NavigationViewModel>();
 
             DataContext = navigationVM;
 
             // Default page
-            nav.NavigateToPrepare();
+            navigationVM.NavigatePrepareCommand.Execute(null);
         }
     }
 }

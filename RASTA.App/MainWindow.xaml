@@ -4,19 +4,25 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RASTA.App"
+        xmlns:views="clr-namespace:RASTA.App.Views"
         mc:Ignorable="d"
         Title="RASTA"
         Width="1200" Height="800"
         WindowStartupLocation="CenterScreen">
 
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="40"/>
+        </Grid.RowDefinitions>
+        
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="220"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <!-- Sidebar -->
-        <StackPanel Grid.Column="0"
+        <StackPanel Grid.Column="0" Grid.Row="0"
                     Background="#1E1E1E"
                     Margin="10"
                     VerticalAlignment="Stretch">
@@ -54,8 +60,13 @@
         </StackPanel>
 
         <!-- Main Content -->
-        <ContentControl Grid.Column="1"
+        <ContentControl Grid.Column="1" Grid.Row="0"
                         Content="{Binding CurrentViewModel}"
                         Margin="10"/>
+
+        <!-- Status Bar -->
+        <views:StatusBar Grid.ColumnSpan="2"
+                     Grid.Row="1"
+                     DataContext="{Binding StatusBarViewModel}"/>
     </Grid>
 </Window>

@@ -5,6 +5,8 @@ using RASTA.Core.Capture;
 using RASTA.Processing.Spectral;
 using RASTA.Infrastructure.Logging;
 
+namespace RASTA.App.ViewModels;
+
 public partial class PrepareViewModel : ObservableObject
 {
     private readonly SpectrumMath _math;
