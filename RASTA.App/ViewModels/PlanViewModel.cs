@@ -26,7 +26,7 @@ public partial class PlanViewModel : ObservableObject
 
         Range = new TargetRange
         {
-            Mode = settings.CoordinateMode,
+            Mode = settings.Mode,
             StepDeg = 5.0, // sensible default
             DwellTime = TimeSpan.FromSeconds(1)
         };
@@ -39,7 +39,7 @@ public partial class PlanViewModel : ObservableObject
             return;
 
         // Ensure the range mode matches the current settings
-        Range.Mode = Settings.CoordinateMode;
+        Range.Mode = Settings.Mode;
 
         PlannedPoints = _planner.BuildSweep(Range).ToList();
     }

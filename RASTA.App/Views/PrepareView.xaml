@@ -3,17 +3,80 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:wpf="clr-namespace:System.Windows;assembly=PresentationCore"
              mc:Ignorable="d">
 
     <Grid Margin="10">
-        <StackPanel>
-
-            <TextBlock Text="Prepare (Calibration)"
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Column="0" Grid.Row="0">
+            <TextBlock Text="Telescope"
                        FontSize="24"
                        FontWeight="Bold"
                        Margin="0 0 0 20"/>
 
-            <Button Content="Build Calibration"
+            <Button Content="Connect"
+                Width="200"
+                Height="40"
+                Command="{Binding ConnectTelescopeCommand}"
+                Visibility="{Binding IsConnected, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter={x:Static wpf:Visibility.Visible}}"/>
+
+            <Button Content="Disconnect"
+                Width="200"
+                Height="40"
+                Command="{Binding DisconnectTelescopeCommand}"
+                    Visibility="{Binding IsConnected, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter={x:Static wpf:Visibility.Collapsed}}"/>
+
+        </StackPanel>
+        <!-- Site location details -->
+        <Grid Grid.Column="1" Grid.Row="0"
+                        Visibility="{Binding IsConnected, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter={x:Static wpf:Visibility.Collapsed}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <TextBlock  Grid.Column="0" Grid.Row="0" Grid.ColumnSpan="2"
+                Text="Site Location"
+                           FontSize="24"
+                           FontWeight="Bold"
+                           Margin="0 0 0 20"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="1" Text="Latitude (deg)"/>
+            <TextBox Grid.Column="1" Grid.Row="1" Width="100"
+                             Text="{Binding SiteLatitudeDeg}"
+                             Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="2" Text="Longitude (deg)"/>
+            <TextBox Grid.Column="1" Grid.Row="2" Width="100"
+                             Text="{Binding SiteLongitudeDeg}"
+                             Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="3" Text="Elevation (m)"/>
+            <TextBox Grid.Column="1" Grid.Row="3" Width="100"
+                             Text="{Binding SiteElevationM}"
+                             Margin="5,0,0,5"/>
+        </Grid>
+
+        <StackPanel Grid.Column="0" Grid.Row="1">
+            <TextBlock Text="Calibration"
+                       FontSize="24"
+                       FontWeight="Bold"
+                       Margin="0 0 0 20"/>
+
+            <Button Content="Calibrate"
                     Width="200"
                     Height="40"
                     Command="{Binding BuildCalibrationCommand}"/>

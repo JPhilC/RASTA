@@ -27,12 +27,7 @@ namespace RASTA.Processing.Planning
             {
                 for (double az = range.AzimuthStartDeg; az <= range.AzimuthEndDeg; az += range.StepDeg)
                 {
-                    points.Add(new TargetPoint
-                    {
-                        Mode = CoordinateMode.AltAz,
-                        AzimuthDeg = az,
-                        ElevationDeg = el
-                    });
+                    points.Add(TargetPoint.FromAzEl(CoordinateMode.AltAz, az, el));
                 }
             }
 
@@ -47,12 +42,7 @@ namespace RASTA.Processing.Planning
             {
                 for (double ra = range.RAStartHours; ra <= range.RAEndHours; ra += DegreesToHours(range.StepDeg))
                 {
-                    points.Add(new TargetPoint
-                    {
-                        Mode = CoordinateMode.Equatorial,
-                        RightAscensionHours = ra,
-                        DeclinationDeg = dec
-                    });
+                    points.Add(TargetPoint.FromRaDec(CoordinateMode.Equatorial, ra, dec));
                 }
             }
 

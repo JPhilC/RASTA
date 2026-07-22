@@ -27,16 +27,16 @@ namespace RASTA.App
             // ---------------------------------------------------------
             services.AddSingleton(new RastaLogger("Logs/rasta.log"));
 
-            // Telescope + SDR (you will replace these with real implementations)
-            services.AddSingleton<ITelescopeMount>(provider =>
-            {
-                // Alpaca Remote default port is 11111
-                // Telescope device 0 is the first telescope
-                string alpacaBaseUrl = "http://localhost:11111/api/v1/telescope/0";
+            // -----------------------------------------
+            // Alpaca Client (session-wide)
+            // -----------------------------------------
+            services.AddSingleton<AscomAlpacaClient>();
 
-                return new AscomTelescopeMount(alpacaBaseUrl);
-            });
-            
+            // -----------------------------------------
+            // Telescope Mount (session-wide)
+            // -----------------------------------------
+            services.AddSingleton<ITelescopeMount, AscomTelescopeMount>();
+
             services.AddSingleton<ObservationCaptureService>();
 
             // ---------------------------------------------------------

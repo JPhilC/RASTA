@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:RASTA.App"
         xmlns:views="clr-namespace:RASTA.App.Views"
         mc:Ignorable="d"
-        Title="RASTA"
+        Title="R.A.S.T.A."
         Width="1200" Height="800"
         WindowStartupLocation="CenterScreen">
 
@@ -27,11 +27,16 @@
                     Margin="10"
                     VerticalAlignment="Stretch">
 
-            <TextBlock Text="RASTA"
+            <TextBlock Text="R.A.S.T.A."
                        Foreground="White"
                        FontSize="28"
                        FontWeight="Bold"
-                       Margin="10"/>
+                       Margin="10,10,10,0"/>
+            <TextBlock Text="Radio Astronomy Slew Track Acquire"
+                       Foreground="White"
+                       FontSize="10"
+                       FontWeight="Bold"
+                       Margin="10,5"/>
 
             <Button Content="Prepare"
                     Margin="5"

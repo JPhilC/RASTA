@@ -1,22 +1,45 @@
 ﻿using RASTA.Core.Telescope;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace RASTA.Core.Capture
 {
     public class TargetPoint
     {
-        public CoordinateMode Mode { get; set; }
+        public CoordinateMode Mode { get; }
 
-        // Alt/Az
-        public double AzimuthDeg { get; set; }
-        public double ElevationDeg { get; set; }
+        // Equatorial
+        public double RightAscensionHours { get; }
+        public double DeclinationDeg { get; }
 
-        // RA/Dec
-        public double RightAscensionHours { get; set; }
-        public double DeclinationDeg { get; set; }
+        // AltAz
+        public double AzimuthDeg { get; }
+        public double ElevationDeg { get; }
+
+        private TargetPoint(CoordinateMode mode,
+                            double raHours,
+                            double decDeg,
+                            double azDeg,
+                            double elDeg)
+        {
+            Mode = mode;
+
+            RightAscensionHours = raHours;
+            DeclinationDeg = decDeg;
+
+            AzimuthDeg = azDeg;
+            ElevationDeg = elDeg;
+        }
+
+        // Factory for Equatorial
+        public static TargetPoint FromRaDec(CoordinateMode mode, double raHours, double decDeg)
+        {
+            return new TargetPoint(mode, raHours, decDeg, double.NaN, double.NaN);
+        }
+
+        // Factory for AltAz
+        public static TargetPoint FromAzEl(CoordinateMode mode, double azDeg, double elDeg)
+        {
+            return new TargetPoint(mode, double.NaN, double.NaN, azDeg, elDeg);
+        }
     }
+
 }
