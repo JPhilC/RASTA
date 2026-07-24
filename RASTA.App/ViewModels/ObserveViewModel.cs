@@ -180,7 +180,7 @@ public partial class ObserveViewModel : ObservableObject
             double freqMHz = 1420.4058;
             double sampleRateHz = 2_048_000;
             double gainDb = _device.SupportedGainsDb.Last();
-            TimeSpan dwell = TimeSpan.FromSeconds(5);
+            TimeSpan dwell = TimeSpan.FromSeconds(15);
 
             string file = await _capture.CaptureRawIqToFitsAsync(
                 frequencyHz: freqMHz * 1_000_000,

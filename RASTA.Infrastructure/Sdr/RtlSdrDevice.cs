@@ -85,21 +85,7 @@ public sealed class RtlSdrDevice : ISdrDevice
             // Start async reader
             _device.StartReadSamplesAsync();
 
-            var tcs = new TaskCompletionSource<bool>();
-
-            // Stop after dwell time OR cancellation
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                    tcs.TrySetResult(true);
-                }
-                catch
-                {
-                    tcs.TrySetCanceled();
-                }
-            });
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             _device.SamplesAvailable += (sender, args) =>
             {
@@ -123,10 +109,9 @@ public sealed class RtlSdrDevice : ISdrDevice
                 }
             };
 
-            // Sleep the thread for 5 seconds before stopping the sample reading.
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
-
-            await tcs.Task;
+            // Wait until buffer is full, with a timeout of dwell + 5s safety margin
+            var dwellTimeout = TimeSpan.FromSeconds((double)sampleCount / sampleRateHz + 5.0);
+            await tcs.Task.WaitAsync(dwellTimeout, ct);
 
             return output;
         }

@@ -73,13 +73,19 @@ namespace RASTA.Infrastructure.Storage
             if (rawIq == null || rawIq.Length == 0)
                 throw new InvalidOperationException("RAW IQ buffer is empty — capture failed.");
 
-            // Reshape into byte[samples][2]
-            int NumSamples = rawIq.Length / 2;
-            var jaggedIq = new byte[NumSamples][];
-            for (int s = 0; s < NumSamples; s++)
+            // Reshape into byte[2][samples] — I-plane and Q-plane as two large arrays.
+            // This avoids allocating millions of tiny byte[2] objects (one per sample)
+            // which causes severe GC pressure and prevents memory recovery after the write.
+            // NOTE: data is stored as planar (I0..IN, Q0..QN), not interleaved. ReadRawIq re-interleaves on load.
+            int numSamples = rawIq.Length / 2;
+            var iSamples = new byte[numSamples];
+            var qSamples = new byte[numSamples];
+            for (int s = 0; s < numSamples; s++)
             {
-                jaggedIq[s] = new byte[] { rawIq[s * 2], rawIq[s * 2 + 1] };
+                iSamples[s] = rawIq[s * 2];
+                qSamples[s] = rawIq[s * 2 + 1];
             }
+            var jaggedIq = new byte[][] { iSamples, qSamples };
 
             // --- Write -------------------------------------------------------
             Fits fitsOut = new Fits();
@@ -114,8 +120,15 @@ namespace RASTA.Infrastructure.Storage
                 if (meta.DataFormat == null || meta.DataFormat != "UINT8_IQ")
                     throw new InvalidOperationException($"Invalid FITS file format: {meta.DataFormat}. Expected 'UINT8_IQ'.");
 
-                // Read the data
-                var rawIq = (byte[])ArrayFuncs.Flatten(hdus[0].Data.Kernel);
+                // Read the data — stored as planar byte[2][N] (I-plane, Q-plane), re-interleave to I0Q0I1Q1...
+                var flat = (byte[])ArrayFuncs.Flatten(hdus[0].Data.Kernel);
+                int numSamples = flat.Length / 2;
+                var rawIq = new byte[flat.Length];
+                for (int s = 0; s < numSamples; s++)
+                {
+                    rawIq[s * 2]     = flat[s];
+                    rawIq[s * 2 + 1] = flat[s + numSamples];
+                }
                 return (meta, rawIq);
             }
             finally
