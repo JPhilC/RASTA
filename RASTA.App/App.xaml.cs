@@ -1,16 +1,19 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using System;
-using System.Windows;
+using RASTA.App.Services;
 using RASTA.App.ViewModels;
+using RASTA.Core.Sdr;
+using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Logging;
-using RASTA.Processing.Spectral;
-using RASTA.Processing.VisualisationData;
+using RASTA.Infrastructure.Sdr;
+using RASTA.Infrastructure.Telescope;
+using RASTA.Infrastructure.Storage;
+using RASTA.Processing.Capture;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.Planning;
-using RASTA.Processing.Capture;
-using RASTA.Core.Telescope;
-using RASTA.Infrastructure.Telescope;
-using RASTA.App.Services;
+using RASTA.Processing.Spectral;
+using RASTA.Processing.VisualisationData;
+using System;
+using System.Windows;
 
 namespace RASTA.App
 {
@@ -38,6 +41,12 @@ namespace RASTA.App
             services.AddSingleton<ITelescopeMount, AscomTelescopeMount>();
 
             services.AddSingleton<ObservationCaptureService>();
+            // -----------------------------------------
+            // SDR Device (session-wide)
+            // -----------------------------------------
+            services.AddSingleton<ISdrDevice, RtlSdrDevice>();
+            services.AddSingleton<FitsFileIo>();
+            services.AddSingleton<SdrRawCaptureService>();
 
             // ---------------------------------------------------------
             // Processing

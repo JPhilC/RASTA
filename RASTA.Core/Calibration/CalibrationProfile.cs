@@ -1,11 +1,13 @@
 ﻿namespace RASTA.Core.Calibration;
 
-public class CalibrationProfile
+public sealed class CalibrationProfile
 {
-    public DateTime TimestampUtc { get; set; }
-    public double[] NoiseSpectrum { get; set; }
-    public double GainFactor { get; set; }
-    public int FftSize { get; set; }
-    public double SampleRateHz { get; set; }
-    public double CenterFrequencyHz { get; set; }
+    public DateTime TimestampUtc { get; init; }
+    public double CenterFrequencyHz { get; init; }
+    public double SampleRateHz { get; init; } 
+    public uint FftSize { get; init; }
+    public double GainDb { get; init; }
+    public double GainFactor { get; init; }
+    public double[]? NoiseSpectrum { get; init; } = null;
 }
+

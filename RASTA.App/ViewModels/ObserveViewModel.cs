@@ -1,15 +1,19 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.App.Services;
 using RASTA.Core.Capture;
+using RASTA.Core.Sdr;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Capture;
+using System.Windows;
 
 namespace RASTA.App.ViewModels;
 
 public partial class ObserveViewModel : ObservableObject
 {
     private readonly ITelescopeMount _mount;
-    private readonly ObservationCaptureService _capture;
+    private readonly SdrRawCaptureService _capture;
+    private readonly ISdrDevice _device;
 
     [ObservableProperty]
     private ObservationRecord? lastObservation;
@@ -37,10 +41,12 @@ public partial class ObserveViewModel : ObservableObject
 
     public ObserveViewModel(
         ITelescopeMount mount,
-        ObservationCaptureService capture)
+        ISdrDevice device,
+        SdrRawCaptureService capture)
     {
         _mount = mount;
         _capture = capture;
+        _device = device;
     }
 
     // -------------------------------------------------------
@@ -158,34 +164,38 @@ public partial class ObserveViewModel : ObservableObject
         }
     }
 
-    //// -------------------------------------------------------
-    //// Capture observation
-    //// -------------------------------------------------------
+    // -------------------------------------------------------
+    // Capture observation
+    // -------------------------------------------------------
 
-    //[RelayCommand]
-    //private async Task StartObservationAsync()
-    //{
-    //    if (!_mount.IsConnected)
-    //        return;
+    [ObservableProperty]
+    private string? lastCapturePath;
 
-    //    try
-    //    {
-    //        isBusy = true;
+    [RelayCommand]
+    private async Task TestRawCaptureAsync()
+    {
+        try
+        {
+            // Example hydrogen-line test capture
+            double freqMHz = 1420.4058;
+            double sampleRateHz = 2_048_000;
+            double gainDb = _device.SupportedGainsDb.Last();
+            TimeSpan dwell = TimeSpan.FromSeconds(5);
 
-    //        // Read current pointing
-    //        var az = await _mount.GetAzimuthDegAsync();
-    //        var el = await _mount.GetAltitudeDegAsync();
+            string file = await _capture.CaptureRawIqToFitsAsync(
+                frequencyHz: freqMHz * 1_000_000,
+                sampleRateHz: sampleRateHz,
+                gainDb: gainDb,
+                dwell: dwell,
+                ct: CancellationToken.None);
 
-    //        var target = TargetPoint.FromAzEl(_mount.Mode, az, el);
+            LastCapturePath = file;
 
-    //        lastObservation = await _capture.CaptureAsync(
-    //            target,
-    //            TimeSpan.FromSeconds(30),
-    //            CancellationToken.None);
-    //    }
-    //    finally
-    //    {
-    //        isBusy = false;
-    //    }
-    //}
+            MessageBox.Show($"RAW IQ saved:\n{file}", "Capture Complete");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Capture Error");
+        }
+    }
 }

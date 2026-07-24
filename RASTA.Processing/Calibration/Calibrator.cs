@@ -1,51 +1,97 @@
-﻿using RASTA.Core.Calibration;
+﻿using System;
+using System.Linq;
+using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
+using RASTA.Core.Calibration;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
-namespace RASTA.Processing.Calibration;
 
-public class Calibrator
+namespace RASTA.Processing.Calibration
 {
-    private readonly ISdrDevice _sdr;
-    private readonly IFftEngine _fft;
-
-    public async Task<CalibrationProfile> RunAsync(
-        double centerFreqHz,
-        double sampleRateHz,
-        int gain,
-        TimeSpan duration,
-        int fftSize,
-        CancellationToken ct)
+    public sealed class Calibrator
     {
-        _sdr.Configure(centerFreqHz, sampleRateHz, gain);
+        private readonly ISdrDevice _sdr;
+        private readonly IFftEngine _fft;
 
-        int blocksNeeded = (int)(duration.TotalSeconds * sampleRateHz / fftSize);
-        var accumulator = new double[fftSize];
-        int count = 0;
-
-        await foreach (var block in _sdr.CaptureBlocksAsync(fftSize, ct))
+        public Calibrator(ISdrDevice sdr, IFftEngine fft)
         {
-            var spectrum = _fft.PowerSpectrum(block);
-            for (int i = 0; i < fftSize; i++)
-                accumulator[i] += spectrum[i];
-
-            if (++count >= blocksNeeded)
-                break;
+            _sdr = sdr;
+            _fft = fft;
         }
 
-        for (int i = 0; i < fftSize; i++)
-            accumulator[i] /= count;
-
-        double avgNoise = accumulator.Average();
-        double gainFactor = 1.0 / avgNoise;
-
-        return new CalibrationProfile
+        public async Task<CalibrationProfile> RunAsync(
+            double centerFreqHz,
+            double sampleRateHz,
+            double gainDb,
+            TimeSpan duration,
+            uint fftSize,
+            CancellationToken ct)
         {
-            TimestampUtc = DateTime.UtcNow,
-            CenterFrequencyHz = centerFreqHz,
-            SampleRateHz = sampleRateHz,
-            FftSize = fftSize,
-            NoiseSpectrum = accumulator,
-            GainFactor = gainFactor
-        };
+
+            // Total samples required for the calibration duration
+            uint totalSamples = (uint)(sampleRateHz * duration.TotalSeconds);
+
+            // Number of FFT blocks to average
+            uint blocksNeeded = (uint)(totalSamples / fftSize);
+
+            var accumulator = new double[fftSize];
+            uint count = 0;
+
+            // -----------------------------
+            // 2. Capture FFT blocks
+            // -----------------------------
+            while (count < blocksNeeded)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                // Capture fftSize IQ samples → 2*fftSize bytes
+                var rawIq = await _sdr.CaptureRawIqAsync(centerFreqHz, sampleRateHz, gainDb, fftSize, ct);
+
+                // Convert RAW IQ → Complex[]
+                var block = new Complex[fftSize];
+                for (int i = 0; i < fftSize; i++)
+                {
+                    double iSample = rawIq[2 * i] - 128;
+                    double qSample = rawIq[2 * i + 1] - 128;
+                    block[i] = new Complex(iSample, qSample);
+                }
+
+                // FFT → power spectrum
+                var spectrum = _fft.PowerSpectrum(block);
+
+                // Accumulate
+                for (int i = 0; i < fftSize; i++)
+                    accumulator[i] += spectrum[i];
+
+                count++;
+            }
+
+            // -----------------------------
+            // 3. Average noise spectrum
+            // -----------------------------
+            for (int i = 0; i < fftSize; i++)
+                accumulator[i] /= count;
+
+            // -----------------------------
+            // 4. Compute gain factor
+            // -----------------------------
+            double avgNoise = accumulator.Average();
+            double gainFactor = 1.0 / avgNoise;
+
+            // -----------------------------
+            // 5. Build calibration profile
+            // -----------------------------
+            return new CalibrationProfile
+            {
+                TimestampUtc = DateTime.UtcNow,
+                CenterFrequencyHz = centerFreqHz,
+                SampleRateHz = sampleRateHz,
+                FftSize = fftSize,
+                NoiseSpectrum = accumulator,
+                GainFactor = gainFactor,
+                GainDb = gainDb
+            };
+        }
     }
 }

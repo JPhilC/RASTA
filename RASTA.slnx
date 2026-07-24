@@ -1,8 +1,32 @@
 <Solution>
-  <Project Path="RASTA.App/RASTA.App.csproj" />
-  <Project Path="RASTA.Core/RASTA.Core.csproj" Id="c35f092b-7cb4-44c9-948b-6a965bbecba5" />
-  <Project Path="RASTA.Infrastructure/RASTA.Infrastructure.csproj" />
-  <Project Path="RASTA.Processing/RASTA.Processing.csproj" />
-  <Project Path="RASTA.Simulators/RASTA.Simulators.csproj" />
-  <Project Path="RASTA.Tests/RASTA.Tests.csproj" />
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="RASTA.App/RASTA.App.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
+  <Project Path="RASTA.Core/RASTA.Core.csproj" Id="c35f092b-7cb4-44c9-948b-6a965bbecba5">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
+  <Project Path="RASTA.Infrastructure/RASTA.Infrastructure.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
+  <Project Path="RASTA.Processing/RASTA.Processing.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
+  <Project Path="RASTA.Simulators/RASTA.Simulators.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Build Solution="*|x64" Project="false" />
+    <Build Solution="Debug|Any CPU" Project="false" />
+  </Project>
+  <Project Path="RASTA.Tests/RASTA.Tests.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Build Solution="*|x64" Project="false" />
+    <Build Solution="Debug|Any CPU" Project="false" />
+  </Project>
 </Solution>

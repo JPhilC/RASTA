@@ -6,7 +6,11 @@
              mc:Ignorable="d">
 
     <Grid Margin="10">
-        <StackPanel>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+            <StackPanel>
 
             <TextBlock Text="Observe (Capture)"
                        FontSize="24"
@@ -34,6 +38,25 @@
             <TextBlock Text="{Binding LastObservation.Metadata.Pointing.ElevationDeg,
                               StringFormat=El: {0}}"/>
 
+        </StackPanel>
+        <StackPanel Grid.Row="1">
+
+            <TextBlock Text="Test" 
+                       FontSize="24"
+                       FontWeight="Bold"
+                       Margin="0 0 0 20"/>
+
+            <Button Content="Test RAW Capture"
+                    Width="180"
+                    Height="40"
+                    Command="{Binding TestRawCaptureCommand}" />
+
+            <TextBlock Text="Last Capture:"
+                       Margin="0 20 0 5"
+                       FontWeight="SemiBold"/>
+
+            <TextBlock Text="{Binding LastCapturePath}"
+                       TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
 </UserControl>
