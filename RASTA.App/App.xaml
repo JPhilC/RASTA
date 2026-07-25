@@ -13,6 +13,7 @@
             <converters:EquatorialVisibilityConverter x:Key="EquatorialVisibilityConverter"/>
             <converters:AltAzVisibilityConverter x:Key="AltAzVisibilityConverter"/>
             <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+            <converters:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

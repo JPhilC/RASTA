@@ -101,6 +101,10 @@ public class AscomTelescopeMount : ITelescopeMount
             ("TrackingRate", rate.ToString(CultureInfo.InvariantCulture)));
     }
 
+    public Task ParkAsync() => _client.PutAsync("park");
+
+    public Task UnParkAsync() => _client.PutAsync("unpark");
+
     public async Task SetSiderealTrackingAsync()
     {
         await SetTrackingAsync(true);

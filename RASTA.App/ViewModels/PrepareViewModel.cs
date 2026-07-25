@@ -5,6 +5,7 @@ using RASTA.Core.Capture;
 using RASTA.Infrastructure.Logging;
 using RASTA.Processing.Spectral;
 using System.ComponentModel;
+using RASTA.App.Services;
 
 namespace RASTA.App.ViewModels;
 
@@ -13,6 +14,7 @@ public partial class PrepareViewModel : ObservableObject
     private readonly SpectrumMath _math;
     private readonly RastaLogger _logger;
     private readonly SettingsViewModel _settings;
+    private readonly TelescopeService _telescopeService;
 
     [ObservableProperty]
     private CalibrationProfile? calibration;
@@ -21,11 +23,11 @@ public partial class PrepareViewModel : ObservableObject
     private bool isCalibrated;
 
     #region Pass through properties to SettingsViewModel ...
-    public bool IsConnected 
+    public bool IsConnected
     {
         get => _settings.IsConnected;
     }
-    
+
     public double SiteLatitudeDeg
     {
         get => _settings.SiteLatitudeDeg;
@@ -43,14 +45,18 @@ public partial class PrepareViewModel : ObservableObject
         get => _settings.SiteElevationM;
         set => _settings.SiteElevationM = value;
     }
-    
     #endregion
 
-    public PrepareViewModel(SpectrumMath math, RastaLogger logger, SettingsViewModel settings)
+    public PrepareViewModel(
+        SpectrumMath math,
+        RastaLogger logger,
+        SettingsViewModel settings,
+        TelescopeService telescopeService)
     {
         _math = math;
         _logger = logger;
         _settings = settings;
+        _telescopeService = telescopeService;
 
         _settings.PropertyChanged += SettingsOnPropertyChanged;
     }
@@ -74,13 +80,37 @@ public partial class PrepareViewModel : ObservableObject
             case nameof(SettingsViewModel.IsConnected):
                 OnPropertyChanged(nameof(IsConnected));
                 break;
-
-                // Add more if needed
         }
     }
 
-    public IRelayCommand ConnectTelescopeCommand => _settings.ConnectTelescopeCommand;
-    public IRelayCommand DisconnectTelescopeCommand => _settings.DisconnectTelescopeCommand;
+    // ---------------------------------------------------------
+    // Connect / Disconnect telescope + start/stop telemetry
+    // ---------------------------------------------------------
+
+    [RelayCommand]
+    private async Task ConnectTelescopeAsync()
+    {
+        await _settings.ConnectTelescopeAsync();
+
+        if (_settings.IsConnected)
+        {
+            _telescopeService.Start();
+            _logger.Info("Telescope telemetry started.");
+        }
+    }
+
+    [RelayCommand]
+    private async Task DisconnectTelescopeAsync()
+    {
+        await _settings.DisconnectTelescopeAsync();
+
+        _telescopeService.Stop();
+        _logger.Info("Telescope telemetry stopped.");
+    }
+
+    // ---------------------------------------------------------
+    // Calibration
+    // ---------------------------------------------------------
 
     [RelayCommand]
     private void BuildCalibration(ObservationRecord noiseRecord)

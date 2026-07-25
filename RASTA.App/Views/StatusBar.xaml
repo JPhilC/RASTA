@@ -12,7 +12,7 @@
                        DockPanel.Dock="Left"/>
 
             <!-- Pointing -->
-            <TextBlock Text="{Binding PointingStatus}"
+            <TextBlock Text="{Binding CoordinateStatus}"
                        Foreground="White"
                        Margin="10,0"
                        DockPanel.Dock="Left"/>

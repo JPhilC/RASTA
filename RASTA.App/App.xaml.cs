@@ -30,6 +30,11 @@ namespace RASTA.App
             // ---------------------------------------------------------
             services.AddSingleton(new RastaLogger("Logs/rasta.log"));
 
+            // ---------------------------------------------------------
+            // Shared telescope state (required!)
+            // ---------------------------------------------------------
+            services.AddSingleton<TelescopeState>();
+
             // -----------------------------------------
             // Alpaca Client (session-wide)
             // -----------------------------------------
@@ -38,9 +43,21 @@ namespace RASTA.App
             // -----------------------------------------
             // Telescope Mount (session-wide)
             // -----------------------------------------
-            services.AddSingleton<ITelescopeMount, AscomTelescopeMount>();
+            services.AddSingleton<ITelescopeMount>(provider =>
+            {
+                var alpaca = provider.GetRequiredService<AscomAlpacaClient>();
+                return new AscomTelescopeMount(alpaca);
+            });
+            // -----------------------------------------
+            // Telescope telemetry service (session-wide)
+            // -----------------------------------------
+            services.AddSingleton<TelescopeService>();
 
+            // -----------------------------------------
+            // Radio capture pipeline (session-wide)
+            // -----------------------------------------
             services.AddSingleton<ObservationCaptureService>();
+
             // -----------------------------------------
             // SDR Device (session-wide)
             // -----------------------------------------
@@ -74,5 +91,6 @@ namespace RASTA.App
 
             base.OnStartup(e);
         }
+
     }
 }

@@ -1,0 +1,120 @@
+RASTA.sln
+│
+├── RASTA.App                 # WPF UI (Views, ViewModels, DI, Styles)
+│   ├── Controls
+│   │
+│   ├── Converters
+│   │   ├── BooleanToVisibilityConverter.cs
+│   │   └── CoordinateToStringConverter.cs
+│   │
+│   ├── Resources
+│   │   └── ViewTemplates.xaml
+│   │
+│   ├── Selectors
+│   │   └── TargetPointTemplateSelector.xaml
+│   │
+│   ├── Services
+│   │   ├── NavigationService.cs
+│   │   ├── SdrRawCaptureService.cs
+│   │   └── TelescopeService.cs
+│   │
+│   ├── Styles
+│   │   └── Theme.xaml
+│   │
+│   ├── ViewModels
+│   │   ├── NavigationViewModel.cs
+│   │   ├── ObserveViewModel.cs
+│   │   ├── PlanViewModel.cs
+│   │   ├── PrepareViewModel.cs
+│   │   ├── ProcessViewModel.cs
+│   │   ├── SettingsViewModel.cs
+│   │   ├── StatusBarViewModel.cs
+│   │   └── VisualiseViewModel.cs
+│   │
+│   ├── Views
+│   │   ├── ObserveView.xaml
+│   │   ├── PlanView.xaml
+│   │   ├── PrepareView.xaml
+│   │   ├── ProcessView.xaml
+│   │   ├── StatusBar.xaml
+│   │   └── VisualiseView.xaml
+│   │
+│   ├── App.xaml
+│   ├── App.xaml.cs
+│   └── MainWindow.xaml
+│
+├── RASTA.Core                # Domain models + interfaces
+│   ├── Telescope
+│   │   ├── CoordinateMode.cs
+│   │   ├── ITelescopeMount.cs
+│   │   ├── TelescopePosition.cs
+│   │   └── TelescopeState.cs
+│   │
+│   ├── Sdr
+│   │   └── ISdrDevice.cs
+│   │
+│   ├── Calibration
+│   │   └── CalibrationProfile.cs
+│   │
+│   ├── Capture
+│   │   ├── TargetPoint.cs
+│   │   ├── ObservationMetadata.cs
+│   │   └── ObservationRecord.cs
+│   │
+│   ├── Planning
+│   │   └── TargetRange.cs
+│   │
+│   ├── Processing
+│   │   └── IFftEngine.cs
+│   │
+│   └── Storage
+│       └── IObservationStorage.cs
+│
+├── RASTA.Infrastructure       # Hardware + storage implementations
+│   ├── Telescope
+│   │   ├── AscomAlpacaClient.cs
+│   │   └── AscomTelescopeMount.cs        # Alpaca client
+│   │
+│   ├── Sdr
+│   │   └── RtlSdrDevice.cs
+│   │
+│   ├── Fft
+│   │   └── FftEngine.cs
+│   │
+│   ├── Storage
+│   │   ├── FitsFileIo
+│   │   └── JsonObservationStorage.cs
+│   │
+│   └── Logging
+│       └── RastaLogger.cs
+│
+├── RASTA.Processing           # DSP + post-processing
+│   ├── Calibration
+│   │   └── Calibrator.cs
+│   │
+│   ├── Capture
+│   │   └── ObservationCaptureService.cs
+│   │
+│   ├── Planning
+│   │   └── SweepPlanner.cs
+│   │
+│   ├── Spectral
+│   │   └── SpectrumMath.cs
+│   │
+│   ├── Gridding
+│   │   └── GridBuilder.cs
+│   │
+│   └── VisualisationData
+│       ├── HeatmapBuilder.cs
+│       └── SpectrumImageBuilder.cs
+│
+├── RASTA.Tests                # NUnit tests
+│   ├── TelescopeTests.cs
+│   ├── CalibrationTests.cs
+│   ├── CaptureTests.cs
+│   ├── FftTests.cs
+│   └── ProcessingTests.cs
+│
+└── RASTA.Simulators           # Optional: simulated mount + SDR
+    ├── SimulatedTelescope.cs
+    └── SimulatedSdrDevice.cs

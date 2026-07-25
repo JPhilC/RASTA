@@ -36,6 +36,9 @@ public interface ITelescopeMount
     Task<bool> GetAtHomeAsync();
     Task<bool> GetAtParkAsync();
 
+    Task ParkAsync();
+    Task UnParkAsync();
+
     // Slewing
     Task SlewToRaDecAsync(double raHours, double decDeg);
     Task SlewToAzAltAsync(double azDeg, double altDeg);
