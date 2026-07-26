@@ -107,7 +107,9 @@ Render spectra, surfaces, drift‑scan maps, and hydrogen‑line features.
 ## 📈 Current Status
 
 RASTA is in active, exploratory development.  
-Major components already exist, but many are incomplete or experimental.
+Major components already exist, but many are incomplete or experimental. 
+The application will connect and disconnect to an ASCOM Telescope Mount via the ASCOM Remote Server. If the telescope is Parked you are given the option of unparking (and also the option to park again when you disconnect.
+It will as respond to plugging and unplugging an RTL-SDR device (tested with a Nooelec NESDR SMArtee V5). An SDR device must be plugged in to enable the Plan View (which is the most complete view at the moment).
 
 ---
 
