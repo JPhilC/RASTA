@@ -6,5 +6,7 @@
         public string Manufacturer { get; init; } = "";
         public string Product { get; init; } = "";
         public string Serial { get; init; } = "";
+
+        public string DeviceId => $"{Manufacturer} {Product} ({Serial})";
     }
 }

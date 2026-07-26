@@ -2,7 +2,6 @@
 
 public interface ISdrDevice : IAsyncDisposable
 {
-
     // -----------------------------
     // RAW IQ capture (true RAW)
     // -----------------------------
@@ -24,6 +23,7 @@ public interface ISdrDevice : IAsyncDisposable
     double ActualFrequencyHz { get; }
     double ActualSampleRateHz { get; }  
     string TunerType { get; }
+    string DeviceId { get; }
 
     // -----------------------------
     // Optional advanced features

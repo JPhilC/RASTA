@@ -46,6 +46,7 @@ namespace RASTA.App.ViewModels
                     // Update command state on UI thread
                     Application.Current.Dispatcher.Invoke(() =>
                     {
+                        NavigatePlanCommand.NotifyCanExecuteChanged();
                         NavigateObserveCommand.NotifyCanExecuteChanged();
                     });
                 }
@@ -64,7 +65,7 @@ namespace RASTA.App.ViewModels
             UpdateView();
         }
 
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanObserve))]
         private void NavigatePlan()
         {
             CurrentSection = NavigationSection.Plan;

@@ -61,6 +61,12 @@ namespace RASTA.App
             });
 
             // ---------------------------------------------------------
+            // Planning service (session-wide)
+            // ---------------------------------------------------------
+            services.AddSingleton<SweepPlanner>();
+            services.AddSingleton<IPlanRepository, JsonPlanRepository>();
+
+            // ---------------------------------------------------------
             // Telescope telemetry service (session-wide)
             // ---------------------------------------------------------
             services.AddSingleton<TelescopeService>();

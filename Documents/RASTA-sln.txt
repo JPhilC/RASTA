@@ -5,7 +5,15 @@ RASTA.sln
 │   │
 │   ├── Converters
 │   │   ├── BooleanToVisibilityConverter.cs
-│   │   └── CoordinateToStringConverter.cs
+│   │   ├── BooleanToBrushConverter.cs
+│   │   ├── CoordinateToStringConverter.cs
+DriftVisibilityConverter.cs
+EquatorialOrAltAzVisibilityConverter.cs
+PlanTypeToVisibilityConverter.cs
+│   │   └── InverseBooleanToVisibilityConverter.cs
+│   │
+│   ├── Helpers
+│   │   └── PlanTypeEnumHelper
 │   │
 │   ├── Resources
 │   │   └── ViewTemplates.xaml
@@ -54,12 +62,14 @@ RASTA.sln
 │   │
 │   ├── Sdr
 │   │   ├── ISdrDevice.cs
+│   │   ├── SdrDeviceDescriptor.cs
 │   │   └── SdrState.cs
 │   │
 │   ├── Calibration
 │   │   └── CalibrationProfile.cs
 │   │
 │   ├── Capture
+│   │   ├── CapturePlan
 │   │   ├── TargetPoint.cs
 │   │   ├── ObservationMetadata.cs
 │   │   └── ObservationRecord.cs
@@ -71,7 +81,8 @@ RASTA.sln
 │   │   └── IFftEngine.cs
 │   │
 │   └── Storage
-│       └── IObservationStorage.cs
+│       ├── IObservationStorage.cs
+│       └── IPlanRepository.cs
 │
 ├── RASTA.Infrastructure       # Hardware + storage implementations
 │   ├── Telescope
@@ -86,7 +97,8 @@ RASTA.sln
 │   │
 │   ├── Storage
 │   │   ├── FitsFileIo
-│   │   └── JsonObservationStorage.cs
+│   │   ├── JsonObservationStorage.cs
+│   │   └── JsonPlanRepository.cs
 │   │
 │   └── Logging
 │       └── RastaLogger.cs

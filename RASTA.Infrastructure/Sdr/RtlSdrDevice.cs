@@ -22,6 +22,8 @@ public sealed class RtlSdrDevice : ISdrDevice
     public double ActualSampleRateHz => _actualSampleRateHz;
     public string TunerType => _tunerType;
 
+    public string DeviceId => _tunerType;
+
     public RtlSdrDevice()
     {
         // Probe device once to populate supported gains

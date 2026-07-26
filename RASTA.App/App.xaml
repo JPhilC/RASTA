@@ -15,6 +15,9 @@
             <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
             <converters:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
             <converters:BooleanToBrushConverter x:Key="BooleanToBrushConverter"/>
+            <converters:EquatorialOrAltAzVisibilityConverter x:Key="EquatorialOrAltAzVisibilityConverter"/>
+            <converters:DriftVisibilityConverter x:Key="DriftVisibilityConverter"/>
+            <converters:PlanTypeToVisibilityConverter x:Key="PlanTypeToVisibilityConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

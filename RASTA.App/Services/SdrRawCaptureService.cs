@@ -43,7 +43,7 @@ namespace RASTA.App.Services
             // -----------------------------
             string baseDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "R.A.S.T.A",
+                "RASTA",
                 "RawIqData",
                 $"{frequencyHz / 1_000_000:F4}MHz",
                 timestamp.ToString("yyyy-MM-dd"));

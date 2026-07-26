@@ -14,32 +14,24 @@ namespace RASTA.Core.Capture
         public double AzimuthDeg { get; }
         public double ElevationDeg { get; }
 
-        private TargetPoint(CoordinateMode mode,
+        public TargetPoint(CoordinateMode mode,
                             double raHours,
                             double decDeg,
                             double azDeg,
                             double elDeg)
         {
             Mode = mode;
-
             RightAscensionHours = raHours;
             DeclinationDeg = decDeg;
-
             AzimuthDeg = azDeg;
             ElevationDeg = elDeg;
         }
 
-        // Factory for Equatorial
-        public static TargetPoint FromRaDec(CoordinateMode mode, double raHours, double decDeg)
-        {
-            return new TargetPoint(mode, raHours, decDeg, double.NaN, double.NaN);
-        }
+        public static TargetPoint FromRaDec(double raHours, double decDeg)
+            => new TargetPoint(CoordinateMode.Equatorial, raHours, decDeg, double.NaN, double.NaN);
 
-        // Factory for AltAz
-        public static TargetPoint FromAzEl(CoordinateMode mode, double azDeg, double elDeg)
-        {
-            return new TargetPoint(mode, double.NaN, double.NaN, azDeg, elDeg);
-        }
+        public static TargetPoint FromAzEl(double azDeg, double elDeg)
+            => new TargetPoint(CoordinateMode.AltAz, double.NaN, double.NaN, azDeg, elDeg);
     }
 
 }

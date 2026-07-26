@@ -3,139 +3,294 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:helpers="clr-namespace:RASTA.App.Helpers"
+             xmlns:converters="clr-namespace:RASTA.App.Converters"
              xmlns:selectors="clr-namespace:RASTA.App.Selectors"
              mc:Ignorable="d">
+
     <UserControl.Resources>
 
-        <!-- Equatorial template -->
+        <!-- Sweep point templates -->
         <DataTemplate x:Key="EquatorialPointTemplate">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+            <StackPanel Orientation="Horizontal">
                 <TextBlock Text="{Binding RightAscensionHours, StringFormat=RA: {0:F2}h}" Margin="0 5 20 0"/>
                 <TextBlock Text="{Binding DeclinationDeg, StringFormat=Dec: {0:F2}°}" Margin="0 5 0 0"/>
             </StackPanel>
         </DataTemplate>
 
-        <!-- AltAz template -->
         <DataTemplate x:Key="AltAzPointTemplate">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+            <StackPanel Orientation="Horizontal">
                 <TextBlock Text="{Binding AzimuthDeg, StringFormat=Az: {0:F1}°}" Margin="0 10 20 0"/>
                 <TextBlock Text="{Binding ElevationDeg, StringFormat=Alt: {0:F1}°}" Margin="0 5 0 0"/>
             </StackPanel>
         </DataTemplate>
 
-        <!-- Template selector -->
-        <selectors:TargetPointTemplateSelector x:Key="TargetPointSelector"
-                                           EquatorialTemplate="{StaticResource EquatorialPointTemplate}"
-                                           AltAzTemplate="{StaticResource AltAzPointTemplate}"/>
+        <selectors:TargetPointTemplateSelector
+            x:Key="TargetPointSelector"
+            EquatorialTemplate="{StaticResource EquatorialPointTemplate}"
+            AltAzTemplate="{StaticResource AltAzPointTemplate}" />
 
     </UserControl.Resources>
 
-
     <Grid Margin="10">
-        <StackPanel>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="3*"/>
+            <ColumnDefinition Width="2*"/>
+        </Grid.ColumnDefinitions>
 
-            <TextBlock Text="Plan (Sweep Builder)"
+        <!-- LEFT SIDE: PLAN EDITOR -->
+        <ScrollViewer Grid.Column="0"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <TextBlock Text="Plan Editor"
                        FontSize="24"
                        FontWeight="Bold"
                        Margin="0 0 0 20"/>
 
-            <TextBlock Text="Target Range"
-                       FontWeight="Bold"/>
+                <!-- Friendly Name -->
+                <TextBlock Text="Friendly Name" FontWeight="Bold"/>
+                <TextBox Text="{Binding FriendlyName}" Width="300" Margin="0 10 0 20"/>
 
-            <StackPanel Orientation="Horizontal" Margin="0 10 0 10">
+                <!-- Plan Type -->
+                <TextBlock Text="Plan Type" FontWeight="Bold"/>
+                <ComboBox Width="200"
+                      SelectedItem="{Binding PlanType}"
+                      ItemsSource="{Binding Source={x:Static helpers:PlanTypeEnum.Values}}"
+                      Margin="0 10 0 20"/>
 
-                <!-- RA/Dec -->
-                <StackPanel Margin="0 0 20 0" 
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource EquatorialVisibilityConverter}}">
-                    <TextBlock Text="RA Start (hours)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.RAStartHours}"/>
+                <!-- SWEEP GEOMETRY (Equatorial or AltAz) -->
+                <StackPanel Visibility="{Binding PlanType, Converter={StaticResource EquatorialOrAltAzVisibilityConverter}}">
+
+                    <TextBlock Text="Sweep Geometry" FontWeight="Bold"/>
+
+
+                    <StackPanel Orientation="Horizontal" 
+                                Margin="0 5 0 0"
+                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+
+                        <!-- RA/Dec -->
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="RA Start (hours)"/>
+                            <TextBox Width="120" Text="{Binding Range.RAStartHours}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="RA End (hours)"/>
+                            <TextBox Width="120" Text="{Binding Range.RAEndHours}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" 
+                                Margin="0 5 0 0"
+                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="Dec Start (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.DecStartDeg}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="Dec End (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.DecEndDeg}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <!-- Az/El -->
+                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
+                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
+
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="Az Start (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.AzimuthStartDeg}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="Az End (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.AzimuthEndDeg}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
+                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="El Start (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.AltitudeStartDeg}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="El End (deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.AltitudeEndDeg}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <!-- Step size -->
+                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0">
+                        <StackPanel Margin="0 0 20 0">
+                            <TextBlock Text="Step Size (Deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.StepDeg}"/>
+                        </StackPanel>
+                    </StackPanel>
+
                 </StackPanel>
 
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource EquatorialVisibilityConverter}}">
-                    <TextBlock Text="RA End (hours)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.RAEndHours}"/>
+                <!--<Button Content="Build Sweep"
+                        Width="200"
+                        Height="40"
+                        Command="{Binding BuildSweepCommand}"
+                        Margin="0 20 0 20"/>-->
+
+            <!-- DRIFT SCAN -->
+            <StackPanel Margin="0 20 0 0 " 
+                Visibility="{Binding PlanType, Converter={StaticResource DriftVisibilityConverter}}">
+                <TextBlock Text="Drift Scan Parameters" FontWeight="Bold"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Declination (deg)"/>
+                        <TextBox Width="120" Text="{Binding DriftDeclinationDeg}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Duration (min)"/>
+                        <TextBox Width="120" Text="{Binding DriftDurationMinutes}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Cadence (sec)"/>
+                        <TextBox Width="120" Text="{Binding DriftCadenceSeconds}"/>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- CAPTURE PARAMETERS -->
+            <TextBlock Text="Capture Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+            <StackPanel Orientation="Vertical" Margin="0 0 0 10">
+                <StackPanel Orientation="Horizontal">
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Dwell Time (sec)"/>
+                        <TextBox Width="120" Text="{Binding DwellSeconds}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Sample Rate (Hz)"/>
+                        <TextBox Width="120" Text="{Binding SampleRate}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Center Frequency (Hz)"/>
+                        <TextBox Width="160" Text="{Binding CenterFrequency}"/>
+                    </StackPanel>
                 </StackPanel>
 
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource EquatorialVisibilityConverter}}">
-                    <TextBlock Text="Dec Start (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.DecStartDeg}"/>
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Margin="0,5,20,0">
+                        <TextBlock Text="FFT Bins"/>
+                        <TextBox Width="120" Text="{Binding FftBins}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Integrations"/>
+                        <TextBox Width="120" Text="{Binding Integrations}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Gain"/>
+                        <TextBox Width="120" Text="{Binding Gain}"/>
+                    </StackPanel>
+
+                </StackPanel>
+            </StackPanel>
+
+            <!-- TELESCOPE PARAMETERS -->
+            <TextBlock Text="Telescope Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Settle Time (sec)"/>
+                    <TextBox Width="120" Text="{Binding SettleTimeSeconds}"/>
                 </StackPanel>
 
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource EquatorialVisibilityConverter}}">
-                    <TextBlock Text="Dec End (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.DecEndDeg}"/>
-                </StackPanel>
-
-
-                <!-- Azimuth/Altitude -->
-                <StackPanel Margin="0 0 20 0" 
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource AltAzVisibilityConverter}}">
-                    <TextBlock Text="Azimuth Start (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.AzimuthStartDeg}"/>
-                </StackPanel>
-
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource AltAzVisibilityConverter}}">
-                    <TextBlock Text="Azimuth End (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.AzimuthEndDeg}"/>
-                </StackPanel>
-
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource AltAzVisibilityConverter}}">
-                    <TextBlock Text="Altitude Start (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.AltitudeStartDeg}"/>
-                </StackPanel>
-
-                <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.Mode,
-                                Converter={StaticResource AltAzVisibilityConverter}}">
-                    <TextBlock Text="Altitude End (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.AltitudeEndDeg}"/>
-                </StackPanel>
-
-
-                <!-- Step size -->
-                <StackPanel>
-                    <TextBlock Text="Step Size (deg)"/>
-                    <TextBox Width="120"
-                             Text="{Binding Range.StepDeg}"/>
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Tracking Enabled"/>
+                    <CheckBox IsChecked="{Binding TrackingEnabled}"/>
                 </StackPanel>
 
             </StackPanel>
 
-            <Button Content="Build Sweep"
+            <!-- OUTPUT PARAMETERS -->
+            <TextBlock Text="Output" FontWeight="Bold" Margin="0 20 0 0"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Output Folder"/>
+                    <TextBox Width="200" Text="{Binding OutputFolder}"/>
+                </StackPanel>
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="File Prefix"/>
+                    <TextBox Width="120" Text="{Binding FilePrefix}"/>
+                </StackPanel>
+
+            </StackPanel>
+
+            <!-- SAVE PLAN -->
+            <Button Content="Save Plan"
                     Width="200"
                     Height="40"
-                    Command="{Binding BuildSweepCommand}"/>
+                    Command="{Binding SavePlanCommand}"
+                    Margin="0 20 0 0"/>
 
-            <TextBlock Text="Planned Points:"
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- RIGHT SIDE: SAVED PLANS -->
+        <ScrollViewer Grid.Column="1" 
+                      Margin="20 0 0 0" 
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Auto">
+            <StackPanel >
+
+                <TextBlock Text="Saved Plans"
+                       FontSize="20"
                        FontWeight="Bold"
-                       Margin="0 20 0 5"/>
+                       Margin="0 0 0 10"/>
 
-            <ItemsControl ItemsSource="{Binding PlannedPoints}"
-              ItemTemplateSelector="{StaticResource TargetPointSelector}"/>
+                <ListView ItemsSource="{Binding SavedPlans}"
+                      SelectedItem="{Binding SelectedSavedPlan}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding FriendlyName}" FontWeight="Bold"/>
+                                <TextBlock Text="{Binding PlanType}"/>
+                                <TextBlock Text="{Binding Points.Count, StringFormat=Points: {0}}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
 
+                <StackPanel Orientation="Horizontal" Margin="0 10 0 0">
+                    <Button Content="Load"
+                        Command="{Binding LoadPlanCommand}"
+                        CommandParameter="{Binding SelectedSavedPlan}"
+                        Width="80"/>
 
+                    <Button Content="Copy"
+                        Command="{Binding CopyPlanCommand}"
+                        CommandParameter="{Binding SelectedSavedPlan}"
+                        Width="80" Margin="10 0 0 0"/>
 
+                    <Button Content="Delete"
+                        Command="{Binding DeletePlanCommand}"
+                        CommandParameter="{Binding SelectedSavedPlan}"
+                        Width="80" Margin="10 0 0 0"/>
+                </StackPanel>
 
-        </StackPanel>
+                <Button Content="New Plan"
+                    Command="{Binding NewPlanCommand}"
+                    Width="200"
+                    Margin="0 20 0 0"/>
+
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </UserControl>
