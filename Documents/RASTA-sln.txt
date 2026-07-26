@@ -7,9 +7,9 @@ RASTA.sln
 │   │   ├── BooleanToVisibilityConverter.cs
 │   │   ├── BooleanToBrushConverter.cs
 │   │   ├── CoordinateToStringConverter.cs
-DriftVisibilityConverter.cs
-EquatorialOrAltAzVisibilityConverter.cs
-PlanTypeToVisibilityConverter.cs
+│   │   ├── DriftVisibilityConverter.cs
+│   │   ├── EquatorialOrAltAzVisibilityConverter.cs
+│   │   ├── PlanTypeToVisibilityConverter.cs
 │   │   └── InverseBooleanToVisibilityConverter.cs
 │   │
 │   ├── Helpers
