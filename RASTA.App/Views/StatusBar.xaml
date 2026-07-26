@@ -3,25 +3,96 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Border Background="#2D2D2D" Padding="8">
-        <DockPanel>
+        <Grid>
 
-            <!-- Telescope connection -->
-            <TextBlock Text="{Binding TelescopeStatus}"
-                       Foreground="White"
-                       Margin="10,0"
-                       DockPanel.Dock="Left"/>
+            <!-- Responsive 3‑column layout -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <!-- separator -->
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <!-- separator -->
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-            <!-- Pointing -->
-            <TextBlock Text="{Binding CoordinateStatus}"
-                       Foreground="White"
-                       Margin="10,0"
-                       DockPanel.Dock="Left"/>
+            <!-- ========================= -->
+            <!--  Telescope Section        -->
+            <!-- ========================= -->
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Left"
+                        Margin="10,0">
 
-            <!-- Capture -->
-            <TextBlock Text="{Binding CaptureStatus}"
-                       Foreground="White"
-                       Margin="10,0"
-                       DockPanel.Dock="Right"/>
-        </DockPanel>
+                <!-- Connection dot -->
+                <Ellipse Width="10" Height="10"
+                         Margin="0,0,8,0"
+                         Fill="{Binding TelescopeConnected, Converter={StaticResource BooleanToBrushConverter}}"/>
+
+                <TextBlock Text="Telescope:"
+                           Foreground="LightGray"
+                           FontWeight="Bold"
+                           Margin="0,0,10,0"/>
+
+                <TextBlock Text="{Binding TelescopeStatus}"
+                           Foreground="White"
+                           Margin="0,0,20,0"/>
+
+                <TextBlock Text="{Binding CoordinateStatus}"
+                           Foreground="White"/>
+            </StackPanel>
+
+            <!-- Separator -->
+            <Border Grid.Column="1"
+                    Width="1"
+                    Background="#444"
+                    Margin="10,0"/>
+
+            <!-- ========================= -->
+            <!--  SDR Section              -->
+            <!-- ========================= -->
+            <StackPanel Grid.Column="2"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        Margin="10,0">
+
+                <!-- Connection dot -->
+                <Ellipse Width="10" Height="10"
+                         Margin="0,0,8,0"
+                         Fill="{Binding SdrConnected, Converter={StaticResource BooleanToBrushConverter}}"/>
+
+                <TextBlock Text="SDR:"
+                           Foreground="LightGray"
+                           FontWeight="Bold"
+                           Margin="0,0,10,0"/>
+
+                <TextBlock Text="{Binding SdrStatus}"
+                           Foreground="White"/>
+            </StackPanel>
+
+            <!-- Separator -->
+            <Border Grid.Column="3"
+                    Width="1"
+                    Background="#444"
+                    Margin="10,0"/>
+
+            <!-- ========================= -->
+            <!--  Observing Section        -->
+            <!-- ========================= -->
+            <StackPanel Grid.Column="4"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="10,0">
+
+                <TextBlock Text="Observe:"
+                           Foreground="LightGray"
+                           FontWeight="Bold"
+                           Margin="0,0,10,0"/>
+
+                <TextBlock Text="{Binding CaptureStatus}"
+                           Foreground="White"/>
+            </StackPanel>
+
+        </Grid>
     </Border>
 </UserControl>

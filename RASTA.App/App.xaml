@@ -14,6 +14,7 @@
             <converters:AltAzVisibilityConverter x:Key="AltAzVisibilityConverter"/>
             <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
             <converters:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
+            <converters:BooleanToBrushConverter x:Key="BooleanToBrushConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

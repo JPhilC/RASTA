@@ -101,7 +101,7 @@ namespace RASTA.App.ViewModels
         // -------------------------------
 
         [ObservableProperty]
-        private CoordinateMode mode = CoordinateMode.Equatorial;
+        private CoordinateMode mode = CoordinateMode.Unknown;
 
         partial void OnModeChanged(CoordinateMode value)
         {

@@ -2,6 +2,7 @@
 
 public enum CoordinateMode
 {
+    Unknown,
     AltAz,
     Equatorial
 }

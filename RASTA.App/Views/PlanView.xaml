@@ -46,7 +46,7 @@
 
                 <!-- RA/Dec -->
                 <StackPanel Margin="0 0 20 0" 
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource EquatorialVisibilityConverter}}">
                     <TextBlock Text="RA Start (hours)"/>
                     <TextBox Width="120"
@@ -54,7 +54,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource EquatorialVisibilityConverter}}">
                     <TextBlock Text="RA End (hours)"/>
                     <TextBox Width="120"
@@ -62,7 +62,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource EquatorialVisibilityConverter}}">
                     <TextBlock Text="Dec Start (deg)"/>
                     <TextBox Width="120"
@@ -70,7 +70,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource EquatorialVisibilityConverter}}">
                     <TextBlock Text="Dec End (deg)"/>
                     <TextBox Width="120"
@@ -80,7 +80,7 @@
 
                 <!-- Azimuth/Altitude -->
                 <StackPanel Margin="0 0 20 0" 
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource AltAzVisibilityConverter}}">
                     <TextBlock Text="Azimuth Start (deg)"/>
                     <TextBox Width="120"
@@ -88,7 +88,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource AltAzVisibilityConverter}}">
                     <TextBlock Text="Azimuth End (deg)"/>
                     <TextBox Width="120"
@@ -96,7 +96,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource AltAzVisibilityConverter}}">
                     <TextBlock Text="Altitude Start (deg)"/>
                     <TextBox Width="120"
@@ -104,7 +104,7 @@
                 </StackPanel>
 
                 <StackPanel Margin="0 0 20 0"
-                            Visibility="{Binding Settings.CoordinateMode,
+                            Visibility="{Binding Settings.Mode,
                                 Converter={StaticResource AltAzVisibilityConverter}}">
                     <TextBlock Text="Altitude End (deg)"/>
                     <TextBox Width="120"

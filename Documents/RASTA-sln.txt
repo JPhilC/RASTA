@@ -16,6 +16,8 @@ RASTA.sln
 │   ├── Services
 │   │   ├── NavigationService.cs
 │   │   ├── SdrRawCaptureService.cs
+│   │   ├── SdrDeviceService.cs
+│   │   ├── UsbWatcherService.cs
 │   │   └── TelescopeService.cs
 │   │
 │   ├── Styles
@@ -51,7 +53,8 @@ RASTA.sln
 │   │   └── TelescopeState.cs
 │   │
 │   ├── Sdr
-│   │   └── ISdrDevice.cs
+│   │   ├── ISdrDevice.cs
+│   │   └── SdrState.cs
 │   │
 │   ├── Calibration
 │   │   └── CalibrationProfile.cs

@@ -35,35 +35,43 @@ namespace RASTA.App
             // ---------------------------------------------------------
             services.AddSingleton<TelescopeState>();
 
-            // -----------------------------------------
+            // ---------------------------------------------------------
+            // Shared SDR state (required!)
+            // ---------------------------------------------------------
+            services.AddSingleton<SdrState>();
+
+            // ---------------------------------------------------------
+            // SDR services
+            // ---------------------------------------------------------
+            services.AddSingleton<SdrDeviceService>();
+            services.AddSingleton<UsbWatcherService>();   // auto-starts when resolved
+
+            // ---------------------------------------------------------
             // Alpaca Client (session-wide)
-            // -----------------------------------------
+            // ---------------------------------------------------------
             services.AddSingleton<AscomAlpacaClient>();
 
-            // -----------------------------------------
+            // ---------------------------------------------------------
             // Telescope Mount (session-wide)
-            // -----------------------------------------
+            // ---------------------------------------------------------
             services.AddSingleton<ITelescopeMount>(provider =>
             {
                 var alpaca = provider.GetRequiredService<AscomAlpacaClient>();
                 return new AscomTelescopeMount(alpaca);
             });
-            // -----------------------------------------
+
+            // ---------------------------------------------------------
             // Telescope telemetry service (session-wide)
-            // -----------------------------------------
+            // ---------------------------------------------------------
             services.AddSingleton<TelescopeService>();
 
-            // -----------------------------------------
+            // ---------------------------------------------------------
             // Radio capture pipeline (session-wide)
-            // -----------------------------------------
-            services.AddSingleton<ObservationCaptureService>();
-
-            // -----------------------------------------
-            // SDR Device (session-wide)
-            // -----------------------------------------
+            // ---------------------------------------------------------
             services.AddSingleton<ISdrDevice, RtlSdrDevice>();
             services.AddSingleton<FitsFileIo>();
             services.AddSingleton<SdrRawCaptureService>();
+            services.AddSingleton<ObservationCaptureService>();
 
             // ---------------------------------------------------------
             // Processing
@@ -87,6 +95,9 @@ namespace RASTA.App
             services.AddSingleton<NavigationService>();
             services.AddSingleton<NavigationViewModel>();
 
+            // ---------------------------------------------------------
+            // Build provider
+            // ---------------------------------------------------------
             Services = services.BuildServiceProvider();
 
             base.OnStartup(e);

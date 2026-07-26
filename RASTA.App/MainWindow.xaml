@@ -9,13 +9,24 @@
         Title="R.A.S.T.A."
         Width="1200" Height="800"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <Style x:Key="NavButtonBaseStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Background" Value="#2D2D2D"/>
+            <Setter Property="BorderBrush" Value="#2D2D2D"/>
+            <Setter Property="Padding" Value="10"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="FontSize" Value="16"/>
+        </Style>
+    </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="40"/>
         </Grid.RowDefinitions>
-        
+
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="220"/>
             <ColumnDefinition Width="*"/>
@@ -41,27 +52,85 @@
             <Button Content="Prepare"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigatePrepareCommand}"/>
-
+                    Command="{Binding NavigatePrepareCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Prepare">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
             <Button Content="Plan"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigatePlanCommand}"/>
-
+                    Command="{Binding NavigatePlanCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Plan">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
             <Button Content="Observe"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigateObserveCommand}"/>
+                    Command="{Binding NavigateObserveCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Observe">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
 
             <Button Content="Process"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigateProcessCommand}"/>
+                    Command="{Binding NavigateProcessCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Process">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
 
             <Button Content="Visualise"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigateVisualiseCommand}"/>
+                    Command="{Binding NavigateVisualiseCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Visualise">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
         </StackPanel>
 
         <!-- Main Content -->

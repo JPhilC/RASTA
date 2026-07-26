@@ -1,4 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
+using MathNet.Numerics.Providers.SparseSolver;
+using RASTA.Core.Sdr;
+using RASTA.Core.Telescope;
 
 namespace RASTA.App.ViewModels
 {
@@ -12,6 +15,37 @@ namespace RASTA.App.ViewModels
 
         [ObservableProperty]
         private string captureStatus = "Idle";
+
+        private readonly TelescopeState _telescopeState;
+        private readonly SdrState _sdrState;
+
+        public string SdrStatus =>
+        !_sdrState.IsConnected
+            ? "No SDR Device Found"
+            : $"SDR: {_sdrState.SelectedDevice?.Product ?? "Unknown Device"}";
+
+        public bool TelescopeConnected => _telescopeState.IsConnected;
+
+        public bool SdrConnected => _sdrState.IsConnected;
+
+        public StatusBarViewModel(TelescopeState telescopeState, SdrState sdrState)
+        {
+            _sdrState = sdrState;
+            _telescopeState = telescopeState;
+
+            // React to SDR state changes
+            _sdrState.PropertyChanged += (_, __) =>
+            {
+                OnPropertyChanged(nameof(SdrConnected));
+                OnPropertyChanged(nameof(SdrStatus));
+            };
+
+            // React to Telescope state changes
+            _telescopeState.PropertyChanged += (_, __) =>
+            {
+                OnPropertyChanged(nameof(TelescopeConnected));
+            };
+        }
 
         public void UpdateEquatorial(double raHours, double decDeg)
         {

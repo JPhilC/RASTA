@@ -1,36 +1,52 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace RASTA.Core.Telescope
 {
-    public class TelescopeState
+    public partial class TelescopeState: ObservableObject
     {
-        public bool IsConnected { get; set; }
+        [ObservableProperty]
+        private bool isConnected;
 
-        public double RightAscensionHours { get; set; }
-        public double DeclinationDeg { get; set; }
+        [ObservableProperty]
+        private double rightAscensionHours;
 
-        public double AzimuthDeg { get; set; }
-        public double ElevationDeg  { get; set; }
+        [ObservableProperty]
+        private double declinationDeg;
 
-        public double SiteLatitudeDeg { get; set; }
-        public double SiteLongitudeDeg { get; set; }
-        public double SiteElevationM { get; set; }
+        [ObservableProperty]    
+        private double azimuthDeg;
+        [ObservableProperty]
+        private double elevationDeg ;
 
-        public CoordinateMode Mode { get; set; }
+        [ObservableProperty]
+        private double siteLatitudeDeg;
+        
+        [ObservableProperty]
+        private double siteLongitudeDeg;
+        
+        [ObservableProperty]
+        private double siteElevationM;
+        
+        [ObservableProperty]
+        private CoordinateMode mode;
 
-        public bool TrackingEnabled { get; set; }
-        public int TrackingRate { get; set; }
+        [ObservableProperty]
+        private bool trackingEnabled;
+        [ObservableProperty]
+        private int trackingRate;
 
-        public bool IsSlewing { get; set; }
-        public bool IsParked { get; set; }
+        [ObservableProperty]
+        private bool isSlewing;
+        [ObservableProperty]
+        private bool isParked;
 
-        public bool IsParking { get; set; }
+        [ObservableProperty]
+        private bool isParking;
 
         public bool WasParkedOnConnect { get; set; }
 
-        public bool IsHome { get; set; }
+        [ObservableProperty]
+        private bool isHome;
 
     }
 

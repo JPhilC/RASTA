@@ -4,6 +4,7 @@ using RASTA.Core.Capture;
 using RASTA.Core.Planning;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Planning;
+using System.ComponentModel;
 
 namespace RASTA.App.ViewModels;
 
@@ -23,6 +24,7 @@ public partial class PlanViewModel : ObservableObject
     {
         _planner = planner;
         Settings = settings;
+        Settings.PropertyChanged += SettingsOnPropertyChanged;
 
         Range = new TargetRange
         {
@@ -31,6 +33,16 @@ public partial class PlanViewModel : ObservableObject
             DwellTime = TimeSpan.FromSeconds(1)
         };
     }
+
+    private void SettingsOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.Mode))
+        {
+            // Notify the UI that Settings.CoordinateMode changed
+            OnPropertyChanged(nameof(Settings));
+        }
+    }
+
 
     [RelayCommand]
     private void BuildSweep()
