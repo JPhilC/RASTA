@@ -17,7 +17,7 @@ public partial class PrepareViewModel : ViewModelBase
     private readonly TelescopeService _telescopeService;
     private readonly SdrDeviceService _sdrDeviceService;
     private readonly SdrState _sdrState;
-    private readonly Calibrator _calibrator;
+    private readonly CalibrationService _calibrationService;
 
     #region Properties ...
     // -----------------------------
@@ -119,14 +119,14 @@ public partial class PrepareViewModel : ViewModelBase
         TelescopeService telescopeService,
         SdrDeviceService sdrDeviceService,
         SdrState sdrState,
-        Calibrator calibrator,
+        CalibrationService calibrationService,
         RastaLogger logger)
     {
         _settings = settings;
         _telescopeService = telescopeService;
         _sdrDeviceService = sdrDeviceService;
         _sdrState = sdrState;
-        _calibrator = calibrator;
+        _calibrationService = calibrationService;
         _logger = logger;
 
         _sdrState.PropertyChanged += SdrStatePropertyChanged;
@@ -291,18 +291,18 @@ public partial class PrepareViewModel : ViewModelBase
 
         try
         {
-            Calibration = await _calibrator.RunFullCalibrationAsync(
-                device,
-                frequencyHz,
-                sampleRateHz,
-                dwell,
-                fftSize,
-                (msg, pct) =>
-                {
-                    StatusMessage = msg;
-                    ProgressValue = pct;
-                },
-                _calibrationCts.Token);
+            Calibration = await _calibrationService.RunCalibrationAsync(
+                    device,
+                    frequencyHz,
+                    sampleRateHz,
+                    dwell,
+                    fftSize,
+                    (msg, pct) =>
+                    {
+                        StatusMessage = msg;
+                        ProgressValue = pct;
+                    },
+                    _calibrationCts.Token);
 
             IsCalibrated = true;
             StatusMessage = $"Calibration complete. Gain = {Calibration.GainDb} dB";

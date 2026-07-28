@@ -1,16 +1,20 @@
 ﻿using RASTA.Core.Calibration;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
+using System.IO;
+using RASTA.Core.Storage;
 
 namespace RASTA.Processing.Calibration
 {
     public sealed class Calibrator
     {
         private readonly IFftEngine _fftEngine;
+        private readonly FitsFileIo _fitsFileWriter;
 
-        public Calibrator(IFftEngine fftEngine)
+        public Calibrator(IFftEngine fftEngine, FitsFileIo fitsFileWriter)
         {
             _fftEngine = fftEngine;
+            _fitsFileWriter = fitsFileWriter;
         }
 
         /// <summary>
@@ -34,6 +38,13 @@ namespace RASTA.Processing.Calibration
             int totalSteps = supportedGains.Count + 2; // +1 baseline, +1 finalize
             int currentStep = 0;
 
+            // Compute sample count safely
+            uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellTime.TotalSeconds);
+            
+            string filePath = null;
+            FitsFileMetaData meta = null;
+
+            var startTime = DateTime.UtcNow;
             foreach (var gain in supportedGains)
             {
                 ct.ThrowIfCancellationRequested();
@@ -41,14 +52,31 @@ namespace RASTA.Processing.Calibration
                 currentStep++;
                 progressCallback?.Invoke($"Trying gain {gain} dB", (double)currentStep / totalSteps);
 
-                var spectrum = await device.CaptureSpectrumAsync(
+                var rawIq = await device.CaptureRawIqAsync(
                     frequencyHz,
                     sampleRateHz,
                     gain,
-                    dwellTime,
-                    fftSize,
-                    _fftEngine,
-                    ct);
+                    sampleCount,
+                    ct).ConfigureAwait(false);
+
+                // 2. FITS file
+                filePath = BuildCalibrationFilePath("cal", startTime, frequencyHz, gain);
+
+                meta = new FitsFileMetaData
+                {
+                    Origin = "RTL-SDR",
+                    DataFormat = "UINT8_IQ",
+                    CentFreqHz = frequencyHz,
+                    SampFreqHz = sampleRateHz,
+                    GainDb = gain,
+                    ObservationDate = DateTime.UtcNow,
+                    DwellTimeSec = dwellTime.TotalSeconds
+                };
+
+                _fitsFileWriter.WriteRawIq(filePath, rawIq, meta);
+
+                // Use your FFT engine to compute a spectrum
+                double[] spectrum = _fftEngine.ComputeSpectrum(rawIq, fftSize);
 
                 double score = ScoreSpectrum(spectrum);
                 gainScores.Add((gain, score, spectrum));
@@ -63,14 +91,32 @@ namespace RASTA.Processing.Calibration
             currentStep++;
             progressCallback?.Invoke($"Selected gain {best.Gain} dB", (double)currentStep / totalSteps);
 
-            var baselineSpectrum = await device.CaptureSpectrumAsync(
+            var baselineRawIq = await device.CaptureRawIqAsync(
                 frequencyHz,
                 sampleRateHz,
                 best.Gain,
-                dwellTime * 4,
-                fftSize,
-                _fftEngine,
-                ct);
+                sampleCount * 4,
+                ct).ConfigureAwait(false);
+
+
+            // save the baseline to a FITS file
+            filePath = BuildCalibrationFilePath("base", startTime, frequencyHz, best.Gain);
+
+            meta = new FitsFileMetaData
+            {
+                Origin = "RTL-SDR",
+                DataFormat = "UINT8_IQ",
+                CentFreqHz = frequencyHz,
+                SampFreqHz = sampleRateHz,
+                GainDb = best.Gain,
+                ObservationDate = DateTime.UtcNow,
+                DwellTimeSec = dwellTime.TotalSeconds * 4
+            };
+
+            _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);
+
+
+            double[] baselineSpectrum = _fftEngine.ComputeSpectrum(baselineRawIq, fftSize);
 
             currentStep++;
             progressCallback?.Invoke("Finalizing calibration", (double)currentStep / totalSteps);
@@ -130,6 +176,25 @@ namespace RASTA.Processing.Calibration
             }
 
             return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX + 1e-9);
+        }
+
+        private string BuildCalibrationFilePath(string prefix, DateTime startTime, double frequencyHz, double gainDb)
+        {
+            string timestamp = startTime.ToString("HHmmss");
+
+            // -----------------------------
+            // 4. Build output directory
+            // -----------------------------
+            string baseDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "RASTA",
+                "Data",
+                $"{frequencyHz / 1_000_000:F4}MHz",
+                startTime.ToString("yyyy-MM-dd"));
+
+            Directory.CreateDirectory(baseDir);
+
+            return Path.Combine(baseDir, $"{prefix}_{timestamp}_{frequencyHz:F0}Hz_{gainDb:F1}dB.fits");
         }
     }
 }

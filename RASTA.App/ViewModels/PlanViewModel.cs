@@ -5,7 +5,7 @@ using RASTA.Core.Capture;
 using RASTA.Core.Planning;
 using RASTA.Core.Sdr;
 using RASTA.Core.Telescope;
-using RASTA.Infrastructure.Storage;
+using RASTA.Core.Storage;
 using RASTA.Processing.Planning;
 using System.Collections.ObjectModel;
 using System.IO;

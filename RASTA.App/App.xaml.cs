@@ -4,6 +4,7 @@ using RASTA.App.ViewModels;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using RASTA.Core.Telescope;
+using RASTA.Core.Storage;
 using RASTA.Infrastructure.Fft;
 using RASTA.Infrastructure.Logging;
 using RASTA.Infrastructure.Sdr;
@@ -62,6 +63,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // Calibration + Observation
             // ---------------------------------------------------------
+            services.AddSingleton<CalibrationService>();
             services.AddSingleton<Calibrator>();
             services.AddSingleton<ObservationCaptureService>();
 

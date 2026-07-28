@@ -4,16 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using RASTA.Core.Capture;
+using RASTA.Core.Storage;
 
 namespace RASTA.Infrastructure.Storage
 {
-    public interface IPlanRepository
-    {
-        void Save(CapturePlan plan);
-        CapturePlan Load(string friendlyName);
-        IEnumerable<CapturePlan> ListPlans(string sdrDeviceId);
-    }
-
     public class JsonPlanRepository : IPlanRepository
     {
         private readonly string folder;
