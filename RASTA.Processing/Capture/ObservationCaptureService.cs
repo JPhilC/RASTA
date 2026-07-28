@@ -1,11 +1,8 @@
-﻿using System;
-using System.Numerics;
-using System.Threading;
-using System.Threading.Tasks;
-using RASTA.Core.Calibration;
+﻿using RASTA.Core.Calibration;
 using RASTA.Core.Capture;
-using RASTA.Core.Sdr;
 using RASTA.Core.Processing;
+using RASTA.Core.Sdr;
+using System.Numerics;
 
 namespace RASTA.Processing.Capture
 {
@@ -26,11 +23,10 @@ namespace RASTA.Processing.Capture
             TimeSpan integrationTime,
             CancellationToken ct)
         {
-
-            uint fftSize = calibration.FftSize;
+            int fftSize = calibration.FftSize;
 
             uint totalSamples = (uint)(calibration.SampleRateHz * integrationTime.TotalSeconds);
-            uint blocksNeeded = totalSamples / fftSize;
+            uint blocksNeeded = totalSamples / (uint)fftSize;
 
             var accumulator = new double[fftSize];
             int count = 0;
@@ -39,7 +35,13 @@ namespace RASTA.Processing.Capture
             {
                 ct.ThrowIfCancellationRequested();
 
-                var rawIq = await _sdr.CaptureRawIqAsync(calibration.CenterFrequencyHz, calibration.SampleRateHz, calibration.GainDb, fftSize, ct).ConfigureAwait(false);
+                // Persistent device: no open/close, no index 0
+                var rawIq = await _sdr.CaptureRawIqAsync(
+                    calibration.CenterFrequencyHz,
+                    calibration.SampleRateHz,
+                    calibration.GainDb,
+                    (uint)fftSize,
+                    ct).ConfigureAwait(false);
 
                 var block = new Complex[fftSize];
                 for (int i = 0; i < fftSize; i++)
@@ -57,8 +59,17 @@ namespace RASTA.Processing.Capture
                 count++;
             }
 
+            // Average the spectrum
             for (int i = 0; i < fftSize; i++)
-                accumulator[i] = calibration.GainFactor * (accumulator[i] / count);
+                accumulator[i] /= count;
+
+            // Subtract baseline (calibration spectrum)
+            if (calibration.BaselineSpectrum != null &&
+                calibration.BaselineSpectrum.Length == fftSize)
+            {
+                for (int i = 0; i < fftSize; i++)
+                    accumulator[i] -= calibration.BaselineSpectrum[i];
+            }
 
             var metadata = new ObservationMetadata
             {
@@ -76,5 +87,4 @@ namespace RASTA.Processing.Capture
             };
         }
     }
-
 }

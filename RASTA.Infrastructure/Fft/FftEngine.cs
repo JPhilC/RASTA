@@ -12,17 +12,13 @@ namespace RASTA.Infrastructure.Fft
             var buffer = new Complex[samples.Length];
             Array.Copy(samples, buffer, samples.Length);
 
-            // Apply a Hann window to reduce spectral leakage
             ApplyHannWindow(buffer);
 
-            // Perform FFT in-place
             Fourier.Forward(buffer, FourierOptions.Matlab);
 
-            // Compute magnitude squared (power spectrum)
             var power = new double[buffer.Length];
             for (int i = 0; i < buffer.Length; i++)
             {
-                // |FFT|^2 = real^2 + imag^2
                 power[i] = (buffer[i].Real * buffer[i].Real) +
                            (buffer[i].Imaginary * buffer[i].Imaginary);
             }
@@ -30,7 +26,28 @@ namespace RASTA.Infrastructure.Fft
             return power;
         }
 
-        private static void ApplyHannWindow(Complex[] buffer)
+        public double[] ComputeSpectrum(byte[] rawIq, int fftSize)
+        {
+            int n = Math.Min(rawIq.Length / 2, fftSize);
+
+            var complex = new Complex[fftSize];
+
+            // Convert raw IQ bytes → Complex samples
+            for (int i = 0; i < n; i++)
+            {
+                double re = rawIq[2 * i] - 128;
+                double im = rawIq[2 * i + 1] - 128;
+                complex[i] = new Complex(re, im);
+            }
+
+            // Zero-pad if needed
+            for (int i = n; i < fftSize; i++)
+                complex[i] = Complex.Zero;
+
+            return PowerSpectrum(complex);
+        }
+
+        private void ApplyHannWindow(Complex[] buffer)
         {
             int n = buffer.Length;
             for (int i = 0; i < n; i++)

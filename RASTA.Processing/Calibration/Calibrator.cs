@@ -1,9 +1,4 @@
-﻿using System;
-using System.Linq;
-using System.Numerics;
-using System.Threading;
-using System.Threading.Tasks;
-using RASTA.Core.Calibration;
+﻿using RASTA.Core.Calibration;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 
@@ -11,87 +6,130 @@ namespace RASTA.Processing.Calibration
 {
     public sealed class Calibrator
     {
-        private readonly ISdrDevice _sdr;
-        private readonly IFftEngine _fft;
+        private readonly IFftEngine _fftEngine;
 
-        public Calibrator(ISdrDevice sdr, IFftEngine fft)
+        public Calibrator(IFftEngine fftEngine)
         {
-            _sdr = sdr;
-            _fft = fft;
+            _fftEngine = fftEngine;
         }
 
-        public async Task<CalibrationProfile> RunAsync(
-            double centerFreqHz,
+        /// <summary>
+        /// Runs a full gain-sweep calibration and returns a CalibrationProfile.
+        /// </summary>
+        public async Task<CalibrationProfile> RunFullCalibrationAsync(
+            ISdrDevice device,
+            double frequencyHz,
             double sampleRateHz,
-            double gainDb,
-            TimeSpan duration,
-            uint fftSize,
+            TimeSpan dwellTime,
+            int fftSize,
+            Action<string, double>? progressCallback,
             CancellationToken ct)
         {
+            var supportedGains = device.SupportedGainsDb.ToList();
+            if (supportedGains.Count == 0)
+                throw new InvalidOperationException("SDR device reports no supported gains.");
 
-            // Total samples required for the calibration duration
-            uint totalSamples = (uint)(sampleRateHz * duration.TotalSeconds);
+            var gainScores = new List<(double Gain, double Score, double[] Spectrum)>();
 
-            // Number of FFT blocks to average
-            uint blocksNeeded = (uint)(totalSamples / fftSize);
+            int totalSteps = supportedGains.Count + 2; // +1 baseline, +1 finalize
+            int currentStep = 0;
 
-            var accumulator = new double[fftSize];
-            uint count = 0;
-
-            // -----------------------------
-            // 2. Capture FFT blocks
-            // -----------------------------
-            while (count < blocksNeeded)
+            foreach (var gain in supportedGains)
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Capture fftSize IQ samples → 2*fftSize bytes
-                var rawIq = await _sdr.CaptureRawIqAsync(centerFreqHz, sampleRateHz, gainDb, fftSize, ct);
+                currentStep++;
+                progressCallback?.Invoke($"Trying gain {gain} dB", (double)currentStep / totalSteps);
 
-                // Convert RAW IQ → Complex[]
-                var block = new Complex[fftSize];
-                for (int i = 0; i < fftSize; i++)
-                {
-                    double iSample = rawIq[2 * i] - 128;
-                    double qSample = rawIq[2 * i + 1] - 128;
-                    block[i] = new Complex(iSample, qSample);
-                }
+                var spectrum = await device.CaptureSpectrumAsync(
+                    frequencyHz,
+                    sampleRateHz,
+                    gain,
+                    dwellTime,
+                    fftSize,
+                    _fftEngine,
+                    ct);
 
-                // FFT → power spectrum
-                var spectrum = _fft.PowerSpectrum(block);
-
-                // Accumulate
-                for (int i = 0; i < fftSize; i++)
-                    accumulator[i] += spectrum[i];
-
-                count++;
+                double score = ScoreSpectrum(spectrum);
+                gainScores.Add((gain, score, spectrum));
             }
 
-            // -----------------------------
-            // 3. Average noise spectrum
-            // -----------------------------
-            for (int i = 0; i < fftSize; i++)
-                accumulator[i] /= count;
+            // Choose best gain
+            var best = gainScores.OrderByDescending(g => g.Score).First();
 
-            // -----------------------------
-            // 4. Compute gain factor
-            // -----------------------------
-            double avgNoise = accumulator.Average();
-            double gainFactor = 1.0 / avgNoise;
+            progressCallback?.Invoke($"Selected gain {best.Gain} dB", 0.95);
 
-            // -----------------------------
-            // 5. Build calibration profile
-            // -----------------------------
+            // Capture long baseline at chosen gain
+            currentStep++;
+            progressCallback?.Invoke($"Selected gain {best.Gain} dB", (double)currentStep / totalSteps);
+
+            var baselineSpectrum = await device.CaptureSpectrumAsync(
+                frequencyHz,
+                sampleRateHz,
+                best.Gain,
+                dwellTime * 4,
+                fftSize,
+                _fftEngine,
+                ct);
+
+            currentStep++;
+            progressCallback?.Invoke("Finalizing calibration", (double)currentStep / totalSteps);
+
             return new CalibrationProfile
             {
+                GainDb = best.Gain,
+                BaselineSpectrum = baselineSpectrum,
+                BaselineMean = baselineSpectrum.Average(),
+                BaselineStdDev = ComputeStdDev(baselineSpectrum),
                 TimestampUtc = DateTime.UtcNow,
-                CenterFrequencyHz = centerFreqHz,
-                SampleRateHz = sampleRateHz,
-                FftSize = fftSize,
-                NoiseSpectrum = accumulator,
-                GainFactor = gainFactor,
-                GainDb = gainDb
+                DeviceId = device.DeviceId
             };
+        }
+
+        private double ScoreSpectrum(double[] spectrum)
+        {
+            double mean = spectrum.Average();
+            double std = ComputeStdDev(spectrum);
+
+            int spurCount = spectrum.Count(v => v > mean + 6 * std);
+
+            double max = spectrum.Max();
+            int clipCount = spectrum.Count(v => v > max * 0.98);
+
+            double slope = ComputeSlope(spectrum);
+
+            double flatnessScore = 1.0 / (std + 1e-9);
+            double spurScore = 1.0 / (spurCount + 1);
+            double clipScore = 1.0 / (clipCount + 1);
+            double slopeScore = 1.0 / (Math.Abs(slope) + 1e-9);
+
+            return flatnessScore * 0.4 +
+                   spurScore * 0.3 +
+                   clipScore * 0.2 +
+                   slopeScore * 0.1;
+        }
+
+        private static double ComputeStdDev(double[] values)
+        {
+            double mean = values.Average();
+            double sumSq = values.Sum(v => (v - mean) * (v - mean));
+            return Math.Sqrt(sumSq / values.Length);
+        }
+
+        private static double ComputeSlope(double[] y)
+        {
+            int n = y.Length;
+            double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                sumX += i;
+                sumY += y[i];
+                sumXY += i * y[i];
+                sumXX += i * i;
+            }
+
+            return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX + 1e-9);
         }
     }
 }

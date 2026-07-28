@@ -1,122 +1,158 @@
 ﻿using RASTA.Core.Sdr;
 using RASTA.Infrastructure.Logging;
+using RASTA.Infrastructure.Sdr;
 using RtlSdrManager;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
-namespace RASTA.App.Services
+namespace RASTA.App.Services;
+
+public class SdrDeviceService : IDisposable
 {
-    public class SdrDeviceService
+    private readonly SdrState _state;
+    private readonly RastaLogger _logger;
+
+    private RtlSdrDevice? _device;   // persistent device instance
+
+    public SdrDeviceService(SdrState state, RastaLogger logger)
     {
-        private readonly SdrState _state;
-        private readonly RastaLogger _logger;
+        _state = state;
+        _logger = logger;
+    }
 
-        public SdrDeviceService(SdrState state, RastaLogger logger)
+    public async Task EnumerateDevicesAsync()
+    {
+        _logger.Info("Enumerating SDR devices.");
+        await Task.Run(async () =>
         {
-            _state = state;
-            _logger = logger;
-        }
+            var manager = RtlSdrDeviceManager.Instance;
 
-        public async Task EnumerateDevicesAsync()
-        {
-            await Task.Run(async () =>
+            const int maxAttempts = 10;
+            const int delayMs = 250;
+
+            bool refreshSucceeded = false;
+
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                var manager = RtlSdrDeviceManager.Instance;
-
-                // RTL-SDR driver needs time to initialise after plug-in
-                const int maxAttempts = 10;
-                const int delayMs = 250;
-
-                bool refreshSucceeded = false;
-
-                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                try
                 {
-                    try
-                    {
-                        manager.RefreshDevices();   // <-- this is the call that fails
-                        refreshSucceeded = true;
-                        break;
-                    }
-                    catch
-                    {
-                        await Task.Delay(delayMs);  // wait and retry
-                    }
+                    manager.RefreshDevices();
+                    refreshSucceeded = true;
+                    break;
                 }
-
-                if (!refreshSucceeded)
+                catch
                 {
-                    HandleDeviceRemoved();
-                    _logger.Warn("SDR enumeration failed: driver not ready after retries.");
-                    return;
+                    await Task.Delay(delayMs);
                 }
+            }
 
-                int count = manager.CountDevices;
-
-                if (count == 0)
-                {
-                    HandleDeviceRemoved();
-                    return;
-                }
-
-                var list = new List<SdrDeviceDescriptor>();
-
-                foreach (var (index, info) in manager.Devices)
-                {
-                    list.Add(new SdrDeviceDescriptor
-                    {
-                        Index = index,  // now uint, correct
-                        Manufacturer = info.Manufacturer,
-                        Product = info.ProductType,
-                        Serial = info.Serial
-                    });
-                }
-
-                _state.Devices = list;
-                _state.IsConnected = true;
-
-                if (_state.SelectedDevice is null)
-                    _state.SelectedDevice = list.First();
-            });
-        }
-
-
-        public void HandleDeviceRemoved()
-        {
-            _state.IsConnected = false;
-            _state.Devices = null;
-            _state.SelectedDevice = null;
-            _state.SupportedGains = null;
-            _state.TunerType = null;
-            _state.ActualFrequencyHz = null;
-            _state.ActualSampleRateHz = null;
-            _state.ActualGainDb = null;
-
-            _logger.Warn("SDR device removed.");
-        }
-
-        public void LoadCapabilities()
-        {
-            if (_state.SelectedDevice == null)
+            if (!refreshSucceeded)
+            {
+                HandleDeviceRemoved();
+                _logger.Warn("SDR enumeration failed: driver not ready after retries.");
                 return;
-
-            try
-            {
-                var manager = RtlSdrDeviceManager.Instance;
-                manager.OpenManagedDevice(_state.SelectedDevice.Index, "probe");
-
-                var dev = manager["probe"];
-
-                _state.SupportedGains = dev.SupportedTunerGains.ToList();
-                _state.TunerType = dev.TunerType.ToString();
-
-                manager.CloseManagedDevice("probe");
             }
-            catch (Exception ex)
+
+            int count = manager.Devices.Count;
+            if (count == 0)
             {
-                _logger.Warn($"Failed to load SDR capabilities: {ex.Message}");
+                HandleDeviceRemoved();
+                return;
             }
+
+            var list = new List<SdrDeviceDescriptor>();
+
+            foreach (var (index, info) in manager.Devices)
+            {
+                list.Add(new SdrDeviceDescriptor
+                {
+                    Index = index,
+                    Manufacturer = info.Manufacturer,
+                    Product = info.ProductType,
+                    Serial = info.Serial
+                });
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Found {list.Count} SDR devices.");
+
+            _state.Devices = list;
+            _state.IsConnected = true;
+
+            if (_state.SelectedDevice is null)
+                _state.SelectedDevice = list.First();
+
+            CreatePersistentDevice(_state.SelectedDevice.Index);
+        });
+    }
+
+    private void CreatePersistentDevice(uint deviceIndex)
+    {
+        try
+        {
+            DisposeDevice();
+
+            var manager = RtlSdrDeviceManager.Instance;
+
+            // Open the device here (NOT in RtlSdrDevice)
+            manager.OpenManagedDevice(deviceIndex, "rasta-persistent");
+            var dev = manager["rasta-persistent"];
+
+            _device = new RtlSdrDevice(deviceIndex);
+            _device.AttachManagedDevice(dev);
+
+            _logger.Info($"Persistent SDR device created for index {deviceIndex}.");
+
+            LoadCapabilities(dev);
         }
+        catch (Exception ex)
+        {
+            _logger.Error($"Failed to create persistent SDR device: {ex.Message}");
+            HandleDeviceRemoved();
+        }
+    }
+
+    private void LoadCapabilities(RtlSdrManagedDevice dev)
+    {
+        try
+        {
+            _state.SupportedGains = dev.SupportedTunerGains.ToList();
+            _state.TunerType = dev.TunerType.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Failed to load SDR capabilities: {ex.Message}");
+        }
+    }
+
+    public ISdrDevice? GetDevice() => _device;
+
+    private void DisposeDevice()
+    {
+        try
+        {
+            _device?.Dispose();
+        }
+        catch { }
+
+        _device = null;
+    }
+
+    public void HandleDeviceRemoved()
+    {
+        _state.IsConnected = false;
+        _state.Devices = null;
+        _state.SelectedDevice = null;
+        _state.SupportedGains = null;
+        _state.TunerType = null;
+        _state.ActualFrequencyHz = null;
+        _state.ActualSampleRateHz = null;
+        _state.ActualGainDb = null;
+
+        DisposeDevice();
+
+        _logger.Warn("SDR device removed.");
+    }
+
+    public void Dispose()
+    {
+        DisposeDevice();
     }
 }

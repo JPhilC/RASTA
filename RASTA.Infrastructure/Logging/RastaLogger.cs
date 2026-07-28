@@ -37,7 +37,7 @@ namespace RASTA.Infrastructure.Logging
         private void Write(string level, string message)
         {
             string line = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}";
-
+            System.Diagnostics.Debug.WriteLine(line);
             lock (_lock)
             {
                 File.AppendAllText(_logPath, line + Environment.NewLine);

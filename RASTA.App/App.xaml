@@ -18,6 +18,7 @@
             <converters:EquatorialOrAltAzVisibilityConverter x:Key="EquatorialOrAltAzVisibilityConverter"/>
             <converters:DriftVisibilityConverter x:Key="DriftVisibilityConverter"/>
             <converters:PlanTypeToVisibilityConverter x:Key="PlanTypeToVisibilityConverter"/>
+            <converters:BooleanInverterConverter x:Key="BooleanInverterConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

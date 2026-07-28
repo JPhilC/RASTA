@@ -1,6 +1,8 @@
-﻿namespace RASTA.Core.Sdr;
+﻿using RASTA.Core.Processing;
 
-public interface ISdrDevice : IAsyncDisposable
+namespace RASTA.Core.Sdr;
+
+public interface ISdrDevice : IDisposable
 {
     // -----------------------------
     // RAW IQ capture (true RAW)
@@ -13,6 +15,7 @@ public interface ISdrDevice : IAsyncDisposable
     Task<double[]> CaptureSpectrumAsync(double frequencyHz, double sampleRateHz, double gainDb,
         TimeSpan dwellTime,
         int fftSize,
+        IFftEngine fftEngine,
         CancellationToken ct);
 
     // -----------------------------

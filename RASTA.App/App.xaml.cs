@@ -1,12 +1,15 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using RASTA.App.Services;
 using RASTA.App.ViewModels;
+using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using RASTA.Core.Telescope;
+using RASTA.Infrastructure.Fft;
 using RASTA.Infrastructure.Logging;
 using RASTA.Infrastructure.Sdr;
-using RASTA.Infrastructure.Telescope;
 using RASTA.Infrastructure.Storage;
+using RASTA.Infrastructure.Telescope;
+using RASTA.Processing.Calibration;
 using RASTA.Processing.Capture;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.Planning;
@@ -31,28 +34,44 @@ namespace RASTA.App
             services.AddSingleton(new RastaLogger("Logs/rasta.log"));
 
             // ---------------------------------------------------------
-            // Shared telescope state (required!)
+            // Telescope state
             // ---------------------------------------------------------
             services.AddSingleton<TelescopeState>();
 
             // ---------------------------------------------------------
-            // Shared SDR state (required!)
+            // SDR state + services
             // ---------------------------------------------------------
             services.AddSingleton<SdrState>();
+            services.AddSingleton<SdrDeviceService>();   // owns persistent device
+
+            // Lazy SDR device proxy — may be null until watcher enumerates
+            services.AddSingleton<ISdrDevice>(provider =>
+            {
+                var svc = provider.GetRequiredService<SdrDeviceService>();
+                return svc.GetDevice();   // DO NOT throw here
+            });
+
+            // USB watcher (attaches to window handle when resolved)
+            services.AddSingleton<UsbWatcherService>();
 
             // ---------------------------------------------------------
-            // SDR services
+            // FFT engine
             // ---------------------------------------------------------
-            services.AddSingleton<SdrDeviceService>();
-            services.AddSingleton<UsbWatcherService>();   // auto-starts when resolved
+            services.AddSingleton<IFftEngine, FftEngine>();
 
             // ---------------------------------------------------------
-            // Alpaca Client (session-wide)
+            // Calibration + Observation
+            // ---------------------------------------------------------
+            services.AddSingleton<Calibrator>();
+            services.AddSingleton<ObservationCaptureService>();
+
+            // ---------------------------------------------------------
+            // Alpaca client
             // ---------------------------------------------------------
             services.AddSingleton<AscomAlpacaClient>();
 
             // ---------------------------------------------------------
-            // Telescope Mount (session-wide)
+            // Telescope mount
             // ---------------------------------------------------------
             services.AddSingleton<ITelescopeMount>(provider =>
             {
@@ -61,23 +80,21 @@ namespace RASTA.App
             });
 
             // ---------------------------------------------------------
-            // Planning service (session-wide)
+            // Planning
             // ---------------------------------------------------------
             services.AddSingleton<SweepPlanner>();
             services.AddSingleton<IPlanRepository, JsonPlanRepository>();
 
             // ---------------------------------------------------------
-            // Telescope telemetry service (session-wide)
+            // Telescope telemetry
             // ---------------------------------------------------------
             services.AddSingleton<TelescopeService>();
 
             // ---------------------------------------------------------
-            // Radio capture pipeline (session-wide)
+            // Radio capture pipeline
             // ---------------------------------------------------------
-            services.AddSingleton<ISdrDevice, RtlSdrDevice>();
             services.AddSingleton<FitsFileIo>();
             services.AddSingleton<SdrRawCaptureService>();
-            services.AddSingleton<ObservationCaptureService>();
 
             // ---------------------------------------------------------
             // Processing
@@ -86,20 +103,19 @@ namespace RASTA.App
             services.AddSingleton<SpectrumImageBuilder>();
             services.AddSingleton<HeatmapBuilder>();
             services.AddSingleton<GridBuilder>();
-            services.AddSingleton<SweepPlanner>();
 
             // ---------------------------------------------------------
-            // ViewModels
+            // ViewModels (must be transient)
             // ---------------------------------------------------------
-            services.AddSingleton<StatusBarViewModel>();
-            services.AddSingleton<SettingsViewModel>();
-            services.AddSingleton<PrepareViewModel>();
-            services.AddSingleton<PlanViewModel>();
-            services.AddSingleton<ObserveViewModel>();
-            services.AddSingleton<ProcessViewModel>();
-            services.AddSingleton<VisualiseViewModel>();
-            services.AddSingleton<NavigationService>();
-            services.AddSingleton<NavigationViewModel>();
+            services.AddTransient<StatusBarViewModel>();
+            services.AddTransient<SettingsViewModel>();
+            services.AddTransient<PrepareViewModel>();
+            services.AddTransient<PlanViewModel>();
+            services.AddTransient<ObserveViewModel>();
+            services.AddTransient<ProcessViewModel>();
+            services.AddTransient<VisualiseViewModel>();
+            services.AddTransient<NavigationService>();
+            services.AddTransient<NavigationViewModel>();
 
             // ---------------------------------------------------------
             // Build provider
@@ -108,6 +124,7 @@ namespace RASTA.App
 
             base.OnStartup(e);
         }
+
 
     }
 }

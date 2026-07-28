@@ -12,7 +12,6 @@ namespace RASTA.App
         {
             InitializeComponent();
 
-            // Skip DI when in design mode
             if (DesignerProperties.GetIsInDesignMode(this))
                 return;
 
@@ -21,7 +20,6 @@ namespace RASTA.App
             var navigationVM = App.Services.GetRequiredService<NavigationViewModel>();
             DataContext = navigationVM;
 
-            // Default page
             navigationVM.NavigatePrepareCommand.Execute(null);
         }
 
@@ -30,12 +28,14 @@ namespace RASTA.App
             if (DesignerProperties.GetIsInDesignMode(this))
                 return;
 
-            // Now the window exists and has a valid handle
-            var usbWatcher = App.Services.GetRequiredService<UsbWatcherService>();
-
-            // Enumerate SDR devices immediately
-            var sdrService = App.Services.GetRequiredService<SdrDeviceService>();
-            _ = sdrService.EnumerateDevicesAsync();
+            // Start the usb watcher service to monitor for device changes
+            var usbWatcherService = App.Services.GetRequiredService<UsbWatcherService>();
+            
+            // Start the device enumeration in a background task
+            var sdrDeviceService = App.Services.GetRequiredService<SdrDeviceService>();
+            sdrDeviceService.EnumerateDevicesAsync().ConfigureAwait(false);
         }
     }
+
+
 }
