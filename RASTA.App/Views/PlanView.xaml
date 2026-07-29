@@ -49,18 +49,21 @@
                        Margin="0 0 0 20"/>
 
                 <!-- Friendly Name -->
-                <TextBlock Text="Friendly Name" FontWeight="Bold"/>
-                <TextBox Text="{Binding FriendlyName}" Width="300" Margin="0 10 0 20"/>
+                <StackPanel Margin="0 10 0 0">
+                    <TextBlock Text="Friendly Name" FontWeight="Bold"/>
+                    <TextBox Text="{Binding FriendlyName}" Width="300" HorizontalAlignment="Left"/>
+                </StackPanel>
 
                 <!-- Plan Type -->
-                <TextBlock Text="Plan Type" FontWeight="Bold"/>
-                <ComboBox Width="200"
+                <StackPanel Margin="0 10 0 0">
+                    <TextBlock Text="Plan Type" FontWeight="Bold"/>
+                    <ComboBox Width="200" HorizontalAlignment="Left"
                       SelectedItem="{Binding PlanType}"
-                      ItemsSource="{Binding Source={x:Static helpers:PlanTypeEnum.Values}}"
-                      Margin="0 10 0 20"/>
-
+                      ItemsSource="{Binding Source={x:Static helpers:PlanTypeEnum.Values}}"/>
+                </StackPanel>
                 <!-- SWEEP GEOMETRY (Equatorial or AltAz) -->
-                <StackPanel Visibility="{Binding PlanType, Converter={StaticResource EquatorialOrAltAzVisibilityConverter}}">
+                <StackPanel Visibility="{Binding PlanType, Converter={StaticResource EquatorialOrAltAzVisibilityConverter}}" 
+                            Margin="0 10 0 0">
 
                     <TextBlock Text="Sweep Geometry" FontWeight="Bold"/>
 
@@ -136,105 +139,109 @@
                         Command="{Binding BuildSweepCommand}"
                         Margin="0 20 0 20"/>-->
 
-            <!-- DRIFT SCAN -->
-            <StackPanel Margin="0 20 0 0 " 
+                <!-- DRIFT SCAN -->
+                <StackPanel Margin="0 20 0 0 " 
                 Visibility="{Binding PlanType, Converter={StaticResource DriftVisibilityConverter}}">
-                <TextBlock Text="Drift Scan Parameters" FontWeight="Bold"/>
+                    <TextBlock Text="Drift Scan Parameters" FontWeight="Bold"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Declination (deg)"/>
+                            <TextBox Width="120" Text="{Binding DriftDeclinationDeg}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Duration (min)"/>
+                            <TextBox Width="120" Text="{Binding DriftDurationMinutes}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Cadence (sec)"/>
+                            <TextBox Width="120" Text="{Binding DriftCadenceSeconds}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- CAPTURE PARAMETERS -->
+                <TextBlock Text="Capture Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+                <StackPanel Orientation="Vertical" Margin="0 0 0 10">
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Dwell Time (sec)"/>
+                            <TextBox Width="120" Text="{Binding DwellSeconds}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Files/Point"/>
+                            <TextBox Width="120" Text="{Binding FilesPerPoint}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Sample Rate (Hz)"/>
+                            <TextBox Width="120" Text="{Binding SampleRate}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Center Frequency (Hz)"/>
+                            <TextBox Width="160" Text="{Binding CenterFrequency}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0,5,20,0">
+                            <TextBlock Text="FFT Bins"/>
+                            <TextBox Width="120" Text="{Binding FftBins}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Integrations"/>
+                            <TextBox Width="120" Text="{Binding Integrations}"/>
+                        </StackPanel>
+
+                        <StackPanel Margin="0 5 20 0">
+                            <TextBlock Text="Gain"/>
+                            <TextBox Width="120" Text="{Binding Gain}"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- TELESCOPE PARAMETERS -->
+                <TextBlock Text="Telescope Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
 
                 <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+
                     <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Declination (deg)"/>
-                        <TextBox Width="120" Text="{Binding DriftDeclinationDeg}"/>
+                        <TextBlock Text="Settle Time (sec)"/>
+                        <TextBox Width="120" Text="{Binding SettleTimeSeconds}"/>
                     </StackPanel>
 
                     <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Duration (min)"/>
-                        <TextBox Width="120" Text="{Binding DriftDurationMinutes}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Cadence (sec)"/>
-                        <TextBox Width="120" Text="{Binding DriftCadenceSeconds}"/>
-                    </StackPanel>
-                </StackPanel>
-            </StackPanel>
-
-            <!-- CAPTURE PARAMETERS -->
-            <TextBlock Text="Capture Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
-            <StackPanel Orientation="Vertical" Margin="0 0 0 10">
-                <StackPanel Orientation="Horizontal">
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Dwell Time (sec)"/>
-                        <TextBox Width="120" Text="{Binding DwellSeconds}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Sample Rate (Hz)"/>
-                        <TextBox Width="120" Text="{Binding SampleRate}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Center Frequency (Hz)"/>
-                        <TextBox Width="160" Text="{Binding CenterFrequency}"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <StackPanel Orientation="Horizontal">
-                    <StackPanel Margin="0,5,20,0">
-                        <TextBlock Text="FFT Bins"/>
-                        <TextBox Width="120" Text="{Binding FftBins}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Integrations"/>
-                        <TextBox Width="120" Text="{Binding Integrations}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Gain"/>
-                        <TextBox Width="120" Text="{Binding Gain}"/>
+                        <TextBlock Text="Tracking Enabled"/>
+                        <CheckBox IsChecked="{Binding TrackingEnabled}"/>
                     </StackPanel>
 
                 </StackPanel>
-            </StackPanel>
 
-            <!-- TELESCOPE PARAMETERS -->
-            <TextBlock Text="Telescope Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+                <!-- OUTPUT PARAMETERS -->
+                <TextBlock Text="Output" FontWeight="Bold" Margin="0 20 0 0"/>
 
-            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
 
-                <StackPanel Margin="0 5 20 0">
-                    <TextBlock Text="Settle Time (sec)"/>
-                    <TextBox Width="120" Text="{Binding SettleTimeSeconds}"/>
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Output Folder"/>
+                        <TextBox Width="200" Text="{Binding OutputFolder}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="File Prefix"/>
+                        <TextBox Width="120" Text="{Binding FilePrefix}"/>
+                    </StackPanel>
+
                 </StackPanel>
 
-                <StackPanel Margin="0 5 20 0">
-                    <TextBlock Text="Tracking Enabled"/>
-                    <CheckBox IsChecked="{Binding TrackingEnabled}"/>
-                </StackPanel>
-
-            </StackPanel>
-
-            <!-- OUTPUT PARAMETERS -->
-            <TextBlock Text="Output" FontWeight="Bold" Margin="0 20 0 0"/>
-
-            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
-
-                <StackPanel Margin="0 5 20 0">
-                    <TextBlock Text="Output Folder"/>
-                    <TextBox Width="200" Text="{Binding OutputFolder}"/>
-                </StackPanel>
-
-                <StackPanel Margin="0 5 20 0">
-                    <TextBlock Text="File Prefix"/>
-                    <TextBox Width="120" Text="{Binding FilePrefix}"/>
-                </StackPanel>
-
-            </StackPanel>
-
-            <!-- SAVE PLAN -->
-            <Button Content="Save Plan"
+                <!-- SAVE PLAN -->
+                <Button Content="Save Plan"
                     Width="200"
                     Height="40"
                     Command="{Binding SavePlanCommand}"
@@ -256,7 +263,7 @@
                        Margin="0 0 0 10"/>
 
                 <ListView ItemsSource="{Binding SavedPlans}"
-                      SelectedItem="{Binding SelectedSavedPlan}">
+                      SelectedItem="{Binding SelectedPlan}">
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <StackPanel>
@@ -271,17 +278,17 @@
                 <StackPanel Orientation="Horizontal" Margin="0 10 0 0">
                     <Button Content="Load"
                         Command="{Binding LoadPlanCommand}"
-                        CommandParameter="{Binding SelectedSavedPlan}"
+                        CommandParameter="{Binding SelectedPlan}"
                         Width="80"/>
 
                     <Button Content="Copy"
                         Command="{Binding CopyPlanCommand}"
-                        CommandParameter="{Binding SelectedSavedPlan}"
+                        CommandParameter="{Binding SelectedPlan}"
                         Width="80" Margin="10 0 0 0"/>
 
                     <Button Content="Delete"
                         Command="{Binding DeletePlanCommand}"
-                        CommandParameter="{Binding SelectedSavedPlan}"
+                        CommandParameter="{Binding SelectedPlan}"
                         Width="80" Margin="10 0 0 0"/>
                 </StackPanel>
 

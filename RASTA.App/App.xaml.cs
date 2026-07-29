@@ -107,17 +107,17 @@ namespace RASTA.App
             services.AddSingleton<GridBuilder>();
 
             // ---------------------------------------------------------
-            // ViewModels (must be transient)
+            // ViewModels
             // ---------------------------------------------------------
-            services.AddTransient<StatusBarViewModel>();
-            services.AddTransient<SettingsViewModel>();
-            services.AddTransient<PrepareViewModel>();
-            services.AddTransient<PlanViewModel>();
-            services.AddTransient<ObserveViewModel>();
-            services.AddTransient<ProcessViewModel>();
-            services.AddTransient<VisualiseViewModel>();
-            services.AddTransient<NavigationService>();
-            services.AddTransient<NavigationViewModel>();
+            services.AddSingleton<StatusBarViewModel>();
+            services.AddScoped<SettingsViewModel>();
+            services.AddScoped<PrepareViewModel>();
+            services.AddScoped<PlanViewModel>();
+            services.AddScoped<ObserveViewModel>();
+            services.AddScoped<ProcessViewModel>();
+            services.AddScoped<VisualiseViewModel>();
+            services.AddSingleton<NavigationService>();
+            services.AddSingleton<NavigationViewModel>();
 
             // ---------------------------------------------------------
             // Build provider

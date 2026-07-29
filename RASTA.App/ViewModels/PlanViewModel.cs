@@ -25,8 +25,20 @@ namespace RASTA.App.ViewModels
         // List of saved plans
         public ObservableCollection<CapturePlan> SavedPlans { get; } = new();
 
-        [ObservableProperty]
-        private CapturePlan? selectedSavedPlan;
+        
+        private CapturePlan? selectedPlan;
+
+        public CapturePlan? SelectedPlan
+        {
+            get => selectedPlan;
+            set
+            {
+                if (SetProperty(ref selectedPlan, value))
+                {
+                    System.Diagnostics.Debug.WriteLine($"SelectedPlan changed to: {selectedPlan?.FriendlyName}");
+                }
+            }
+        }
 
         // Currently edited plan
         [ObservableProperty]
@@ -42,6 +54,7 @@ namespace RASTA.App.ViewModels
 
         // Capture parameters
         [ObservableProperty] private double dwellSeconds = 1;
+        [ObservableProperty] private int filesPerPoint = 1;
         [ObservableProperty] private double sampleRate = 2_400_000;
         [ObservableProperty] private double centerFrequency = 1420_405_751;
         [ObservableProperty] private int fftBins = 4096;
@@ -51,10 +64,6 @@ namespace RASTA.App.ViewModels
         // Telescope parameters
         [ObservableProperty] private double settleTimeSeconds = 1;
         [ObservableProperty] private bool trackingEnabled = false;
-
-        // Output
-        [ObservableProperty] private string outputFolder = "Captures";
-        [ObservableProperty] private string filePrefix = "rasta_";
 
         // Drift scan parameters
         [ObservableProperty] private double driftDeclinationDeg;
@@ -69,6 +78,16 @@ namespace RASTA.App.ViewModels
             Settings = settings;
 
             LoadSavedPlans();
+
+            _sdrState.PropertyChanged += SdrState_PropertyChanged;
+        }
+
+        private void SdrState_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SdrState.SelectedDevice))
+            {
+                LoadSavedPlans();
+            }
         }
 
         private void LoadSavedPlans()
@@ -111,6 +130,7 @@ namespace RASTA.App.ViewModels
                 Range = Range,
 
                 DwellTime = TimeSpan.FromSeconds(DwellSeconds),
+                FilesPerPoint = FilesPerPoint,
                 SampleRate = SampleRate,
                 CenterFrequency = CenterFrequency,
                 FftBins = FftBins,
@@ -119,9 +139,6 @@ namespace RASTA.App.ViewModels
 
                 TrackingEnabled = TrackingEnabled,
                 SettleTimeSeconds = SettleTimeSeconds,
-
-                OutputFolder = OutputFolder,
-                FilePrefix = FilePrefix,
 
                 DriftDeclinationDeg = DriftDeclinationDeg,
                 DriftDurationMinutes = DriftDurationMinutes,
@@ -151,6 +168,7 @@ namespace RASTA.App.ViewModels
             Range = plan.Range;   // Restore sweep inputs
 
             DwellSeconds = plan.DwellTime.TotalSeconds;
+            FilesPerPoint = plan.FilesPerPoint;   
             SampleRate = plan.SampleRate;
             CenterFrequency = plan.CenterFrequency;
             FftBins = plan.FftBins;
@@ -159,9 +177,6 @@ namespace RASTA.App.ViewModels
 
             TrackingEnabled = plan.TrackingEnabled;
             SettleTimeSeconds = plan.SettleTimeSeconds;
-
-            OutputFolder = plan.OutputFolder;
-            FilePrefix = plan.FilePrefix;
 
             DriftDeclinationDeg = plan.DriftDeclinationDeg;
             DriftDurationMinutes = plan.DriftDurationMinutes;
@@ -196,6 +211,7 @@ namespace RASTA.App.ViewModels
                 Range = plan.Range.Clone(),   // You may want to implement Clone()
 
                 DwellTime = plan.DwellTime,
+                FilesPerPoint = plan.FilesPerPoint,
                 SampleRate = plan.SampleRate,
                 CenterFrequency = plan.CenterFrequency,
                 FftBins = plan.FftBins,
@@ -204,9 +220,6 @@ namespace RASTA.App.ViewModels
 
                 TrackingEnabled = plan.TrackingEnabled,
                 SettleTimeSeconds = plan.SettleTimeSeconds,
-
-                OutputFolder = plan.OutputFolder,
-                FilePrefix = plan.FilePrefix,
 
                 DriftDeclinationDeg = plan.DriftDeclinationDeg,
                 DriftDurationMinutes = plan.DriftDurationMinutes,

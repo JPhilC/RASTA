@@ -1,6 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Services;
+using RASTA.Core.Calibration;
 using RASTA.Core.Capture;
 using RASTA.Core.Sdr;
 using RASTA.Core.Telescope;
@@ -13,7 +14,46 @@ public partial class ObserveViewModel : ObservableObject
 {
     private readonly ITelescopeMount _mount;
     private readonly SdrRawCaptureService _capture;
-    private readonly ISdrDevice _device;
+    private readonly SdrDeviceService _sdrDeviceService;
+    private readonly SdrState _sdrState;
+    private readonly ISdrDevice? _device;
+    private readonly SettingsViewModel _settings;
+
+    private CapturePlan? _activePlan;
+
+    public CapturePlan? ActivePlan
+    {
+        get => _activePlan;
+        set
+        {
+            if (SetProperty(ref _activePlan, value))
+            {
+                OnPropertyChanged(nameof(PlanName));
+            }
+        }
+    }
+
+    public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
+
+    public bool CanCaptureSweep => _activePlan != null
+                                        && _device != null
+                                        && _settings.IsConnected
+                                        && _sdrState.IsConnected
+                                        && _activePlan.PlanType != PlanType.Drift;
+    [ObservableProperty]
+    private bool isSweepCaptureRunning;
+
+
+    public bool CanDriftCapture => _activePlan != null
+                                        && _device != null
+                                        && _sdrState.IsConnected
+                                        && _activePlan.PlanType == PlanType.Drift;
+
+    [ObservableProperty]
+    private bool isDriftCaptureRunning;
+
+    [ObservableProperty]
+    private CalibrationProfile? activeCalibration;
 
     [ObservableProperty]
     private ObservationRecord? lastObservation;
@@ -40,14 +80,43 @@ public partial class ObserveViewModel : ObservableObject
     private bool isSlewing;
 
     public ObserveViewModel(
+        SettingsViewModel settingsViewModel,
         ITelescopeMount mount,
-        ISdrDevice device,
+        SdrDeviceService sdrDeviceService,
+        SdrState sdrState,
         SdrRawCaptureService capture)
     {
+        _settings = settingsViewModel;
         _mount = mount;
         _capture = capture;
-        _device = device;
+        _sdrDeviceService = sdrDeviceService;
+        _sdrState = sdrState;
+        _device = sdrDeviceService.GetDevice();
+
+        _settings.PropertyChanged += Settings_PropertyChanged;
+        _sdrState.PropertyChanged += SdrState_PropertyChanged;
+
     }
+
+    private void Settings_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.IsConnected))
+        {
+            OnPropertyChanged(nameof(CanCaptureSweep));
+            OnPropertyChanged(nameof(CanDriftCapture));
+        }
+    }
+
+    private void SdrState_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SdrState.IsConnected))
+        {
+            OnPropertyChanged(nameof(CanCaptureSweep));
+            OnPropertyChanged(nameof(CanDriftCapture));
+        }
+    }
+
+
 
     // -------------------------------------------------------
     // Refresh mount state

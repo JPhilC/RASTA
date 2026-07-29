@@ -1,9 +1,5 @@
 ﻿using RASTA.App.ViewModels;
 using RASTA.Core.Telescope;
-using RASTA.Infrastructure.Logging;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace RASTA.App.Services
 {

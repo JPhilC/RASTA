@@ -8,7 +8,6 @@ namespace RASTA.App.Services
     {
         private readonly IServiceProvider _services;
 
-        // The currently active ViewModel
         public object? CurrentViewModel { get; private set; }
 
         public NavigationService(IServiceProvider services)
@@ -16,13 +15,22 @@ namespace RASTA.App.Services
             _services = services;
         }
 
-        // Generic navigation method
+        // Basic navigation
         public void NavigateTo<TViewModel>() where TViewModel : class
         {
             CurrentViewModel = _services.GetRequiredService<TViewModel>();
         }
 
-        // Strongly-typed convenience methods
+        // Navigation with configuration
+        public void NavigateTo<TViewModel>(Action<TViewModel> configure)
+            where TViewModel : class
+        {
+            var vm = _services.GetRequiredService<TViewModel>();
+            configure(vm);
+            CurrentViewModel = vm;
+        }
+
+        // Convenience methods
         public void NavigateToPrepare() =>
             NavigateTo<PrepareViewModel>();
 

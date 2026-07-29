@@ -31,6 +31,8 @@ namespace RASTA.Core.Capture
 
         public TimeSpan DwellTime { get; init; } = TimeSpan.FromSeconds(1);
 
+        public int FilesPerPoint { get; init; } = 1;
+
         public double SampleRate { get; init; }
         public double CenterFrequency { get; init; }
         public int FftBins { get; init; }
@@ -39,9 +41,6 @@ namespace RASTA.Core.Capture
 
         public double SettleTimeSeconds { get; init; }
         public bool TrackingEnabled { get; init; }
-
-        public string OutputFolder { get; init; } = "Captures";
-        public string FilePrefix { get; init; } = "rasta_";
 
         // Drift-specific
         public double DriftDeclinationDeg { get; init; }

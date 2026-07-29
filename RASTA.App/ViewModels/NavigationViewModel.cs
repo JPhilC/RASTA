@@ -23,6 +23,10 @@ namespace RASTA.App.ViewModels
 
         private readonly NavigationService _nav;
 
+        private readonly CalibrationService _calibrationService;
+
+        private readonly PlanViewModel _planViewModel;
+
         public SettingsViewModel Settings { get; }
 
         public StatusBarViewModel StatusBarViewModel { get; }
@@ -32,11 +36,13 @@ namespace RASTA.App.ViewModels
         [ObservableProperty]
         private object? currentViewModel;
 
-        public NavigationViewModel(NavigationService nav, SettingsViewModel settings, StatusBarViewModel statusBarViewModel)
+        public NavigationViewModel(NavigationService nav, SettingsViewModel settings, StatusBarViewModel statusBarViewModel, CalibrationService calibrationService, PlanViewModel planViewModel)
         {
             _nav = nav;
             Settings = settings;
             StatusBarViewModel = statusBarViewModel;
+            _calibrationService = calibrationService;
+            _planViewModel = planViewModel;
             
             StatusBarViewModel.PropertyChanged += (_, args) =>
             {
@@ -79,7 +85,12 @@ namespace RASTA.App.ViewModels
         {
             CurrentSection = NavigationSection.Observe;
 
-            _nav.NavigateTo<ObserveViewModel>();
+            _nav.NavigateTo<ObserveViewModel>(vm =>
+            {
+                vm.ActivePlan = _planViewModel.SelectedPlan;
+                vm.ActiveCalibration = _calibrationService.CurrentCalibration;
+            });
+
             UpdateView();
         }
 
