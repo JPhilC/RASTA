@@ -16,6 +16,12 @@ namespace RASTA.App.ViewModels
         [ObservableProperty]
         private string captureStatus = "Idle";
 
+        [ObservableProperty]
+        private double captureProgress;
+
+        [ObservableProperty]
+        private bool isCaptureInProgress = false;
+
         private readonly TelescopeState _telescopeState;
         private readonly SdrState _sdrState;
 

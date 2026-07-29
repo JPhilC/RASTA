@@ -32,11 +32,13 @@ namespace RASTA.Core.Telescope
 
         [ObservableProperty]
         private bool trackingEnabled;
+
         [ObservableProperty]
         private int trackingRate;
 
         [ObservableProperty]
         private bool isSlewing;
+
         [ObservableProperty]
         private bool isParked;
 

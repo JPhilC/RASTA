@@ -60,7 +60,7 @@ namespace RASTA.Processing.Calibration
                     ct).ConfigureAwait(false);
 
                 // 2. FITS file
-                filePath = BuildCalibrationFilePath("cal", startTime, frequencyHz, gain);
+                filePath = FitsPathBuilder.BuildCalibrationFilePath("cal", startTime, frequencyHz, gain);
 
                 meta = new FitsFileMetaData
                 {
@@ -100,7 +100,7 @@ namespace RASTA.Processing.Calibration
 
 
             // save the baseline to a FITS file
-            filePath = BuildCalibrationFilePath("base", startTime, frequencyHz, best.Gain);
+            filePath = FitsPathBuilder.BuildCalibrationFilePath("base", startTime, frequencyHz, best.Gain);
 
             meta = new FitsFileMetaData
             {
@@ -178,23 +178,5 @@ namespace RASTA.Processing.Calibration
             return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX + 1e-9);
         }
 
-        private string BuildCalibrationFilePath(string prefix, DateTime startTime, double frequencyHz, double gainDb)
-        {
-            string timestamp = startTime.ToString("HHmmss");
-
-            // -----------------------------
-            // 4. Build output directory
-            // -----------------------------
-            string baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "RASTA",
-                "Data",
-                $"{frequencyHz / 1_000_000:F4}MHz",
-                startTime.ToString("yyyy-MM-dd"));
-
-            Directory.CreateDirectory(baseDir);
-
-            return Path.Combine(baseDir, $"{prefix}_{timestamp}_{frequencyHz:F0}Hz_{gainDb:F1}dB.fits");
-        }
     }
 }

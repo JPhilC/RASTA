@@ -84,13 +84,23 @@
                         HorizontalAlignment="Right"
                         Margin="10,0">
 
-                <TextBlock Text="Observe:"
+                
+                <TextBlock Text="Capture:"
                            Foreground="LightGray"
                            FontWeight="Bold"
                            Margin="0,0,10,0"/>
 
-                <TextBlock Text="{Binding CaptureStatus}"
+                <Grid>
+                    <ProgressBar
+                        Minimum="0"
+                        Maximum="1"
+                        Value="{Binding CaptureProgress}"
+                        Visibility="{Binding IsCaptureInProgress, Converter={StaticResource BooleanToVisibilityConverter}}"
+                        Height="6" Width="100"
+                        Margin="10,0"/>
+                    <TextBlock Text="{Binding CaptureStatus}"
                            Foreground="White"/>
+                </Grid>
             </StackPanel>
 
         </Grid>

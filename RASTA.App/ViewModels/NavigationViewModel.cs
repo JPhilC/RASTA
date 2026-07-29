@@ -88,7 +88,6 @@ namespace RASTA.App.ViewModels
             _nav.NavigateTo<ObserveViewModel>(vm =>
             {
                 vm.ActivePlan = _planViewModel.SelectedPlan;
-                vm.ActiveCalibration = _calibrationService.CurrentCalibration;
             });
 
             UpdateView();

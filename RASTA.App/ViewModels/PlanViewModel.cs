@@ -98,24 +98,6 @@ namespace RASTA.App.ViewModels
                 SavedPlans.Add(plan);
         }
 
-        // Build sweep points (Equatorial or AltAz only)
-        [RelayCommand]
-        private void BuildSweep()
-        {
-            if (PlanType == PlanType.Drift)
-            {
-                PlannedPoints = new List<TargetPoint>(); // Drift has no points
-                return;
-            }
-
-            Range.Mode = PlanType == PlanType.Equatorial
-                ? CoordinateMode.Equatorial
-                : CoordinateMode.AltAz;
-
-            Range.DwellTime = TimeSpan.FromSeconds(DwellSeconds);
-
-            PlannedPoints = _planner.BuildSweep(Range).ToList();
-        }
 
         // Build CapturePlan object
         public CapturePlan BuildCapturePlan()
@@ -182,8 +164,6 @@ namespace RASTA.App.ViewModels
             DriftDurationMinutes = plan.DriftDurationMinutes;
             DriftCadenceSeconds = plan.DriftCadenceSeconds;
 
-            // Rebuild sweep points from Range
-            BuildSweep();
         }
 
         // New plan

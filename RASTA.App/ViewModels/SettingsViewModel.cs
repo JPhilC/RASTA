@@ -61,6 +61,7 @@ namespace RASTA.App.ViewModels
         [ObservableProperty]
         private double siteElevationM;
 
+
         partial void OnSiteLatitudeDegChanged(double value)
         {
             if (_mountIsInitialising)
@@ -105,6 +106,15 @@ namespace RASTA.App.ViewModels
         {
             _state.Mode = value;
         }
+
+        // -------------------------------
+        // Slew rate (user will need to determine what is appropriate for their mount)
+        // -------------------------------
+        [ObservableProperty]
+        private double slewRateDegPerSec = 3.0;
+
+        [ObservableProperty]
+        private double horizonLimitDeg = 10.0;
 
         // -------------------------------
         // Tracking (session-specific)

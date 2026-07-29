@@ -64,6 +64,18 @@ public partial class PrepareViewModel : ViewModelBase
         set => _settings.SiteElevationM = value;
     }
 
+    public double SlewRateDegPerSec
+    {
+        get => _settings.SlewRateDegPerSec;
+        set => _settings.SlewRateDegPerSec = value;
+    }
+
+    public double HorizonLimitDeg
+    {
+        get => _settings.HorizonLimitDeg;
+        set => _settings.HorizonLimitDeg = value;
+    }
+
     public double CalibrationFrequencyHz
     {
         get => _settings.CalibrationFrequencyHz;
@@ -198,7 +210,7 @@ public partial class PrepareViewModel : ViewModelBase
     {
         ClearErrors(nameof(CalibrationFrequencyHz));
 
-        if (value < 1.0e9 || value > 2.0e9)
+        if (value < 1.0e6 || value > 2.0e9)
             AddError(nameof(CalibrationFrequencyHz),
                 "Calibration frequency must be between 1 GHz and 2 GHz.");
     }

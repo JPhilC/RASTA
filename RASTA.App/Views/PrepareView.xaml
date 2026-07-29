@@ -59,10 +59,12 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Column="0" Grid.Row="0" Grid.ColumnSpan="2"
-                       Text="Site Location"
+                       Text="Mount Details"
                        FontSize="24"
                        FontWeight="Bold"
                        Margin="0 0 0 20"/>
@@ -80,6 +82,14 @@
             <TextBlock Grid.Column="0" Grid.Row="3" Text="Elevation (m)"/>
             <TextBox Grid.Column="1" Grid.Row="3" Width="100"
                      Text="{Binding SiteElevationM}"
+                     Margin="5,0,0,5"/>
+            <TextBlock Grid.Column="0" Grid.Row="4" Text="Slew Rate (deg/sec)"/>
+            <TextBox Grid.Column="1" Grid.Row="4" Width="100"
+                     Text="{Binding SlewRateDegPerSec}"
+                     Margin="5,0,0,5"/>
+            <TextBlock Grid.Column="0" Grid.Row="5" Text="Horizon Limit (deg)"/>
+            <TextBox Grid.Column="1" Grid.Row="5" Width="100"
+                     Text="{Binding HorizonLimitDeg}"
                      Margin="5,0,0,5"/>
         </Grid>
 
