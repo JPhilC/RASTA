@@ -6,6 +6,7 @@
              xmlns:helpers="clr-namespace:RASTA.App.Helpers"
              xmlns:converters="clr-namespace:RASTA.App.Converters"
              xmlns:selectors="clr-namespace:RASTA.App.Selectors"
+             xmlns:controls="clr-namespace:RASTA.App.Controls"
              mc:Ignorable="d">
 
     <UserControl.Resources>
@@ -178,12 +179,21 @@
                     <StackPanel Orientation="Horizontal">
                         <StackPanel Margin="0 5 20 0">
                             <TextBlock Text="Sample Rate (Hz)"/>
-                            <TextBox Width="120" Text="{Binding SampleRate}"/>
+                            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
+                                        FrequencyHz="{Binding SampleRate,
+                                        UpdateSourceTrigger=PropertyChanged,
+                                        ValidatesOnDataErrors=True}"
+                                         Width="120" HorizontalAlignment="Left"/>
+
                         </StackPanel>
 
                         <StackPanel Margin="0 5 20 0">
                             <TextBlock Text="Center Frequency (Hz)"/>
-                            <TextBox Width="160" Text="{Binding CenterFrequency}"/>
+                            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
+                                        FrequencyHz="{Binding CenterFrequency,
+                                        UpdateSourceTrigger=PropertyChanged,
+                                        ValidatesOnDataErrors=True}"
+                                         Width="120" HorizontalAlignment="Left"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -197,12 +207,6 @@
                             <TextBlock Text="Integrations"/>
                             <TextBox Width="120" Text="{Binding Integrations}"/>
                         </StackPanel>
-
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Gain"/>
-                            <TextBox Width="120" Text="{Binding Gain}"/>
-                        </StackPanel>
-
                     </StackPanel>
                 </StackPanel>
 
@@ -221,22 +225,20 @@
                         <CheckBox IsChecked="{Binding TrackingEnabled}"/>
                     </StackPanel>
 
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Home When Complete"/>
+                        <CheckBox IsChecked="{Binding GoToHomeAfterCapture}"/>
+                    </StackPanel>
+
                 </StackPanel>
 
                 <!-- OUTPUT PARAMETERS -->
-                <TextBlock Text="Output" FontWeight="Bold" Margin="0 20 0 0"/>
 
                 <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
 
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Output Folder"/>
-                        <TextBox Width="200" Text="{Binding OutputFolder}"/>
-                    </StackPanel>
+                    <StackPanel Margin="0 5 20 0"/>
 
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="File Prefix"/>
-                        <TextBox Width="120" Text="{Binding FilePrefix}"/>
-                    </StackPanel>
+                    <StackPanel Margin="0 5 20 0"/>
 
                 </StackPanel>
 

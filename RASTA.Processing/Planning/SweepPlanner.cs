@@ -126,7 +126,7 @@ namespace RASTA.Processing.Planning
         private IEnumerable<TargetPoint> BuildEquatorialSweep(TargetRange range)
         {
             var points = new List<TargetPoint>();
-
+            
             for (double dec = range.DecStartDeg; dec <= range.DecEndDeg; dec += range.StepDeg)
             {
                 for (double ra = range.RAStartHours; ra <= range.RAEndHours; ra += DegreesToHours(range.StepDeg))

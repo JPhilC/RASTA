@@ -32,6 +32,18 @@ namespace RASTA.Core.Capture
 
         public static TargetPoint FromAzEl(double azDeg, double elDeg)
             => new TargetPoint(CoordinateMode.AltAz, double.NaN, double.NaN, azDeg, elDeg);
+
+        public override string ToString()
+        {
+            if (Mode==CoordinateMode.Equatorial)
+            {
+                return $"RA{RightAscensionHours:F1}-Dec{DeclinationDeg:F1}";
+            }
+            else
+            {
+                return $"El{ElevationDeg:F0}-Az{AzimuthDeg:F1}";
+            }
+        }
     }
 
 }

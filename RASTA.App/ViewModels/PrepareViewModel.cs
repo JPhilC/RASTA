@@ -18,6 +18,8 @@ public partial class PrepareViewModel : ViewModelBase
     private readonly SdrDeviceService _sdrDeviceService;
     private readonly SdrState _sdrState;
     private readonly CalibrationService _calibrationService;
+    private readonly IUserPromptService _userPromptService;
+    private readonly StatusBarViewModel _statusBar;
 
     #region Properties ...
     // -----------------------------
@@ -32,9 +34,6 @@ public partial class PrepareViewModel : ViewModelBase
 
     [ObservableProperty]
     private bool isCalibrated;
-
-    [ObservableProperty]
-    private string statusMessage = "Idle";
 
     [ObservableProperty]
     private double progressValue;
@@ -132,11 +131,15 @@ public partial class PrepareViewModel : ViewModelBase
         SdrDeviceService sdrDeviceService,
         SdrState sdrState,
         CalibrationService calibrationService,
-        RastaLogger logger)
+        RastaLogger logger,
+        IUserPromptService userPromptService,
+        StatusBarViewModel statusBar)
     {
         _settings = settings;
         _telescopeService = telescopeService;
         _sdrDeviceService = sdrDeviceService;
+        _userPromptService = userPromptService;
+        _statusBar = statusBar;
         _sdrState = sdrState;
         _calibrationService = calibrationService;
         _logger = logger;
@@ -285,14 +288,45 @@ public partial class PrepareViewModel : ViewModelBase
         ISdrDevice? device = _sdrDeviceService.GetDevice();
         if (!_sdrState.IsConnected || device is null)
         {
-            StatusMessage = "No SDR device selected.";
+            _statusBar.CaptureStatus = "No SDR device selected.";
             return;
         }
 
-        StatusMessage = "Starting calibration…";
+        // ---------------------------------------------------------
+        // 1. Check for previously saved calibration
+        // ---------------------------------------------------------
+        var existing = await _calibrationService.TryLoadSavedCalibrationAsync();
+
+        if (existing != null)
+        {
+            bool reuse = await _userPromptService.AskYesNoAsync(
+                $"A previous calibration exists (Gain = {existing.GainDb:F1} dB).\n\n" +
+                $"Calibration was performed at {existing.CenterFrequencyHz / 1e6:F3} MHz,\n" +
+                $"Sample Rate = {existing.SampleRateHz / 1e6:F3} MHz,\n" +
+                $"FFT Size = {existing.FftSize}, " +
+                $"On {existing.TimestampUtc.ToLocalTime():g}.\n\n" +
+                $"Do you want to reuse it instead of running a new calibration?",
+                "Reuse Calibration");
+
+            if (reuse)
+            {
+                Calibration = existing;
+                IsCalibrated = true;
+                _statusBar.CaptureStatus = $"Reusing Gain = {existing.GainDb:F1} dB";
+                _statusBar.CalibratedGain = $"Gain = {existing.GainDb:F1} dB";
+                _logger.Info("Reused saved calibration.");
+                return;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // 2. Run a new calibration
+        // ---------------------------------------------------------
+        _statusBar.CaptureStatus = "Starting calibration…";
         ProgressValue = 0.0;
         IsCalibrated = false;
         IsCalibrationRunning = true;
+        _statusBar.IsCaptureInProgress = true;
 
         double frequencyHz = CalibrationFrequencyHz;
         double sampleRateHz = SampleRateHz;
@@ -304,32 +338,41 @@ public partial class PrepareViewModel : ViewModelBase
         try
         {
             Calibration = await _calibrationService.RunCalibrationAsync(
-                    device,
-                    frequencyHz,
-                    sampleRateHz,
-                    dwell,
-                    fftSize,
-                    (msg, pct) =>
-                    {
-                        StatusMessage = msg;
-                        ProgressValue = pct;
-                    },
-                    _calibrationCts.Token);
+                device,
+                frequencyHz,
+                sampleRateHz,
+                dwell,
+                fftSize,
+                (msg, pct) =>
+                {
+                    _statusBar.CaptureStatus = msg;
+                    _statusBar.CaptureProgress = pct;
+                },
+                _calibrationCts.Token);
 
             IsCalibrated = true;
-            StatusMessage = $"Calibration complete. Gain = {Calibration.GainDb} dB";
-            _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb} dB.");
+            _statusBar.CaptureStatus = $"Done. Gain = {Calibration.GainDb:F1} dB";
+            _statusBar.CalibratedGain = $"Gain = {Calibration.GainDb:F1} dB";
+            _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb:F1} dB.");
+        }
+        catch (OperationCanceledException)
+        {
+            _statusBar.CaptureStatus = "Cancelled.";
+            _logger.Info("Calibration cancelled by user.");
+            _statusBar.CalibratedGain = $"Uncalibrated";
         }
         catch (Exception ex)
         {
-            StatusMessage = "Calibration failed.";
+            _statusBar.CaptureStatus = "Failed.";
             _logger.Error($"Calibration failed: {ex.Message}");
+            _statusBar.CalibratedGain = $"Uncalibrated";
         }
         finally
         {
             _calibrationCts?.Dispose();
             _calibrationCts = null;
             IsCalibrationRunning = false;
+            _statusBar.IsCaptureInProgress = false;
         }
     }
 
@@ -337,7 +380,9 @@ public partial class PrepareViewModel : ViewModelBase
     private void CancelCalibration()
     {
         _calibrationCts?.Cancel();
-        StatusMessage = "Cancelling calibration…";
+        _statusBar.CaptureStatus = "Cancelled";
+        _statusBar.IsCaptureInProgress = false;
+        _statusBar.CalibratedGain = $"Uncalibrated";
     }
 
 }

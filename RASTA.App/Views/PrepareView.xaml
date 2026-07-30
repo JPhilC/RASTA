@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:wpf="clr-namespace:System.Windows;assembly=PresentationCore"
+             xmlns:controls="clr-namespace:RASTA.App.Controls"
              mc:Ignorable="d">
 
     <Grid Margin="10">
@@ -13,6 +14,7 @@
         </Grid.ColumnDefinitions>
 
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
@@ -96,97 +98,73 @@
         <!-- ========================= -->
         <!--  CALIBRATION PANEL        -->
         <!-- ========================= -->
-        <StackPanel Grid.Column="0" Grid.Row="1">
-            <TextBlock Text="Calibration"
+        <Grid Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                Text="Calibration"
                        FontSize="24"
                        FontWeight="Bold"
                        Margin="0 0 0 20"/>
 
             <!-- Calibration Settings -->
-            <StackPanel Orientation="Vertical">
 
-                <TextBlock Text="Calibration Frequency (Hz)" />
-                <TextBox Text="{Binding CalibrationFrequencyHz,
+            <TextBlock Grid.Row="1" Grid.Column="0"
+                Text="Calibration Frequency (Hz)"/>
+            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
+                                        FrequencyHz="{Binding CalibrationFrequencyHz,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
-                         Width="200"
-                         Margin="0 0 0 10"
+                         Width="120" HorizontalAlignment="Left" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
-
-                <TextBlock Text="Sample Rate (Hz)" />
-                <TextBox Text="{Binding SampleRateHz,
+            
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Sample Rate (Hz)"/>
+            <controls:FrequencyEntryBox Grid.Row="2" Grid.Column="1" 
+                                        FrequencyHz="{Binding SampleRateHz,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
-                         Width="200"
-                         Margin="0 0 0 10"
+                         Width="120" HorizontalAlignment="Left" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
 
-                <TextBlock Text="FFT Size" />
-                <TextBox Text="{Binding FftSize,
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="FFT Size"/>
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding FftSize,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
-                         Width="200"
-                         Margin="0 0 0 10"
+                         Width="100" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
 
-                <TextBlock Text="Dwell Time (seconds)" />
-                <TextBox Text="{Binding CalibrationDwellSeconds,
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Dwell Time (seconds)" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding CalibrationDwellSeconds,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
-                         Width="200"
-                         Margin="0 0 0 20"
+                         Width="100" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
-            </StackPanel>
-
             <!-- Calibrate Button -->
-            <Button Content="Calibrate"
-                    Width="200"
+            <Button Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Content="Calibrate"
+                    Width="200" Margin="5,20,0,5"
                     Height="40"
                     Command="{Binding RunCalibrationCommand}"
                     Visibility="{Binding IsCalibrationRunning, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
 
             <!-- Cancel Calibrate Button -->
-            <Button Content="Cancel"
-                    Width="200"
+            <Button Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Content="Cancel"
+                    Width="200" Margin="5,20,0,5"
                     Height="40"
                     Command="{Binding CancelCalibrationCommand}"
                     Visibility="{Binding IsCalibrationRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
-            <!-- Calibration Status -->
-            <TextBlock Text="Calibration Status:"
-                       FontWeight="Bold"
-                       Margin="0 20 0 5"/>
-
-            <TextBlock Text="{Binding StatusMessage}" />
-
-            <!-- Progress Bar -->
-            <ProgressBar Minimum="0"
-                         Maximum="1"
-                         Value="{Binding ProgressValue}"
-                         Height="20"
-                         Margin="0 10 0 0"/>
-        </StackPanel>
-
-        <!-- ========================= -->
-        <!--  SDR STATUS PANEL         -->
-        <!-- ========================= -->
-        <StackPanel Grid.Column="1" Grid.Row="1">
-            <TextBlock Text="SDR Status"
-                       FontSize="24"
-                       FontWeight="Bold"
-                       Margin="0 0 0 20"/>
-
-            <TextBlock Text="{Binding IsConnectedSdr,
-                                      StringFormat=SDR Connected: {0}}"
-                       FontSize="16"
-                       FontWeight="SemiBold"/>
-
-            <TextBlock Text="{Binding Calibration.GainDb,
-                                      StringFormat=Selected Gain: {0} dB}"
-                       Margin="0 10 0 0"
-                       Visibility="{Binding IsCalibrated,
-                                            Converter={StaticResource BooleanToVisibilityConverter}}"/>
-        </StackPanel>
+        </Grid>
 
     </Grid>
 </UserControl>

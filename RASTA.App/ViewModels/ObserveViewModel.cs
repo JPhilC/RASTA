@@ -8,6 +8,7 @@ using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Planning;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace RASTA.App.ViewModels;
@@ -160,6 +161,11 @@ public partial class ObserveViewModel : ObservableObject
             return;
         }
 
+        // Enable tracking if the plan requires it and the mount supports it.
+        if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
+        {
+            await _mount.SetTrackingAsync(true);
+        }
 
         _sweepCts = new CancellationTokenSource();
         var ct = _sweepCts.Token;
@@ -256,20 +262,33 @@ public partial class ObserveViewModel : ObservableObject
                     StopProgressTimer();
 
                 }
-            }
 
-            MessageBox.Show("Sweep complete.");
+                targetIndex++;
+            }
+            _statusBar.CaptureStatus = "Completed";
         }
         catch (OperationCanceledException)
         {
-            MessageBox.Show("Sweep cancelled.");
+            _statusBar.CaptureStatus = "Cancelled";
         }
         catch (Exception ex)
         {
+            _statusBar.CaptureStatus = "Error";
             MessageBox.Show(ex.Message, "Sweep Error");
         }
         finally
         {
+            if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
+            {
+                await _mount.SetTrackingAsync(false);
+            }
+            if (ActivePlan.GoToHomeAfterCapture)
+            {
+                if (await _mount.GetCanFindHomeAsync())
+                {
+                    await _mount.FindHomeAsync();
+                }
+            }
             IsBusy = false;
         }
     }

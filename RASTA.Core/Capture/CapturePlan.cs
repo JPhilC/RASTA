@@ -37,10 +37,11 @@ namespace RASTA.Core.Capture
         public double CenterFrequency { get; init; }
         public int FftBins { get; init; }
         public int Integrations { get; init; }
-        public double Gain { get; init; }
 
         public double SettleTimeSeconds { get; init; }
         public bool TrackingEnabled { get; init; }
+
+        public bool GoToHomeAfterCapture { get; init; } = true;
 
         // Drift-specific
         public double DriftDeclinationDeg { get; init; }

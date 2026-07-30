@@ -52,8 +52,13 @@ namespace RASTA.App
                 return svc.GetDevice();   // DO NOT throw here
             });
 
+            // ---------------------------------------------------------
             // USB watcher (attaches to window handle when resolved)
+            // ---------------------------------------------------------
             services.AddSingleton<UsbWatcherService>();
+            
+            
+            services.AddSingleton<IUserPromptService, MessageBoxPromptService>();
 
             // ---------------------------------------------------------
             // FFT engine
@@ -63,6 +68,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // Calibration + Observation
             // ---------------------------------------------------------
+            services.AddSingleton<CalibrationRepository>();
             services.AddSingleton<CalibrationService>();
             services.AddSingleton<Calibrator>();
             services.AddSingleton<ObservationCaptureService>();

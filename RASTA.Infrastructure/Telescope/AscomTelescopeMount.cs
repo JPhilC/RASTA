@@ -105,6 +105,8 @@ public class AscomTelescopeMount : ITelescopeMount
 
     public Task UnParkAsync() => _client.PutAsync("unpark");
 
+    public Task FindHomeAsync() => _client.PutAsync("findhome");
+
     public async Task SetSiderealTrackingAsync()
     {
         await SetTrackingAsync(true);
@@ -121,9 +123,9 @@ public class AscomTelescopeMount : ITelescopeMount
     public Task<bool> GetAtParkAsync() => _client.GetAsync<bool>("atpark");
     public Task<int> GetTrackingRateAsync() => _client.GetAsync<int>("trackingrate");
 
+    public Task<bool> GetCanSetTrackingAsync() => _client.GetAsync<bool>("cansettracking");
 
-
-    
+    public Task<bool> GetCanFindHomeAsync() => _client.GetAsync<bool>("canfindhome");
 
     public Task SlewToRaDecAsync(double raHours, double decDeg)
     {

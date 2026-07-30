@@ -17,6 +17,9 @@ namespace RASTA.App.ViewModels
         private string captureStatus = "Idle";
 
         [ObservableProperty]
+        private string calibratedGain = "Uncalibrated";
+
+        [ObservableProperty]
         private double captureProgress;
 
         [ObservableProperty]

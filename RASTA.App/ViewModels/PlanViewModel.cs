@@ -59,7 +59,7 @@ namespace RASTA.App.ViewModels
         [ObservableProperty] private double centerFrequency = 1420_405_751;
         [ObservableProperty] private int fftBins = 4096;
         [ObservableProperty] private int integrations = 1;
-        [ObservableProperty] private double gain = 0;
+        [ObservableProperty] private bool goToHomeAfterCapture = true;
 
         // Telescope parameters
         [ObservableProperty] private double settleTimeSeconds = 1;
@@ -117,10 +117,10 @@ namespace RASTA.App.ViewModels
                 CenterFrequency = CenterFrequency,
                 FftBins = FftBins,
                 Integrations = Integrations,
-                Gain = Gain,
 
                 TrackingEnabled = TrackingEnabled,
                 SettleTimeSeconds = SettleTimeSeconds,
+                GoToHomeAfterCapture = GoToHomeAfterCapture,
 
                 DriftDeclinationDeg = DriftDeclinationDeg,
                 DriftDurationMinutes = DriftDurationMinutes,
@@ -155,10 +155,10 @@ namespace RASTA.App.ViewModels
             CenterFrequency = plan.CenterFrequency;
             FftBins = plan.FftBins;
             Integrations = plan.Integrations;
-            Gain = plan.Gain;
 
             TrackingEnabled = plan.TrackingEnabled;
             SettleTimeSeconds = plan.SettleTimeSeconds;
+            GoToHomeAfterCapture = plan.GoToHomeAfterCapture;
 
             DriftDeclinationDeg = plan.DriftDeclinationDeg;
             DriftDurationMinutes = plan.DriftDurationMinutes;
@@ -196,10 +196,10 @@ namespace RASTA.App.ViewModels
                 CenterFrequency = plan.CenterFrequency,
                 FftBins = plan.FftBins,
                 Integrations = plan.Integrations,
-                Gain = plan.Gain,
 
                 TrackingEnabled = plan.TrackingEnabled,
                 SettleTimeSeconds = plan.SettleTimeSeconds,
+                GoToHomeAfterCapture = plan.GoToHomeAfterCapture,
 
                 DriftDeclinationDeg = plan.DriftDeclinationDeg,
                 DriftDurationMinutes = plan.DriftDurationMinutes,

@@ -36,8 +36,14 @@ public interface ITelescopeMount
     Task<bool> GetAtHomeAsync();
     Task<bool> GetAtParkAsync();
 
+    Task<bool> GetCanSetTrackingAsync();
+
+    Task<bool> GetCanFindHomeAsync();
+
     Task ParkAsync();
     Task UnParkAsync();
+
+    Task FindHomeAsync();
 
     // Slewing
     Task SlewToRaDecAsync(double raHours, double decDeg);

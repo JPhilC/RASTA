@@ -123,6 +123,9 @@ namespace RASTA.Processing.Calibration
 
             return new CalibrationProfile
             {
+                CenterFrequencyHz = frequencyHz,
+                SampleRateHz = sampleRateHz,
+                FftSize = fftSize,
                 GainDb = best.Gain,
                 BaselineSpectrum = baselineSpectrum,
                 BaselineMean = baselineSpectrum.Average(),

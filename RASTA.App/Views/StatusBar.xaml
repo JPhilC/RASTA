@@ -27,19 +27,23 @@
                 <!-- Connection dot -->
                 <Ellipse Width="10" Height="10"
                          Margin="0,0,8,0"
-                         Fill="{Binding TelescopeConnected, Converter={StaticResource BooleanToBrushConverter}}"/>
+                         Fill="{Binding TelescopeConnected, Converter={StaticResource BooleanToBrushConverter}}"
+                         VerticalAlignment="Center"/>
 
                 <TextBlock Text="Telescope:"
                            Foreground="LightGray"
                            FontWeight="Bold"
-                           Margin="0,0,10,0"/>
+                           Margin="0,0,10,0"
+                           VerticalAlignment="Center"/>
 
                 <TextBlock Text="{Binding TelescopeStatus}"
                            Foreground="White"
-                           Margin="0,0,20,0"/>
+                           Margin="0,0,20,0"
+                           VerticalAlignment="Center"/>
 
                 <TextBlock Text="{Binding CoordinateStatus}"
-                           Foreground="White"/>
+                           Foreground="White"
+                           VerticalAlignment="Center"/>
             </StackPanel>
 
             <!-- Separator -->
@@ -59,15 +63,23 @@
                 <!-- Connection dot -->
                 <Ellipse Width="10" Height="10"
                          Margin="0,0,8,0"
-                         Fill="{Binding SdrConnected, Converter={StaticResource BooleanToBrushConverter}}"/>
+                         Fill="{Binding SdrConnected, Converter={StaticResource BooleanToBrushConverter}}"
+                         VerticalAlignment="Center"/>
 
                 <TextBlock Text="SDR:"
                            Foreground="LightGray"
                            FontWeight="Bold"
-                           Margin="0,0,10,0"/>
+                           Margin="0,0,10,0"
+                           VerticalAlignment="Center"/>
 
                 <TextBlock Text="{Binding SdrStatus}"
-                           Foreground="White"/>
+                           Foreground="White"
+                           Margin="0,0,10,0"
+                           VerticalAlignment="Center"/>
+                
+                <TextBlock Text="{Binding CalibratedGain}"
+                           Foreground="White"
+                           VerticalAlignment="Center"/>
             </StackPanel>
 
             <!-- Separator -->
@@ -88,7 +100,8 @@
                 <TextBlock Text="Capture:"
                            Foreground="LightGray"
                            FontWeight="Bold"
-                           Margin="0,0,10,0"/>
+                           Margin="0,0,10,0"
+                           VerticalAlignment="Center"/>
 
                 <Grid>
                     <ProgressBar
@@ -96,10 +109,12 @@
                         Maximum="1"
                         Value="{Binding CaptureProgress}"
                         Visibility="{Binding IsCaptureInProgress, Converter={StaticResource BooleanToVisibilityConverter}}"
-                        Height="6" Width="100"
-                        Margin="10,0"/>
+                        Height="14" Width="100"
+                        Margin="10,0"
+                        VerticalAlignment="Center"/>
                     <TextBlock Text="{Binding CaptureStatus}"
-                           Foreground="White"/>
+                           Foreground="White"
+                           VerticalAlignment="Center"/>
                 </Grid>
             </StackPanel>
 
