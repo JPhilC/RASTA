@@ -1,6 +1,11 @@
-﻿using RASTA.Core.Sdr;
+﻿using RASTA.Infrastructure.Services;
+using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using System;
+using System.Linq;
 
 namespace RASTA.App.Services
 {
@@ -8,11 +13,13 @@ namespace RASTA.App.Services
     {
         private readonly ISdrDevice _sdr;
         private readonly FitsFileIo _fits;
+        private readonly UserOptionsService _optionsService;
 
-        public SdrRawCaptureService(ISdrDevice sdr, FitsFileIo fits)
+        public SdrRawCaptureService(ISdrDevice sdr, FitsFileIo fits, UserOptionsService optionsService)
         {
             _sdr = sdr;
             _fits = fits;
+            _optionsService = optionsService;
         }
 
         public async Task<string> CaptureRawIqToFitsAsync(
@@ -41,8 +48,7 @@ namespace RASTA.App.Services
             // -----------------------------
             // 4. Build output directory
             // -----------------------------
-            string baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            string baseDir = Path.Combine(_optionsService.Options.CaptureFolder,
                 "RASTA",
                 "RawIqData",
                 $"{frequencyHz / 1_000_000:F4}MHz",

@@ -5,11 +5,13 @@ using System.Linq;
 using System.Text.Json;
 using RASTA.Core.Capture;
 using RASTA.Core.Storage;
+using RASTA.Infrastructure.Services;
 
 namespace RASTA.Infrastructure.Storage
 {
     public class JsonPlanRepository : IPlanRepository
     {
+        private readonly UserOptionsService _userOptionsService;
         private readonly string folder;
 
         private static readonly JsonSerializerOptions Options =
@@ -19,12 +21,10 @@ namespace RASTA.Infrastructure.Storage
                 PropertyNameCaseInsensitive = true
             };
 
-        public JsonPlanRepository()
+        public JsonPlanRepository(UserOptionsService userOptionsService)
         {
-            folder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "RASTA",
-                "Plans");
+            _userOptionsService = userOptionsService;
+            folder = Path.Combine(userOptionsService.Options.PlansFolder);
 
             Directory.CreateDirectory(folder);
         }

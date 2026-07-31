@@ -1,4 +1,5 @@
 ﻿using RASTA.Core.Calibration;
+using RASTA.Infrastructure.Services;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Controls;
@@ -8,6 +9,7 @@ namespace RASTA.Infrastructure.Storage
 
     public class CalibrationRepository
     {
+        private readonly UserOptionsService _userOptionsService;
         private readonly string filePath;
 
         private static readonly JsonSerializerOptions Options =
@@ -17,11 +19,10 @@ namespace RASTA.Infrastructure.Storage
                 PropertyNameCaseInsensitive = true
             };
 
-        public CalibrationRepository()
+        public CalibrationRepository(UserOptionsService userOptionsService)
         {
-            var folder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "RASTA");
+            _userOptionsService = userOptionsService;
+            var folder = Path.Combine(_userOptionsService.Options.CaptureFolder);
             Directory.CreateDirectory(folder);
 
             filePath = Path.Combine(folder, "calibration.json");

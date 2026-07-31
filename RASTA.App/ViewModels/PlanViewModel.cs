@@ -9,6 +9,7 @@ using RASTA.Core.Storage;
 using RASTA.Processing.Planning;
 using System.Collections.ObjectModel;
 using System.IO;
+using RASTA.Infrastructure.Services;
 
 namespace RASTA.App.ViewModels
 {
@@ -19,6 +20,7 @@ namespace RASTA.App.ViewModels
         private readonly SdrState _sdrState;
         private readonly SweepPlanner _planner;
         private readonly IPlanRepository _repository;
+        private readonly UserOptionsService _userOptionsService;
 
         public SettingsViewModel Settings { get; }
 
@@ -70,12 +72,17 @@ namespace RASTA.App.ViewModels
         [ObservableProperty] private double driftDurationMinutes = 10;
         [ObservableProperty] private double driftCadenceSeconds = 1;
 
-        public PlanViewModel(SdrState sdrState, SweepPlanner planner, SettingsViewModel settings, IPlanRepository repository)
+        public PlanViewModel(SdrState sdrState, 
+            SweepPlanner planner, 
+            SettingsViewModel settings, 
+            IPlanRepository repository,
+            UserOptionsService userOptionsService)
         {
             _sdrState = sdrState;
             _planner = planner;
             _repository = repository;
             Settings = settings;
+            _userOptionsService = userOptionsService;
 
             LoadSavedPlans();
 
@@ -214,9 +221,7 @@ namespace RASTA.App.ViewModels
         private void DeletePlan(CapturePlan plan)
         {
             var fileName = plan.FriendlyName + ".json";
-            var path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "RASTA", "Plans", fileName);
+            var path = Path.Combine(_userOptionsService.Options.PlansFolder, fileName);
 
             if (File.Exists(path))
                 File.Delete(path);

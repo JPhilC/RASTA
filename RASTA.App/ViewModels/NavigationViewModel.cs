@@ -15,7 +15,8 @@ namespace RASTA.App.ViewModels
             Plan,
             Observe,
             Process,
-            Visualise
+            Visualise,
+            Options
         }
 
         [ObservableProperty]
@@ -43,7 +44,7 @@ namespace RASTA.App.ViewModels
             StatusBarViewModel = statusBarViewModel;
             _calibrationService = calibrationService;
             _planViewModel = planViewModel;
-            
+
             StatusBarViewModel.PropertyChanged += (_, args) =>
             {
                 if (args.PropertyName == nameof(StatusBarViewModel.SdrConnected))
@@ -110,5 +111,15 @@ namespace RASTA.App.ViewModels
             _nav.NavigateTo<VisualiseViewModel>();
             UpdateView();
         }
+
+        [RelayCommand]
+        private void NavigateUserOptions()
+        {
+            CurrentSection = NavigationSection.Options;
+
+            _nav.NavigateTo<UserOptionsViewModel>();
+            UpdateView();
+        }
+
     }
 }

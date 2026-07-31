@@ -28,4 +28,9 @@
         <views:VisualiseView/>
     </DataTemplate>
 
+    <!-- User Options -->
+    <DataTemplate DataType="{x:Type vm:UserOptionsViewModel}">
+        <views:UserOptionsView/>
+    </DataTemplate>
+
 </ResourceDictionary>

@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using RASTA.Core.Planning;
-using RASTA.Core.Capture;
-using RASTA.Core.Telescope;
-using System.Text.Json.Serialization;
+﻿using RASTA.Core.Planning;
 
 namespace RASTA.Core.Capture
 {

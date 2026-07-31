@@ -3,11 +3,11 @@ using RASTA.App.Services;
 using RASTA.App.ViewModels;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
-using RASTA.Core.Telescope;
 using RASTA.Core.Storage;
+using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Fft;
 using RASTA.Infrastructure.Logging;
-using RASTA.Infrastructure.Sdr;
+using RASTA.Infrastructure.Services;
 using RASTA.Infrastructure.Storage;
 using RASTA.Infrastructure.Telescope;
 using RASTA.Processing.Calibration;
@@ -16,7 +16,6 @@ using RASTA.Processing.Gridding;
 using RASTA.Processing.Planning;
 using RASTA.Processing.Spectral;
 using RASTA.Processing.VisualisationData;
-using System;
 using System.Windows;
 
 namespace RASTA.App
@@ -33,7 +32,7 @@ namespace RASTA.App
             // Infrastructure
             // ---------------------------------------------------------
             services.AddSingleton(new RastaLogger("Logs/rasta.log"));
-
+            services.AddSingleton<UserOptionsService>();
             // ---------------------------------------------------------
             // Telescope state
             // ---------------------------------------------------------
@@ -122,6 +121,7 @@ namespace RASTA.App
             services.AddScoped<ObserveViewModel>();
             services.AddScoped<ProcessViewModel>();
             services.AddScoped<VisualiseViewModel>();
+            services.AddScoped<UserOptionsViewModel>();
             services.AddSingleton<NavigationService>();
             services.AddSingleton<NavigationViewModel>();
 

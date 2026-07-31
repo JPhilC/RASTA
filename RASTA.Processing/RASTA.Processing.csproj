@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RASTA.Core\RASTA.Core.csproj" />
+    <ProjectReference Include="..\RASTA.Infrastructure\RASTA.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

@@ -3,6 +3,7 @@ using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using System.IO;
 using RASTA.Core.Storage;
+using RASTA.Infrastructure.Services;
 
 namespace RASTA.Processing.Calibration
 {
@@ -10,8 +11,9 @@ namespace RASTA.Processing.Calibration
     {
         private readonly IFftEngine _fftEngine;
         private readonly FitsFileIo _fitsFileWriter;
+        private readonly UserOptionsService _userOptionsService;
 
-        public Calibrator(IFftEngine fftEngine, FitsFileIo fitsFileWriter)
+        public Calibrator(IFftEngine fftEngine, FitsFileIo fitsFileWriter, UserOptionsService userOptionsService)
         {
             _fftEngine = fftEngine;
             _fitsFileWriter = fitsFileWriter;
@@ -29,6 +31,7 @@ namespace RASTA.Processing.Calibration
             Action<string, double>? progressCallback,
             CancellationToken ct)
         {
+            var baseFolder = _userOptionsService.Options.CaptureFolder;
             var supportedGains = device.SupportedGainsDb.ToList();
             if (supportedGains.Count == 0)
                 throw new InvalidOperationException("SDR device reports no supported gains.");
@@ -60,7 +63,7 @@ namespace RASTA.Processing.Calibration
                     ct).ConfigureAwait(false);
 
                 // 2. FITS file
-                filePath = FitsPathBuilder.BuildCalibrationFilePath("cal", startTime, frequencyHz, gain);
+                filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "cal", startTime, frequencyHz, gain);
 
                 meta = new FitsFileMetaData
                 {
@@ -100,7 +103,7 @@ namespace RASTA.Processing.Calibration
 
 
             // save the baseline to a FITS file
-            filePath = FitsPathBuilder.BuildCalibrationFilePath("base", startTime, frequencyHz, best.Gain);
+            filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "base", startTime, frequencyHz, best.Gain);
 
             meta = new FitsFileMetaData
             {

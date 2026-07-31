@@ -17,7 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RASTA.Core\RASTA.Core.csproj" />
-    <ProjectReference Include="..\RASTA.Processing\RASTA.Processing.csproj" />
   </ItemGroup>
 
   <ItemGroup>

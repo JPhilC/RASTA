@@ -1,14 +1,15 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Services;
-using RASTA.Core.Calibration;
 using RASTA.Core.Capture;
+using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
+using RASTA.Infrastructure.Services;
 using RASTA.Processing.Planning;
+using System.Collections.Concurrent;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace RASTA.App.ViewModels;
@@ -27,6 +28,9 @@ public partial class ObserveViewModel : ObservableObject
     private readonly SweepPlanner _planner;
     private readonly FitsFileIo _fitsFileWriter;
     private readonly StatusBarViewModel _statusBar;
+    private readonly IFftEngine _fftEngine;
+    private readonly UserOptionsService _optionsService;
+
     private CancellationTokenSource? _sweepCts;
     
     private CapturePlan? _activePlan;
@@ -71,9 +75,11 @@ public partial class ObserveViewModel : ObservableObject
     [ObservableProperty]
     private bool isBusy;
 
+    public SpectrumViewModel SpectrumVm { get; private set; }
 
     public ObserveViewModel(
         SettingsViewModel settingsViewModel,
+        UserOptionsService userOptionsService,
         ITelescopeMount mount,
         TelescopeState mountState,
         SdrDeviceService sdrDeviceService,
@@ -81,9 +87,11 @@ public partial class ObserveViewModel : ObservableObject
         CalibrationService calibrationService,
         SweepPlanner planner,
         FitsFileIo fitsFileWriter,
-        StatusBarViewModel statusBarViewModel)
+        StatusBarViewModel statusBarViewModel,
+        IFftEngine fftEngine)
     {
         _settings = settingsViewModel;
+        _optionsService = userOptionsService;
         _mount = mount;
         _mountState = mountState;
         _calibrationService = calibrationService;
@@ -92,10 +100,14 @@ public partial class ObserveViewModel : ObservableObject
         _sdrDeviceService = sdrDeviceService;
         _fitsFileWriter = fitsFileWriter;
         _sdrState = sdrState;
+        _fftEngine = fftEngine;
         _device = sdrDeviceService.GetDevice();
+
+        SpectrumVm = new SpectrumViewModel(1024, 1420e6, 2.4e6); // default values; will be updated when calibration is loaded
 
         _mountState.PropertyChanged += MountState_PropertyChanged;
         _sdrState.PropertyChanged += SdrState_PropertyChanged;
+        // _device.RawIqChunkAvailable += OnChunk;
 
     }
 
@@ -117,6 +129,73 @@ public partial class ObserveViewModel : ObservableObject
         }
     }
 
+    #region Live Spectrum Charting
+
+    private readonly ConcurrentQueue<byte[]> _chunkProcessingQueue = new();
+
+    private CancellationTokenSource? _chunkWorkerCts;
+
+    private int fftSize = 1024;
+
+    private double[]? calibrationBaselineSpectrum;
+
+    private int chunkCount = 0;
+
+    private double[] running = new double[1024];
+
+    private bool captureInProgress = false;
+
+    private void OnChunk(byte[] chunk)
+    {
+        // FAST: enqueue chunk for DSP worker
+        _chunkProcessingQueue.Enqueue(chunk);
+    }
+
+    private async Task ChunkWorker(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (_chunkProcessingQueue.TryDequeue(out var chunk))
+            {
+                ProcessChunk(chunk);
+            }
+            else
+            {
+                await Task.Delay(1, ct); // yield
+            }
+        }
+    }
+
+    private void ProcessChunk(byte[] chunk)
+    {
+        if (!captureInProgress || calibrationBaselineSpectrum == null)
+            return;
+
+        var spectrum = _fftEngine.ComputeSpectrum(chunk, fftSize);
+
+        var corrected = new double[fftSize];
+        for (int i = 0; i < fftSize; i++)
+        {
+            double spectrumDb = 10 * Math.Log10(spectrum[i] + 1e-12);
+            double baselineDb = 10 * Math.Log10(calibrationBaselineSpectrum[i] + 1e-12);
+            corrected[i] = spectrumDb - baselineDb;
+        }
+
+        for (int i = 0; i < fftSize; i++)
+            running[i] = ((running[i] * chunkCount) + corrected[i]) / (chunkCount + 1);
+
+        chunkCount++;
+
+        // UI update must be dispatched
+        App.Current.Dispatcher.Invoke(() =>
+        {
+            SpectrumVm.UpdateSpectrum(running.ToArray());
+        });
+    }
+
+
+
+    #endregion
 
     [RelayCommand]
     private async Task CaptureSweepAsync()
@@ -174,8 +253,24 @@ public partial class ObserveViewModel : ObservableObject
             IsBusy = true;
 
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
+            fftSize = _calibrationService.CurrentCalibration.FftSize;
             int filesPerPoint = ActivePlan.FilesPerPoint;
             int targetIndex = 0;
+            calibrationBaselineSpectrum = _calibrationService.CurrentCalibration.BaselineSpectrum;
+
+            var dwellSeconds = ActivePlan.DwellTime.TotalSeconds / filesPerPoint;
+            var sampleRateHz = ActivePlan.SampleRate;
+            var frequencyHz = ActivePlan.CenterFrequency;
+
+            // Compute sample count safely
+            uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellSeconds);
+
+            SpectrumVm.FftSize = fftSize;
+            SpectrumVm.CenterFreqHz = frequencyHz;
+            SpectrumVm.SamplingFrequencyHz = sampleRateHz;
+
+            _chunkWorkerCts = new CancellationTokenSource();
+            _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
 
             foreach (var target in sweepPlanResult.Points)
             {
@@ -212,13 +307,16 @@ public partial class ObserveViewModel : ObservableObject
                 }
 
 
-                var dwellSeconds = ActivePlan.DwellTime.TotalSeconds / filesPerPoint;
-                var sampleRateHz = ActivePlan.SampleRate;
-                var frequencyHz = ActivePlan.CenterFrequency;
-                // Compute sample count safely
-                uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellSeconds);
 
-                // Capture multiple files at this point
+
+                // -----------------------------------------
+                // NEW TARGET → reset the running spectrum
+                // -----------------------------------------
+                running = new double[fftSize];
+                chunkCount = 0;
+                SpectrumVm.UpdateSpectrum(running.ToArray());
+
+                // Capture multiple files at this dwell point
                 for (int i = 0; i < filesPerPoint; i++)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -228,6 +326,8 @@ public partial class ObserveViewModel : ObservableObject
                     // -----------------------------
                     _statusBar.CaptureStatus = $"Capturing pos {targetIndex + 1} file {i + 1}";
                     StartProgressTimer(dwellSeconds);
+                    captureInProgress = true;
+                    
 
                     var rawIq = await _device.CaptureRawIqAsync(
                         frequencyHz,
@@ -236,9 +336,11 @@ public partial class ObserveViewModel : ObservableObject
                         sampleCount,
                         ct);
 
+                    captureInProgress = false;
+
                     StopProgressTimer();
 
-                    string fullPath = FitsPathBuilder.BuildSweepFilePath("sweep", startTime, ActivePlan.CenterFrequency, target.ToString(), i + 1, filesPerPoint);
+                    string fullPath = FitsPathBuilder.BuildSweepFilePath(_optionsService.Options.CaptureFolder, "sweep", startTime, ActivePlan.CenterFrequency, target.ToString(), i + 1, filesPerPoint);
 
                     var meta = new FitsFileMetaData
                     {
@@ -278,6 +380,9 @@ public partial class ObserveViewModel : ObservableObject
         }
         finally
         {
+            _chunkWorkerCts?.Cancel();
+            _chunkWorkerCts = null;
+
             if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
             {
                 await _mount.SetTrackingAsync(false);
@@ -289,6 +394,7 @@ public partial class ObserveViewModel : ObservableObject
                     await _mount.FindHomeAsync();
                 }
             }
+            captureInProgress = false;
             IsBusy = false;
         }
     }

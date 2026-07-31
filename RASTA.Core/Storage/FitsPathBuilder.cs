@@ -5,6 +5,7 @@ namespace RASTA.Core.Storage
     public static class FitsPathBuilder
     {
         public static string BuildCalibrationFilePath(
+            string baseFolder,
             string prefix,
             DateTime startTime,
             double frequencyHz,
@@ -12,10 +13,7 @@ namespace RASTA.Core.Storage
         {
             string timestamp = startTime.ToString("HHmmss");
 
-            string baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "RASTA",
-                "Data",
+            string baseDir = Path.Combine(baseFolder,
                 $"{frequencyHz / 1_000_000:F4}MHz",
                 startTime.ToString("yyyy-MM-dd"));
 
@@ -26,6 +24,7 @@ namespace RASTA.Core.Storage
         }
 
         public static string BuildSweepFilePath(
+            string baseFolder,
             string prefix,
             DateTime startTime,
             double frequencyHz,
@@ -35,10 +34,7 @@ namespace RASTA.Core.Storage
         {
             string timestamp = startTime.ToString("HHmmss");
 
-            string baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "RASTA",
-                "Data",
+            string baseDir = Path.Combine(baseFolder,
                 $"{frequencyHz / 1_000_000:F4}MHz",
                 startTime.ToString("yyyy-MM-dd"));
 

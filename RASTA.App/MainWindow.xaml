@@ -65,6 +65,7 @@
                     </Style>
                 </Button.Style>
             </Button>
+
             <Button Content="Plan"
                     Margin="5"
                     Padding="10"
@@ -81,6 +82,7 @@
                     </Style>
                 </Button.Style>
             </Button>
+
             <Button Content="Observe"
                     Margin="5"
                     Padding="10"
@@ -123,6 +125,23 @@
                     <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding CurrentSection}" Value="Visualise">
+                                <Setter Property="Background" Value="#444"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button Content="Options" VerticalAlignment="Bottom"
+                    Margin="5,50,5,5"
+                    Padding="10"
+                    Command="{Binding NavigateUserOptionsCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Options">
                                 <Setter Property="Background" Value="#444"/>
                                 <Setter Property="FontWeight" Value="Bold"/>
                                 <Setter Property="Foreground" Value="#4FC3F7"/>

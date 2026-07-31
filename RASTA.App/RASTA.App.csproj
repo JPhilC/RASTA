@@ -23,4 +23,10 @@
     <ProjectReference Include="..\RASTA.Processing\RASTA.Processing.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Update="Views\UserOptionsView.xaml.cs">
+      <SubType>Code</SubType>
+    </Compile>
+  </ItemGroup>
+
 </Project>
