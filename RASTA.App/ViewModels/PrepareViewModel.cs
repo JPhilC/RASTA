@@ -317,6 +317,12 @@ public partial class PrepareViewModel : ViewModelBase
                 _logger.Info("Reused saved calibration.");
                 return;
             }
+            else
+            {
+                await _userPromptService.AskOkAsync(
+                    "Press OK when ready to start a new calibration (i.e. after fitting terminator).",
+                    "Calibration");
+            }
         }
 
         // ---------------------------------------------------------
@@ -354,6 +360,11 @@ public partial class PrepareViewModel : ViewModelBase
             _statusBar.CaptureStatus = $"Done. Gain = {Calibration.GainDb:F1} dB";
             _statusBar.CalibratedGain = $"Gain = {Calibration.GainDb:F1} dB";
             _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb:F1} dB.");
+
+            await _userPromptService.AskOkAsync(
+            "Press OK after you have reconnected your antenna.",
+            "Calibration");
+
         }
         catch (OperationCanceledException)
         {
@@ -373,6 +384,8 @@ public partial class PrepareViewModel : ViewModelBase
             _calibrationCts = null;
             IsCalibrationRunning = false;
             _statusBar.IsCaptureInProgress = false;
+
+
         }
     }
 

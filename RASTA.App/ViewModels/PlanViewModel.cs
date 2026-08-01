@@ -93,7 +93,10 @@ namespace RASTA.App.ViewModels
         {
             if (e.PropertyName == nameof(SdrState.SelectedDevice))
             {
-                LoadSavedPlans();
+                App.Current.Dispatcher.Invoke(() =>
+                {
+                    LoadSavedPlans();
+                });
             }
         }
 

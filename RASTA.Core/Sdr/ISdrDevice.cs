@@ -4,7 +4,12 @@ namespace RASTA.Core.Sdr;
 
 public interface ISdrDevice : IDisposable
 {
-    //event Action<byte[]>? RawIqChunkAvailable;
+    event Action<byte[]>? RawIqChunkAvailable;
+
+    Task StartStreamingAsync(double frequencyHz, double sampleRateHz, double gainDb, CancellationToken ct);
+   
+    Task StopStreamingAsync();
+
 
     // -----------------------------
     // RAW IQ capture (true RAW)

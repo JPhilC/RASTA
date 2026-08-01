@@ -7,8 +7,10 @@ using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Services;
+using RASTA.Processing.IfAverage;
 using RASTA.Processing.Planning;
 using System.Collections.Concurrent;
+using System.Reflection.Metadata;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -30,9 +32,9 @@ public partial class ObserveViewModel : ObservableObject
     private readonly StatusBarViewModel _statusBar;
     private readonly IFftEngine _fftEngine;
     private readonly UserOptionsService _optionsService;
-
+    private IfAverageProcessor _ifAverageProcessor;
     private CancellationTokenSource? _sweepCts;
-    
+
     private CapturePlan? _activePlan;
 
     public CapturePlan? ActivePlan
@@ -50,7 +52,7 @@ public partial class ObserveViewModel : ObservableObject
     public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
 
     public bool CanCaptureSweep => _activePlan != null
-        && _device != null 
+        && _device != null
         && _calibrationService.CurrentCalibration != null
         && _mountState.IsConnected
         && _sdrState.IsConnected
@@ -107,9 +109,12 @@ public partial class ObserveViewModel : ObservableObject
 
         _mountState.PropertyChanged += MountState_PropertyChanged;
         _sdrState.PropertyChanged += SdrState_PropertyChanged;
-        // _device.RawIqChunkAvailable += OnChunk;
-
+        if (_device is ISdrDevice sdrDevice)
+        {
+            sdrDevice.RawIqChunkAvailable += OnChunk;
+        }
     }
+
 
     private void MountState_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -131,7 +136,8 @@ public partial class ObserveViewModel : ObservableObject
 
     #region Live Spectrum Charting
 
-    private readonly ConcurrentQueue<byte[]> _chunkProcessingQueue = new();
+    private readonly ConcurrentQueue<byte[]> _captureQueue = new();
+    private readonly ConcurrentQueue<byte[]> _spectrumQueue = new();
 
     private CancellationTokenSource? _chunkWorkerCts;
 
@@ -139,23 +145,22 @@ public partial class ObserveViewModel : ObservableObject
 
     private double[]? calibrationBaselineSpectrum;
 
-    private int chunkCount = 0;
-
-    private double[] running = new double[1024];
+    private double[] averageSpectrum;
 
     private bool captureInProgress = false;
 
     private void OnChunk(byte[] chunk)
     {
         // FAST: enqueue chunk for DSP worker
-        _chunkProcessingQueue.Enqueue(chunk);
+        _captureQueue.Enqueue(chunk);
+        _spectrumQueue.Enqueue(chunk);
     }
 
     private async Task ChunkWorker(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            if (_chunkProcessingQueue.TryDequeue(out var chunk))
+            if (_spectrumQueue.TryDequeue(out var chunk))
             {
                 ProcessChunk(chunk);
             }
@@ -166,33 +171,48 @@ public partial class ObserveViewModel : ObservableObject
         }
     }
 
+    //private DateTime lastUpdate = DateTime.MinValue;
+
+    
+
     private void ProcessChunk(byte[] chunk)
     {
-        if (!captureInProgress || calibrationBaselineSpectrum == null)
+        if (calibrationBaselineSpectrum == null)
             return;
 
+        // 1. FFT → power spectrum (linear)
         var spectrum = _fftEngine.ComputeSpectrum(chunk, fftSize);
 
-        var corrected = new double[fftSize];
-        for (int i = 0; i < fftSize; i++)
-        {
-            double spectrumDb = 10 * Math.Log10(spectrum[i] + 1e-12);
-            double baselineDb = 10 * Math.Log10(calibrationBaselineSpectrum[i] + 1e-12);
-            corrected[i] = spectrumDb - baselineDb;
-        }
+        _ifAverageProcessor.Process(spectrum, averageSpectrum);
 
-        for (int i = 0; i < fftSize; i++)
-            running[i] = ((running[i] * chunkCount) + corrected[i]) / (chunkCount + 1);
-
-        chunkCount++;
-
-        // UI update must be dispatched
-        App.Current.Dispatcher.Invoke(() =>
-        {
-            SpectrumVm.UpdateSpectrum(running.ToArray());
-        });
+        // 3. UI update
+        SpectrumVm.UpdateSpectrum(averageSpectrum);
     }
 
+    private async Task<byte[]> CaptureRawIqFromStreamAsync(uint sampleCount, CancellationToken ct)
+    {
+        ulong bytesNeeded = (ulong)sampleCount * 2UL;
+        var output = new byte[bytesNeeded];
+        ulong writePos = 0;
+
+        while (writePos < bytesNeeded)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (_captureQueue.TryDequeue(out var chunk))
+            {
+                ulong toCopy = Math.Min((ulong)chunk.Length, bytesNeeded - writePos);
+                Array.Copy(chunk, 0, output, (int)writePos, (int)toCopy);
+                writePos += toCopy;
+            }
+            else
+            {
+                await Task.Delay(1, ct);
+            }
+        }
+
+        return output;
+    }
 
 
     #endregion
@@ -265,15 +285,29 @@ public partial class ObserveViewModel : ObservableObject
             // Compute sample count safely
             uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellSeconds);
 
-            SpectrumVm.FftSize = fftSize;
-            SpectrumVm.CenterFreqHz = frequencyHz;
-            SpectrumVm.SamplingFrequencyHz = sampleRateHz;
+            System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: dwellSeconds={dwellSeconds}, sampleRateHz={sampleRateHz}, sampleCount={sampleCount}");
 
-            _chunkWorkerCts = new CancellationTokenSource();
-            _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
+            // Prepare the spectrum view model with the correct parameters for the current plan.
+            SpectrumVm.UpdateParameters(fftSize, frequencyHz, sampleRateHz);
+
+            averageSpectrum = new double[fftSize];
 
             foreach (var target in sweepPlanResult.Points)
             {
+                // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
+                _ifAverageProcessor = new IfAverageProcessor(fftSize);
+                // Configure defaults
+                _ifAverageProcessor.Median.Enabled = true;
+                _ifAverageProcessor.Rfi.Enabled = true;
+                _ifAverageProcessor.Intermediate.Window = 10;
+                _ifAverageProcessor.LongTerm.Window = 20;
+                _ifAverageProcessor.Background.Load(calibrationBaselineSpectrum);
+                _ifAverageProcessor.Background.Enabled = true;
+                _ifAverageProcessor.SavitzkyGolay.Enabled = true;
+                _ifAverageProcessor.Db.Offset = 0.0;
+
+                averageSpectrum = new double[fftSize];
+
                 ct.ThrowIfCancellationRequested();
 
                 // -----------------------------
@@ -307,14 +341,11 @@ public partial class ObserveViewModel : ObservableObject
                 }
 
 
-
-
                 // -----------------------------------------
                 // NEW TARGET → reset the running spectrum
                 // -----------------------------------------
-                running = new double[fftSize];
-                chunkCount = 0;
-                SpectrumVm.UpdateSpectrum(running.ToArray());
+                
+                SpectrumVm.UpdateSpectrum(averageSpectrum);
 
                 // Capture multiple files at this dwell point
                 for (int i = 0; i < filesPerPoint; i++)
@@ -325,20 +356,32 @@ public partial class ObserveViewModel : ObservableObject
                     // Stage 2 — Capturing
                     // -----------------------------
                     _statusBar.CaptureStatus = $"Capturing pos {targetIndex + 1} file {i + 1}";
+                    var captureStartTime = DateTime.Now;
+
+                    await _device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
+
+                    _chunkWorkerCts = new CancellationTokenSource();
+                    _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
+
+
                     StartProgressTimer(dwellSeconds);
                     captureInProgress = true;
-                    
 
-                    var rawIq = await _device.CaptureRawIqAsync(
-                        frequencyHz,
-                        sampleRateHz,
-                        gainDb,
-                        sampleCount,
-                        ct);
+
+                    var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct);
 
                     captureInProgress = false;
 
+                    
+                    // -----------------------------
+                    // Stage 2b — Stop streaming for this file
+                    // -----------------------------
+                    _chunkWorkerCts.Cancel();
+                    _chunkWorkerCts = null;
+                    await _device.StopStreamingAsync();
                     StopProgressTimer();
+                    System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: captured {rawIq.Length} bytes in {(DateTime.Now - captureStartTime).TotalSeconds:F2} seconds");
+
 
                     string fullPath = FitsPathBuilder.BuildSweepFilePath(_optionsService.Options.CaptureFolder, "sweep", startTime, ActivePlan.CenterFrequency, target.ToString(), i + 1, filesPerPoint);
 
@@ -358,7 +401,7 @@ public partial class ObserveViewModel : ObservableObject
                     // -----------------------------
                     _statusBar.CaptureStatus = $"Saving pos {targetIndex + 1} file {i + 1}";
                     StartProgressTimer(1.0); // animate saving for 1 second
-                    
+
                     _fitsFileWriter.WriteRawIq(fullPath, rawIq, meta);
 
                     StopProgressTimer();
@@ -382,6 +425,7 @@ public partial class ObserveViewModel : ObservableObject
         {
             _chunkWorkerCts?.Cancel();
             _chunkWorkerCts = null;
+            await _device.StopStreamingAsync();
 
             if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
             {

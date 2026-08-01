@@ -11,6 +11,11 @@ namespace RASTA.Infrastructure.Sdr;
 
 public sealed class RtlSdrDevice : ISdrDevice, IDisposable
 {
+    public event Action<byte[]>? RawIqChunkAvailable;
+
+    private EventHandler<SamplesAvailableEventArgs>? _streamingHandler;
+    private bool _isStreaming;
+
     private readonly uint _deviceIndex;
     private RtlSdrManagedDevice? _device;
 
@@ -50,6 +55,86 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
 
         _tunerType = dev.TunerType.ToString();
     }
+
+    // ---------------------------------------------------------
+    // Start Streaming: sets up the device and starts async streaming, raising RawIqChunkAvailable events
+    // ---------------------------------------------------------
+
+    public async Task StartStreamingAsync(double frequencyHz, double sampleRateHz, double gainDb, CancellationToken ct)
+    {
+        if (_device == null)
+            throw new InvalidOperationException("SDR device not initialized.");
+        if (_isStreaming)
+            return;
+
+        // Configure device for streaming
+        _device.CenterFrequency = Frequency.FromHz(frequencyHz);
+        _device.SampleRate = Frequency.FromHz(sampleRateHz);
+        _device.TunerGainMode = TunerGainModes.Manual;
+        _device.TunerGain = gainDb;
+
+        _actualFrequencyHz = _device.CenterFrequency.Hz;
+        _actualSampleRateHz = _device.SampleRate.Hz;
+        _currentGainDb = gainDb;
+
+        _device.ResetDeviceBuffer();
+        _device.UseRawBufferMode = true;
+        _device.MaxAsyncBufferSize = 512 * 1024;
+        _device.DropSamplesOnFullBuffer = true;
+
+        _streamingHandler = (sender, args) =>
+        {
+            var buf = _device.GetRawSamplesFromAsyncBuffer();
+            if (buf == null) return;
+
+            try
+            {
+                ReadOnlySpan<byte> raw = buf.Data.AsSpan(0, buf.ByteLength);
+                var chunkCopy = new byte[raw.Length];
+                raw.CopyTo(chunkCopy);
+
+                RawIqChunkAvailable?.Invoke(chunkCopy);
+            }
+            finally
+            {
+                buf.Return();
+            }
+        };
+
+        _device.SamplesAvailable += _streamingHandler;
+
+        _device.StartReadSamplesAsync();
+        _isStreaming = true;
+
+        await Task.CompletedTask;
+    }
+
+
+    // ---------------------------------------------------------
+    // Start Streaming: sets up the device and starts async streaming, raising RawIqChunkAvailable events
+    // ---------------------------------------------------------
+
+    public async Task StopStreamingAsync()
+    {
+        if (_device == null || !_isStreaming)
+            return;
+
+        try
+        {
+            _device.StopReadSamplesAsync();
+            _device.ResetDeviceBuffer();
+        }
+        catch { }
+
+        if (_streamingHandler != null)
+            _device.SamplesAvailable -= _streamingHandler;
+
+        _streamingHandler = null;
+        _isStreaming = false;
+
+        await Task.CompletedTask;
+    }
+
 
     // ---------------------------------------------------------
     // Raw IQ capture

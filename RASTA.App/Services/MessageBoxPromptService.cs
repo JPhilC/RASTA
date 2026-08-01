@@ -15,5 +15,17 @@ namespace RASTA.App.Services
 
             return Task.FromResult(result == MessageBoxResult.Yes);
         }
+
+        public Task AskOkAsync(string message, string title)
+        {
+            // Ensure dialog runs on UI thread
+            MessageBox.Show(
+                message,
+                title,
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            return Task.CompletedTask;
+        }
     }
 }

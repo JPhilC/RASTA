@@ -1,9 +1,10 @@
 ﻿using RASTA.Core.Calibration;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
-using System.IO;
 using RASTA.Core.Storage;
 using RASTA.Infrastructure.Services;
+using RASTA.Processing.IfAverage;
+using System.IO;
 
 namespace RASTA.Processing.Calibration
 {
@@ -17,6 +18,7 @@ namespace RASTA.Processing.Calibration
         {
             _fftEngine = fftEngine;
             _fitsFileWriter = fitsFileWriter;
+            _userOptionsService = userOptionsService;
         }
 
         /// <summary>
@@ -31,6 +33,17 @@ namespace RASTA.Processing.Calibration
             Action<string, double>? progressCallback,
             CancellationToken ct)
         {
+            var ifAverage = new IfAverageProcessor(fftSize);
+
+            // For calibration, we want a very stable, flat baseline:
+            ifAverage.Median.Enabled = true;              // remove impulsive junk
+            ifAverage.Rfi.Enabled = true;                 // track bad frames
+            ifAverage.Intermediate.Window = 10;           // short-term average
+            ifAverage.LongTerm.Window = 50;               // long-term average
+            ifAverage.Background.Enabled = false;         // no subtraction during calibration
+            ifAverage.SavitzkyGolay.Enabled = true;       // visually smooth baseline
+            ifAverage.Db.Offset = 0.0;
+
             var baseFolder = _userOptionsService.Options.CaptureFolder;
             var supportedGains = device.SupportedGainsDb.ToList();
             if (supportedGains.Count == 0)
@@ -38,7 +51,7 @@ namespace RASTA.Processing.Calibration
 
             var gainScores = new List<(double Gain, double Score, double[] Spectrum)>();
 
-            int totalSteps = supportedGains.Count + 2; // +1 baseline, +1 finalize
+            int totalSteps = supportedGains.Count + 3; // +1 baseline, +1 finalize
             int currentStep = 0;
 
             // Compute sample count safely
@@ -62,21 +75,21 @@ namespace RASTA.Processing.Calibration
                     sampleCount,
                     ct).ConfigureAwait(false);
 
-                // 2. FITS file
-                filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "cal", startTime, frequencyHz, gain);
+                //// 2. FITS file
+                //filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "cal", startTime, frequencyHz, gain);
 
-                meta = new FitsFileMetaData
-                {
-                    Origin = "RTL-SDR",
-                    DataFormat = "UINT8_IQ",
-                    CentFreqHz = frequencyHz,
-                    SampFreqHz = sampleRateHz,
-                    GainDb = gain,
-                    ObservationDate = DateTime.UtcNow,
-                    DwellTimeSec = dwellTime.TotalSeconds
-                };
+                //meta = new FitsFileMetaData
+                //{
+                //    Origin = "RTL-SDR",
+                //    DataFormat = "UINT8_IQ",
+                //    CentFreqHz = frequencyHz,
+                //    SampFreqHz = sampleRateHz,
+                //    GainDb = gain,
+                //    ObservationDate = DateTime.UtcNow,
+                //    DwellTimeSec = dwellTime.TotalSeconds
+                //};
 
-                _fitsFileWriter.WriteRawIq(filePath, rawIq, meta);
+                //_fitsFileWriter.WriteRawIq(filePath, rawIq, meta);
 
                 // Use your FFT engine to compute a spectrum
                 double[] spectrum = _fftEngine.ComputeSpectrum(rawIq, fftSize);
@@ -118,8 +131,25 @@ namespace RASTA.Processing.Calibration
 
             _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);
 
+            currentStep++;
+            progressCallback?.Invoke($"Calculating baseline", (double)currentStep / totalSteps);
+            
+            var baselineSpectrum = new double[fftSize];
 
-            double[] baselineSpectrum = _fftEngine.ComputeSpectrum(baselineRawIq, fftSize);
+            // Break the long baseline capture into FFT-sized chunks
+            int bytesPerChunk = fftSize * 2; // adjust if your IQ format differs
+            for (int offset = 0; offset + bytesPerChunk <= baselineRawIq.Length; offset += bytesPerChunk)
+            {
+                var chunk = new byte[bytesPerChunk];
+                Buffer.BlockCopy(baselineRawIq, offset, chunk, 0, bytesPerChunk);
+
+                var spectrum = _fftEngine.ComputeSpectrum(chunk, fftSize);
+
+                // Feed each spectrum into IF_Average
+                ifAverage.Process(spectrum, baselineSpectrum);
+            }
+
+            // At this point, baselineSpectrum holds the averaged dB baseline
 
             currentStep++;
             progressCallback?.Invoke("Finalizing calibration", (double)currentStep / totalSteps);

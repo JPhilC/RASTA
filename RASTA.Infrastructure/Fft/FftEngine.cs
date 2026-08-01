@@ -13,6 +13,7 @@ namespace RASTA.Infrastructure.Fft
             Array.Copy(samples, buffer, samples.Length);
 
             ApplyHannWindow(buffer);
+            // ApplyBlackmanHarris(buffer);
 
             Fourier.Forward(buffer, FourierOptions.Matlab);
 
@@ -56,5 +57,26 @@ namespace RASTA.Infrastructure.Fft
                 buffer[i] *= w;
             }
         }
+
+        private void ApplyBlackmanHarris(Complex[] buffer)
+        {
+            int n = buffer.Length;
+            const double a0 = 0.35875;
+            const double a1 = 0.48829;
+            const double a2 = 0.14128;
+            const double a3 = 0.01168;
+
+            for (int i = 0; i < n; i++)
+            {
+                double w =
+                    a0
+                    - a1 * Math.Cos(2 * Math.PI * i / (n - 1))
+                    + a2 * Math.Cos(4 * Math.PI * i / (n - 1))
+                    - a3 * Math.Cos(6 * Math.PI * i / (n - 1));
+
+                buffer[i] *= w;
+            }
+        }
+
     }
 }
