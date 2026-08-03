@@ -21,6 +21,8 @@ namespace RASTA.Processing.IfAverage
         public DbConverter Db { get; private set; }
         public SavitzkyGolay SavitzkyGolay { get; private set; }
 
+        public bool LinearOutput { get; set; }
+
         private readonly double[] _tmp1;
         private readonly double[] _tmp2;
 
@@ -54,16 +56,25 @@ namespace RASTA.Processing.IfAverage
             LongTerm.Process(_tmp2, _tmp1);
 
             // 5. Background subtraction
-            Background.Process(_tmp1);
             Background.Subtract(_tmp1);
 
-            // 6. dB conversion
-            Db.Process(_tmp1, outputDb);
+            // 5. Background ratio
+            Background.Divide(_tmp1);
 
-            // 7. Savitzky–Golay
-            SavitzkyGolay.Process(outputDb);
+            if (!LinearOutput)
+            {
 
-            
+                // 6. dB conversion
+                Db.Process(_tmp1, outputDb);
+
+                // 7. Savitzky–Golay
+                SavitzkyGolay.Process(outputDb);
+            }
+            else
+            {
+                // baseline stays in linear domain
+                Array.Copy(_tmp1, outputDb, _tmp1.Length);
+            }
         }
     }
 

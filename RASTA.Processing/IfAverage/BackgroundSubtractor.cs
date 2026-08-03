@@ -9,7 +9,10 @@ namespace RASTA.Processing.IfAverage
         private readonly int _size;
         private readonly double[] _background;
 
-        public bool Enabled { get; set; }
+        public bool SubractEnabled { get; set; }
+
+        public bool DivideEnabled { get; set; }
+
         public bool Recording { get; set; }
 
         public BackgroundSubtractor(int size)
@@ -34,14 +37,26 @@ namespace RASTA.Processing.IfAverage
 
         public void Subtract(double[] input)
         {
-            if (!Enabled)
+            if (!SubractEnabled)
                 return;
 
             for (int i = 0; i < _size; i++)
             {
                 double bg = Math.Max(_background[i], 1e-20);
-                input[i] = 20 * Math.Log10(input[i] + 1e-20) - 20 * Math.Log10(bg);
+                input[i] = input[i] / bg;   // ratio sweep / baseline, linear
             }
         }
+
+        public void Divide(double[] input)
+        {
+            if (!DivideEnabled)
+                return;
+
+            for (int i = 0; i < _size; i++)
+            {
+                input[i] = input[i] / _background[i];   // ratio sweep / baseline, linear
+            }
+        }
+
     }
 }

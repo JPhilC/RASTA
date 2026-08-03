@@ -11,14 +11,27 @@ using System.Drawing.Configuration;
 
 namespace RASTA.App.ViewModels
 {
+    public enum SpectrumMode
+    {
+        IF,
+        HiFrequency,
+        HiVelocity
+    }
+
     public partial class SpectrumViewModel : ObservableObject
     {
         private ObservablePoint[] points;
-        
-            // FFT bin values (Y-axis)
+
+        [ObservableProperty]
+        private SpectrumMode mode = SpectrumMode.HiFrequency;
+
+
+        // FFT bin values (Y-axis)
         private double[]? liveSpectrum;
 
-        // Frequency axis (X-axis)
+        // X-axis values (frequency or velocity)
+        private double[]? xAxis;
+
         private double[]? frequencies;
 
         public ISeries[] Series { get; private set; }
@@ -92,6 +105,8 @@ namespace RASTA.App.ViewModels
 
             BuildFrequencyAxis();   // Populates liveSpectrum and frequencies arrays
 
+            xAxis = frequencies;
+
             XAxes = new Axis[]
             {
                 new Axis
@@ -114,6 +129,39 @@ namespace RASTA.App.ViewModels
                     MaxLimit = double.NaN
                 }
             };
+        }
+
+        private void ApplyAxisMode()
+        {
+            switch (Mode)
+            {
+                case SpectrumMode.IF:
+                    XAxes[0].Name = "Frequency (MHz)";
+                    XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
+                    XAxes[0].MinLimit = frequencies.First();
+                    XAxes[0].MaxLimit = frequencies.Last();
+                    XAxes[0].MinStep = 100_000;
+                    YAxes[0].Name = "Power";
+                    break;
+
+                case SpectrumMode.HiFrequency:
+                    XAxes[0].Name = "Frequency (MHz)";
+                    XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
+                    XAxes[0].MinLimit = xAxis.First();
+                    XAxes[0].MaxLimit = xAxis.Last();
+                    XAxes[0].MinStep = 50_000;
+                    YAxes[0].Name = "Intensity [a.u.]";
+                    break;
+
+                case SpectrumMode.HiVelocity:
+                    XAxes[0].Name = "Velocity (km/s)";
+                    XAxes[0].Labeler = value => $"{value:F1} km/s";
+                    XAxes[0].MinLimit = xAxis.First();
+                    XAxes[0].MaxLimit = xAxis.Last();
+                    XAxes[0].MinStep = 1.0;
+                    YAxes[0].Name = "Intensity [a.u.]";
+                    break;
+            }
         }
 
 
@@ -143,7 +191,39 @@ namespace RASTA.App.ViewModels
 
         private DateTime lastUpdateTime = DateTime.MinValue;
 
-        
+
+        public void UpdateSpectrum(double[] newSpectrum, double[]? newXAxis = null)
+        {
+            if (DateTime.Now - lastUpdateTime < TimeSpan.FromMilliseconds(50))
+                return;
+
+            lastUpdateTime = DateTime.Now;
+
+            liveSpectrum = newSpectrum;
+
+            // If caller supplied an X-axis (HI modes), use it
+            if (newXAxis != null)
+                xAxis = newXAxis;
+            else
+                xAxis = frequencies; // IF mode
+
+            App.Current.Dispatcher.Invoke(() =>
+            {
+                for (int i = 0; i < FftSize; i++)
+                {
+                    points[i].X = xAxis[i];
+                    points[i].Y = liveSpectrum[i];
+                }
+            });
+
+            // Apply axis mode (labels, limits, units)
+            ApplyAxisMode();
+
+            // Auto-scale Y-axis
+            YAxes[0].MinLimit = liveSpectrum.Min() - 5;
+            YAxes[0].MaxLimit = liveSpectrum.Max() + 5;
+        }
+
         public void UpdateSpectrum(double[] newSpectrum)
         {
             if (DateTime.Now - lastUpdateTime < TimeSpan.FromMilliseconds(50))
@@ -167,6 +247,7 @@ namespace RASTA.App.ViewModels
 
         }
 
+        
 
         // ---------------------------------------------------------
         // INTERNAL REBUILD LOGIC
@@ -190,25 +271,5 @@ namespace RASTA.App.ViewModels
             }
             Series[0].Values = points;
         }
-
-        //private void BuildFrequencyAxis()
-        //{
-        //     Initialise spectrum buffer
-        //    liveSpectrum = new double[FftSize];
-
-        //    Series[0].Values = liveSpectrum;
-
-        //    double binWidthHz = SamplingFrequencyHz / FftSize;
-        //    double startFreqHz = CenterFreqHz - (SamplingFrequencyHz / 2);
-
-        //     Convert to MHz with 2 decimals
-        //    frequencies = Enumerable.Range(0, FftSize)
-        //        .Select(i =>
-        //        {
-        //            double freqHz = startFreqHz + i * binWidthHz;
-        //            return Math.Round(freqHz / 1_000_000.0, 2);   // MHz
-        //        })
-        //        .ToArray();
-        //}
     }
 }

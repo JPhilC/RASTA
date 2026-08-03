@@ -58,7 +58,7 @@ namespace RASTA.App.ViewModels
         [ObservableProperty] private double dwellSeconds = 1;
         [ObservableProperty] private int filesPerPoint = 1;
         [ObservableProperty] private double sampleRate = 2_400_000;
-        [ObservableProperty] private double centerFrequency = 1420_405_751;
+        [ObservableProperty] private double centerFrequency = 1420_405_800;
         [ObservableProperty] private int fftBins = 4096;
         [ObservableProperty] private int integrations = 1;
         [ObservableProperty] private bool goToHomeAfterCapture = true;

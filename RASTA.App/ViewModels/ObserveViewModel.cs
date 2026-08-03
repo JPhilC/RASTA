@@ -72,9 +72,6 @@ public partial class ObserveViewModel : ObservableObject
     private bool isDriftCaptureRunning;
 
     [ObservableProperty]
-    private ObservationRecord? lastObservation;
-
-    [ObservableProperty]
     private bool isBusy;
 
     public SpectrumViewModel SpectrumVm { get; private set; }
@@ -105,7 +102,7 @@ public partial class ObserveViewModel : ObservableObject
         _fftEngine = fftEngine;
         _device = sdrDeviceService.GetDevice();
 
-        SpectrumVm = new SpectrumViewModel(1024, 1420e6, 2.4e6); // default values; will be updated when calibration is loaded
+        SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
 
         _mountState.PropertyChanged += MountState_PropertyChanged;
         _sdrState.PropertyChanged += SdrState_PropertyChanged;
@@ -170,10 +167,6 @@ public partial class ObserveViewModel : ObservableObject
             }
         }
     }
-
-    //private DateTime lastUpdate = DateTime.MinValue;
-
-    
 
     private void ProcessChunk(byte[] chunk)
     {
@@ -302,7 +295,7 @@ public partial class ObserveViewModel : ObservableObject
                 _ifAverageProcessor.Intermediate.Window = 10;
                 _ifAverageProcessor.LongTerm.Window = 20;
                 _ifAverageProcessor.Background.Load(calibrationBaselineSpectrum);
-                _ifAverageProcessor.Background.Enabled = true;
+                _ifAverageProcessor.Background.SubractEnabled = true;
                 _ifAverageProcessor.SavitzkyGolay.Enabled = true;
                 _ifAverageProcessor.Db.Offset = 0.0;
 
@@ -380,6 +373,7 @@ public partial class ObserveViewModel : ObservableObject
                     _chunkWorkerCts = null;
                     await _device.StopStreamingAsync();
                     StopProgressTimer();
+
                     System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: captured {rawIq.Length} bytes in {(DateTime.Now - captureStartTime).TotalSeconds:F2} seconds");
 
 
@@ -391,6 +385,7 @@ public partial class ObserveViewModel : ObservableObject
                         DataFormat = "UINT8_IQ",
                         CentFreqHz = frequencyHz,
                         SampFreqHz = sampleRateHz,
+                        FftSize = fftSize, // Set t
                         GainDb = gainDb,
                         ObservationDate = DateTime.UtcNow,
                         DwellTimeSec = dwellSeconds
@@ -449,7 +444,7 @@ public partial class ObserveViewModel : ObservableObject
         _statusBar.IsCaptureInProgress = true;
 
         double elapsed = 0;
-        double interval = 0.1; // 100ms
+        double interval = 0.5; 
 
         _progressTimer = new DispatcherTimer
         {

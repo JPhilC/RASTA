@@ -100,7 +100,6 @@
                 <TextBlock Text="Capture:"
                            Foreground="LightGray"
                            FontWeight="Bold"
-                           Margin="0,0,10,0"
                            VerticalAlignment="Center"/>
 
                 <Grid>
@@ -109,11 +108,10 @@
                         Maximum="1"
                         Value="{Binding CaptureProgress}"
                         Visibility="{Binding IsCaptureInProgress, Converter={StaticResource BooleanToVisibilityConverter}}"
-                        Height="14" Width="100"
-                        Margin="10,0"
+                        Height="20" Width="150"
                         VerticalAlignment="Center"/>
                     <TextBlock Text="{Binding CaptureStatus}"
-                           Foreground="White"
+                           Foreground="White" Margin="10,0"
                            VerticalAlignment="Center"/>
                 </Grid>
             </StackPanel>

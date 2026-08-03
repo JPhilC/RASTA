@@ -62,7 +62,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // FFT engine
             // ---------------------------------------------------------
-            services.AddSingleton<IFftEngine, FftEngine>();
+            services.AddTransient<IFftEngine, FftEngine>();
 
             // ---------------------------------------------------------
             // Calibration + Observation
@@ -100,8 +100,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // Radio capture pipeline
             // ---------------------------------------------------------
-            services.AddSingleton<FitsFileIo>();
-            services.AddSingleton<SdrRawCaptureService>();
+            services.AddTransient<FitsFileIo>();
 
             // ---------------------------------------------------------
             // Processing

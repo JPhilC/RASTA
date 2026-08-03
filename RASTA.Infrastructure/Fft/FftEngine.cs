@@ -6,13 +6,50 @@ namespace RASTA.Infrastructure.Fft
 {
     public class FftEngine : IFftEngine
     {
+        public double[] ComputeSkAoPower(byte[] rawIq, int fftSize)
+        {
+            int n = rawIq.Length / 2;   // SKAO never zero-pads
+            if (n != fftSize)
+                throw new InvalidOperationException("Raw IQ chunk size must match FFT size.");
+
+            var buffer = new Complex[fftSize];
+
+            // Convert raw IQ bytes → Complex samples
+            for (int i = 0; i < fftSize; i++)
+            {
+                double re = rawIq[2 * i] - 128;
+                double im = rawIq[2 * i + 1] - 128;
+                buffer[i] = new Complex(re, im);
+            }
+
+            // Hann window (SKAO uses this)
+            ApplyHannWindow(buffer);
+
+            // FFT
+            Fourier.Forward(buffer, FourierOptions.Matlab);
+
+            // SKAO normalisation: abs(fft/N * 2)**2
+            double[] pwr = new double[fftSize];
+            double scale = 2.0 / fftSize;
+
+            for (int i = 0; i < fftSize; i++)
+            {
+                double re = buffer[i].Real * scale;
+                double im = buffer[i].Imaginary * scale;
+                pwr[i] = (re * re) + (im * im);
+            }
+
+            // DO NOT fftshift here — SKAO shifts only once, later
+            return pwr;
+        }
+
         public double[] PowerSpectrum(Complex[] samples)
         {
             // Defensive copy because Math.NET transforms in-place
             var buffer = new Complex[samples.Length];
             Array.Copy(samples, buffer, samples.Length);
 
-            ApplyHannWindow(buffer);
+            // ApplyHannWindow(buffer);
             // ApplyBlackmanHarris(buffer);
 
             Fourier.Forward(buffer, FourierOptions.Matlab);

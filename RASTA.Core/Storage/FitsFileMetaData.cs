@@ -13,6 +13,8 @@ namespace RASTA.Core.Storage
         public double CentFreqHz { get; set; }
         public double SampFreqHz { get; set; }
 
+        public int FftSize { get; set; }
+
         public double DwellTimeSec { get; set; }
 
         public double GainDb { get; set; }
@@ -34,6 +36,7 @@ namespace RASTA.Core.Storage
             hdu.AddValue("GAIN", GainDb, "Gain (dB)");
             hdu.AddValue("DWELL", DwellTimeSec, "Dwell time (s)");
             hdu.AddValue("DATE-OBS", ObservationDate.ToString("yyyy-MM-ddTHH:mm:ss"), null);
+            hdu.AddValue("FFT_SIZE", FftSize, "FFT size");
             if (RaDeg.HasValue) hdu.AddValue("RA", RaDeg.Value, "Right Ascension (deg)");
             if (DecDeg.HasValue) hdu.AddValue("DEC", DecDeg.Value, "Declination (deg)");
             if (AzDeg.HasValue) hdu.AddValue("AZ", AzDeg.Value, "Azimuth (deg)");
@@ -51,6 +54,7 @@ namespace RASTA.Core.Storage
             meta.SampFreqHz = header.GetDoubleValue("SAMPLER");
             meta.GainDb = header.GetDoubleValue("GAIN");
             meta.DwellTimeSec = header.GetDoubleValue("DWELL");
+            meta.FftSize = header.GetIntValue("FFT_SIZE");
             var dateObsStr = header.GetStringValue("DATE-OBS");
             if (DateTime.TryParse(dateObsStr, out DateTime obsDate))
                 meta.ObservationDate = obsDate;

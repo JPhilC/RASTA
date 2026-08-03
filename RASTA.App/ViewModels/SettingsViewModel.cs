@@ -315,13 +315,13 @@ namespace RASTA.App.ViewModels
         // ---------------------------------------
 
         [ObservableProperty]
-        private double calibrationFrequencyHz = 1420405750 ; // 1420.405750 MHz
+        private double calibrationFrequencyHz = 1420405800 ; // 1420.405800 MHz
 
         [ObservableProperty]
         private double sampleRateHz = 2.4e6; // 2.4 MHz
 
         [ObservableProperty]
-        private int fftSize = 1024;
+        private int fftSize = 4096;
 
         [ObservableProperty]
         private int calibrationDwellSeconds = 5;    

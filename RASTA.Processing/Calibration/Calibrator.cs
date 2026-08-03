@@ -40,7 +40,7 @@ namespace RASTA.Processing.Calibration
             ifAverage.Rfi.Enabled = true;                 // track bad frames
             ifAverage.Intermediate.Window = 10;           // short-term average
             ifAverage.LongTerm.Window = 50;               // long-term average
-            ifAverage.Background.Enabled = false;         // no subtraction during calibration
+            ifAverage.Background.SubractEnabled = false;         // no subtraction during calibration
             ifAverage.SavitzkyGolay.Enabled = true;       // visually smooth baseline
             ifAverage.Db.Offset = 0.0;
 
@@ -124,6 +124,7 @@ namespace RASTA.Processing.Calibration
                 DataFormat = "UINT8_IQ",
                 CentFreqHz = frequencyHz,
                 SampFreqHz = sampleRateHz,
+                FftSize = fftSize,
                 GainDb = best.Gain,
                 ObservationDate = DateTime.UtcNow,
                 DwellTimeSec = dwellTime.TotalSeconds * 4
