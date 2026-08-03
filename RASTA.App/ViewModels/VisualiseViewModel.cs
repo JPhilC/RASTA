@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Processing.HiPipeline;
+using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
 using RASTA.Processing.IfAverage;
 
 namespace RASTA.App.ViewModels;
@@ -94,10 +95,10 @@ public partial class VisualiseViewModel : ObservableObject
     {
         if (BaselineFile is not null && CaptureFile is not null)
         {
-            if (Mode == SpectrumMode.IF  )
+            if (Mode == SpectrumMode.IF)
                 ProcessFilesIf();
             else if (Mode == SpectrumMode.HiFrequency)
-                ProcessFilesHiFrequency();
+                ProcessSkao();
             else if (Mode == SpectrumMode.HiVelocity)
                 ProcessFilesHiVelocity();
         }
@@ -225,7 +226,7 @@ public partial class VisualiseViewModel : ObservableObject
             return;
 
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile    );
+        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
 
         // Perform some checks to ensure that the baseline and capture files are compatible
         if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
@@ -270,7 +271,7 @@ public partial class VisualiseViewModel : ObservableObject
             // Feed each spectrum into IF_Average
             _baselineProcessor.Process(spectrum, baselineSpectrum);
         }
-        
+
 
         // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
         _captureProcessor = new IfAverageProcessor(FftSize);
@@ -407,5 +408,62 @@ public partial class VisualiseViewModel : ObservableObject
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hiFreqAxis);
     }
 
+    private void ProcessSkao()
+    {
+        if (BaselineFile is null || CaptureFile is null)
+            return;
 
+        var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
+        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
+
+        if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
+            throw new InvalidOperationException("Sample rates of baseline and capture files do not match.");
+
+        if (baselineMeta.FftSize != captureMeta.FftSize)
+            throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
+
+        FftSize = baselineMeta.FftSize;
+        FrequencyHz = baselineMeta.CentFreqHz;
+        SamplingHz = baselineMeta.SampFreqHz;
+        Gain = baselineMeta.GainDb;
+
+        int bytesPerFrame = FftSize * 2;
+        int totalFrames = baselineIq.Length / bytesPerFrame;
+
+        if (totalFrames < SkaoConstants.NumIntegrations)
+            throw new InvalidOperationException(
+                $"Baseline FITS does not contain enough frames. " +
+                $"Need {SkaoConstants.NumIntegrations}, found {totalFrames}.");
+
+        var baselineSlice = new byte[bytesPerFrame * SkaoConstants.NumIntegrations];
+        var captureSlice = new byte[bytesPerFrame * SkaoConstants.NumIntegrations];
+
+        Buffer.BlockCopy(baselineIq, 0, baselineSlice, 0, baselineSlice.Length);
+        Buffer.BlockCopy(captureIq, 0, captureSlice, 0, captureSlice.Length);
+
+        // --- Run full SKAO pipeline ---
+        var skao = new SkaoHiObservation();
+        skao.ProcessIq(
+            baselineSlice,
+            captureSlice,
+            FftSize,
+            SamplingHz,
+            FrequencyHz
+        );
+
+        var hi = skao.Pipeline;
+
+        // --- Update SpectrumViewModel ---
+        SpectrumVm.Mode = SpectrumMode.HiFrequency;
+        SpectrumVm.UpdateParameters(
+            SkaoConstants.NumIntegrationBins,
+            FrequencyHz,
+            SamplingHz
+        );
+
+        SpectrumVm.UpdateSpectrum(
+            hi.HiSpectrum,
+            hi.FrequencyHz
+        );
+    }
 }
