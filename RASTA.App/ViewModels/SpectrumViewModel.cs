@@ -15,7 +15,8 @@ namespace RASTA.App.ViewModels
     {
         IF,
         HiFrequency,
-        HiVelocity
+        HiVelocity,
+        TTRT
     }
 
     public partial class SpectrumViewModel : ObservableObject
@@ -145,6 +146,7 @@ namespace RASTA.App.ViewModels
                     break;
 
                 case SpectrumMode.HiFrequency:
+                    case SpectrumMode.TTRT:
                     XAxes[0].Name = "Frequency (MHz)";
                     XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
                     XAxes[0].MinLimit = xAxis.First();

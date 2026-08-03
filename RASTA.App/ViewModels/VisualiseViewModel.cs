@@ -98,9 +98,11 @@ public partial class VisualiseViewModel : ObservableObject
             if (Mode == SpectrumMode.IF)
                 ProcessFilesIf();
             else if (Mode == SpectrumMode.HiFrequency)
-                ProcessSkao();
+                ProcessFilesHiFrequency();
             else if (Mode == SpectrumMode.HiVelocity)
                 ProcessFilesHiVelocity();
+            else if (Mode == SpectrumMode.TTRT)
+                ProcessSkaoTtrt();
         }
         else if (BaselineFile is not null)
         {
@@ -307,11 +309,11 @@ public partial class VisualiseViewModel : ObservableObject
 
     }
 
-    private (double[] baselineSpectrum, double[] captureSpectrum, HiPipelineProcessor hi)
+    private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)
     ProcessHiCore()
     {
         if (BaselineFile is null || CaptureFile is null)
-            return (Array.Empty<double>(), Array.Empty<double>(), new HiPipelineProcessor());
+            return (Array.Empty<double>(), Array.Empty<double>(), new HiStreamingPipeline());
 
         // --- 1. Load FITS IQ data ---
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
@@ -329,47 +331,36 @@ public partial class VisualiseViewModel : ObservableObject
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
 
-        // --- 3. Allocate spectra ---
-        var baselineSpectrum = new double[FftSize];
-        var captureSpectrum = new double[FftSize];
+        int bytesPerFrame = FftSize * 2;
 
-        // --- 4. FFT both files into linear power spectra ---
-        int bytesPerChunk = FftSize * 2;
+        // --- 3. Create streaming accumulator ---
+        var acc = new HiStreamingAccumulator(FftSize);
 
-        // Baseline accumulation
-        for (int offset = 0; offset + bytesPerChunk <= baselineIq.Length; offset += bytesPerChunk)
+        // --- 4. Accumulate baseline frames ---
+        for (int offset = 0; offset + bytesPerFrame <= baselineIq.Length; offset += bytesPerFrame)
         {
-            var chunk = new byte[bytesPerChunk];
-            Buffer.BlockCopy(baselineIq, offset, chunk, 0, bytesPerChunk);
+            var chunk = new byte[bytesPerFrame];
+            Buffer.BlockCopy(baselineIq, offset, chunk, 0, bytesPerFrame);
 
             var spectrum = _fftEngine.ComputeSkAoPower(chunk, FftSize);
-
-            for (int i = 0; i < FftSize; i++)
-                baselineSpectrum[i] += spectrum[i];
+            acc.AddBaselineFrame(spectrum);
         }
 
-        int baselineFrames = baselineIq.Length / bytesPerChunk;
-        for (int i = 0; i < FftSize; i++)
-            baselineSpectrum[i] /= baselineFrames;
-
-        // Capture accumulation
-        for (int offset = 0; offset + bytesPerChunk <= captureIq.Length; offset += bytesPerChunk)
+        // --- 5. Accumulate capture frames ---
+        for (int offset = 0; offset + bytesPerFrame <= captureIq.Length; offset += bytesPerFrame)
         {
-            var chunk = new byte[bytesPerChunk];
-            Buffer.BlockCopy(captureIq, offset, chunk, 0, bytesPerChunk);
+            var chunk = new byte[bytesPerFrame];
+            Buffer.BlockCopy(captureIq, offset, chunk, 0, bytesPerFrame);
 
             var spectrum = _fftEngine.ComputeSkAoPower(chunk, FftSize);
-
-            for (int i = 0; i < FftSize; i++)
-                captureSpectrum[i] += spectrum[i];
+            acc.AddCaptureFrame(spectrum);
         }
 
-        int captureFrames = captureIq.Length / bytesPerChunk;
-        for (int i = 0; i < FftSize; i++)
-            captureSpectrum[i] /= captureFrames;
+        // --- 6. Get averaged spectra ---
+        var (baselineSpectrum, captureSpectrum) = acc.GetAveragedSpectra();
 
-        // --- 5. Run SKAO-style HI pipeline ---
-        var hi = new HiPipelineProcessor();
+        // --- 7. Run streaming HI pipeline ---
+        var hi = new HiStreamingPipeline();
         hi.Process(
             baselineSpectrum,
             captureSpectrum,
@@ -394,25 +385,18 @@ public partial class VisualiseViewModel : ObservableObject
     {
         var (_, _, hi) = ProcessHiCore();
 
-        // Build frequency axis
-        double binWidth = SamplingHz / FftSize;
-        double startFreq = FrequencyHz - (SamplingHz / 2);
-
-        double[] hiFreqAxis = Enumerable.Range(0, FftSize)
-            .Select(i => startFreq + i * binWidth)
-            .ToArray();
-
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
 
-        SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hiFreqAxis);
+        SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.FrequencyHz);
     }
 
-    private void ProcessSkao()
+    private void ProcessSkaoTtrt()
     {
         if (BaselineFile is null || CaptureFile is null)
             return;
 
+        // --- Load FITS IQ ---
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
         var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
 
@@ -427,7 +411,7 @@ public partial class VisualiseViewModel : ObservableObject
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
 
-        int bytesPerFrame = FftSize * 2;
+        int bytesPerFrame = FftSize * 2;   // IQ: 2 bytes per complex sample
         int totalFrames = baselineIq.Length / bytesPerFrame;
 
         if (totalFrames < SkaoConstants.NumIntegrations)
@@ -435,18 +419,61 @@ public partial class VisualiseViewModel : ObservableObject
                 $"Baseline FITS does not contain enough frames. " +
                 $"Need {SkaoConstants.NumIntegrations}, found {totalFrames}.");
 
-        var baselineSlice = new byte[bytesPerFrame * SkaoConstants.NumIntegrations];
-        var captureSlice = new byte[bytesPerFrame * SkaoConstants.NumIntegrations];
+        // --- Downsample IQ from N → 256 complex samples ---
+        byte[] DownsampleIq(byte[] iqFrame, int originalFftSize)
+        {
+            const int targetFft = 256;
+            int factor = originalFftSize / targetFft;   // e.g. 4096/256 = 16
 
-        Buffer.BlockCopy(baselineIq, 0, baselineSlice, 0, baselineSlice.Length);
-        Buffer.BlockCopy(captureIq, 0, captureSlice, 0, captureSlice.Length);
+            var result = new byte[targetFft * 2];       // 256 complex samples → 512 bytes
 
-        // --- Run full SKAO pipeline ---
+            for (int i = 0; i < targetFft; i++)
+            {
+                int start = i * factor;
+
+                double sumI = 0;
+                double sumQ = 0;
+
+                for (int j = 0; j < factor; j++)
+                {
+                    int idx = (start + j) * 2;
+                    sumI += iqFrame[idx];
+                    sumQ += iqFrame[idx + 1];
+                }
+
+                result[i * 2] = (byte)(sumI / factor);
+                result[i * 2 + 1] = (byte)(sumQ / factor);
+            }
+
+            return result;
+        }
+
+        // --- Build 16 SKAO frames ---
+        var baselineFrames256 = new List<byte[]>();
+        var captureFrames256 = new List<byte[]>();
+
+        for (int i = 0; i < SkaoConstants.NumIntegrations; i++)
+        {
+            var chunkBase = new byte[bytesPerFrame];
+            var chunkCapt = new byte[bytesPerFrame];
+
+            Buffer.BlockCopy(baselineIq, i * bytesPerFrame, chunkBase, 0, bytesPerFrame);
+            Buffer.BlockCopy(captureIq, i * bytesPerFrame, chunkCapt, 0, bytesPerFrame);
+
+            baselineFrames256.Add(DownsampleIq(chunkBase, FftSize));
+            captureFrames256.Add(DownsampleIq(chunkCapt, FftSize));
+        }
+
+        // --- Flatten into SKAO byte[] slices ---
+        var baselineSlice = baselineFrames256.SelectMany(x => x).ToArray();
+        var captureSlice = captureFrames256.SelectMany(x => x).ToArray();
+
+        // --- Run SKAO pipeline ---
         var skao = new SkaoHiObservation();
         skao.ProcessIq(
             baselineSlice,
             captureSlice,
-            FftSize,
+            256,          // SKAO FFT size
             SamplingHz,
             FrequencyHz
         );
@@ -456,7 +483,7 @@ public partial class VisualiseViewModel : ObservableObject
         // --- Update SpectrumViewModel ---
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(
-            SkaoConstants.NumIntegrationBins,
+            SkaoConstants.NumIntegrationBins,   // 256
             FrequencyHz,
             SamplingHz
         );
