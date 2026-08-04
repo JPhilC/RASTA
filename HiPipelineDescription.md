@@ -254,3 +254,62 @@ The **HiPipeline** module is a full hydrogen‑line reduction pipeline designed 
 
 It is flexible, FFT‑size‑agnostic, and suitable for both hobbyist and research‑grade workflows.
 
+'''
+                          ┌──────────────────────────────┐
+                          │     Raw FFT Power Frames      │
+                          │  (baseline + capture streams) │
+                          └───────────────┬───────────────┘
+                                          │
+                                          ▼
+                     ┌──────────────────────────────────────────┐
+                     │        HiStreamingAccumulator             │
+                     │  - collects baseline frames               │
+                     │  - collects capture frames                │
+                     │  - averages each independently            │
+                     └───────────────┬──────────────────────────┘
+                                     │
+                                     ▼
+                    ┌───────────────────────────────────────────┐
+                    │         Averaged Spectra (baseline, capture)│
+                    └───────────────────┬─────────────────────────┘
+                                        │
+                                        ▼
+                     ┌──────────────────────────────────────────┐
+                     │           HiStreamingPipeline             │
+                     ├──────────────────────────────────────────┤
+                     │ 1. FFT Shift                              │
+                     │    (centre spectrum around HI frequency)  │
+                     │                                            │
+                     │ 2. Frequency Axis                         │
+                     │    (true Hz for each FFT bin)             │
+                     │                                            │
+                     │ 3. Velocity Axis                          │
+                     │    (convert frequency → km/s)             │
+                     │                                            │
+                     │ 4. Baseline Division                      │
+                     │    (capture ÷ baseline → flatten bandpass)│
+                     │                                            │
+                     │ 5. Continuum Masking                      │
+                     │    (exclude HI region + far wings)        │
+                     │                                            │
+                     │ 6. Linear Continuum Fit                   │
+                     │    (fit straight line to masked regions)  │
+                     │                                            │
+                     │ 7. Continuum Subtraction                  │
+                     │    (remove background → isolate HI line)  │
+                     │                                            │
+                     │ 8. Savitzky–Golay Smoothing (optional)    │
+                     │    (reduce noise, preserve line shape)    │
+                     └───────────────────┬────────────────────────┘
+                                         │
+                                         ▼
+                     ┌──────────────────────────────────────────┐
+                     │         Final HI Spectrum Outputs         │
+                     ├──────────────────────────────────────────┤
+                     │ - FrequencyHz (Hz)                        │
+                     │ - VelocityKmPerSec (km/s)                 │
+                     │ - RatioSpectrum (bandpass‑flattened)      │
+                     │ - HiSpectrum (continuum‑subtracted HI)    │
+                     └──────────────────────────────────────────┘
+'''
+
