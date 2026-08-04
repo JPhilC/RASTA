@@ -34,7 +34,14 @@ public partial class VisualiseViewModel : ObservableObject
     private double[]? correctedSpectrum;
 
     [ObservableProperty]
-    private int fftSize;
+    private int scanFftSize;
+
+    [ObservableProperty]
+    private int targetFftSize;
+
+    [ObservableProperty]
+    private string frameCount = string.Empty;
+
 
     [ObservableProperty]
     private double frequencyHz;
@@ -145,12 +152,12 @@ public partial class VisualiseViewModel : ObservableObject
         if (BaselineFile is null)
             return;
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        FftSize = baselineMeta.FftSize;
+        ScanFftSize = baselineMeta.FftSize;
         FrequencyHz = baselineMeta.CentFreqHz;
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
         // Generate the baseline spectrum from the baseline IQ data
-        _baselineProcessor = new IfAverageProcessor(FftSize);
+        _baselineProcessor = new IfAverageProcessor(ScanFftSize);
         // For calibration, we want a very stable, flat baseline:
         _baselineProcessor.Median.Enabled = true;              // remove impulsive junk
         _baselineProcessor.Rfi.Enabled = true;                 // track bad frames
@@ -161,20 +168,20 @@ public partial class VisualiseViewModel : ObservableObject
         _baselineProcessor.LinearOutput = true;
         _baselineProcessor.SavitzkyGolay.Enabled = false;      // visually smooth baseline
         _baselineProcessor.Db.Offset = 0.0;
-        baselineSpectrum = new double[FftSize];
+        baselineSpectrum = new double[ScanFftSize];
         // Break the long baseline capture into FFT-sized chunks
-        int bytesPerChunk = FftSize * 2; // adjust if your IQ format differs
+        int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
         for (int offset = 0; offset + bytesPerChunk <= baselineIq.Length; offset += bytesPerChunk)
         {
             var chunk = new byte[bytesPerChunk];
             Buffer.BlockCopy(baselineIq, offset, chunk, 0, bytesPerChunk);
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSpectrum(chunk, ScanFftSize);
             // Feed each spectrum into IF_Average
             _baselineProcessor.Process(spectrum, baselineSpectrum);
         }
 
         SpectrumVm.Mode = SpectrumMode.IF;
-        SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(baselineSpectrum); // Use actual center frequency and sample rate
     }
@@ -184,12 +191,12 @@ public partial class VisualiseViewModel : ObservableObject
         if (CaptureFile is null)
             return;
         var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
-        FftSize = captureMeta.FftSize;
+        ScanFftSize = captureMeta.FftSize;
         FrequencyHz = captureMeta.CentFreqHz;
         SamplingHz = captureMeta.SampFreqHz;
         Gain = captureMeta.GainDb;
         // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
-        _captureProcessor = new IfAverageProcessor(FftSize);
+        _captureProcessor = new IfAverageProcessor(ScanFftSize);
         // Configure defaults
         _captureProcessor.Median.Enabled = true;
         _captureProcessor.Rfi.Enabled = true;
@@ -201,15 +208,15 @@ public partial class VisualiseViewModel : ObservableObject
         _captureProcessor.SavitzkyGolay.Enabled = false;
         _captureProcessor.Db.Offset = 0.0;
 
-        captureSpectrum = new double[FftSize];
+        captureSpectrum = new double[ScanFftSize];
 
-        int bytesPerChunk = FftSize * 2; // adjust if your IQ format differs
+        int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
         for (int offset = 0; offset + bytesPerChunk <= captureIq.Length; offset += bytesPerChunk)
         {
             var chunk = new byte[bytesPerChunk];
             Buffer.BlockCopy(captureIq, offset, chunk, 0, bytesPerChunk);
 
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSpectrum(chunk, ScanFftSize);
 
             // Feed each spectrum into IF_Average
             _captureProcessor.Process(spectrum, captureSpectrum);
@@ -217,7 +224,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         SpectrumVm.Mode = SpectrumMode.IF;
 
-        SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(captureSpectrum); // Use actual center frequency and sample rate
     }
@@ -240,13 +247,22 @@ public partial class VisualiseViewModel : ObservableObject
         if (baselineMeta.FftSize != captureMeta.FftSize)
             throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
 
-        FftSize = baselineMeta.FftSize;
+        ScanFftSize = baselineMeta.FftSize;
         FrequencyHz = baselineMeta.CentFreqHz;
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
+        if (TargetFftSize == 0)
+            TargetFftSize = ScanFftSize;   // default to no downscaling
+
+        if (TargetFftSize< ScanFftSize)
+        {
+            // Downscale the IQ data to the target FFT size
+            baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
+            captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
+        }
 
         // Generate the baseline spectrum from the baseline IQ data
-        _baselineProcessor = new IfAverageProcessor(FftSize);
+        _baselineProcessor = new IfAverageProcessor(TargetFftSize);
 
         // For calibration, we want a very stable, flat baseline:
         _baselineProcessor.Median.Enabled = true;              // remove impulsive junk
@@ -259,16 +275,16 @@ public partial class VisualiseViewModel : ObservableObject
         _baselineProcessor.SavitzkyGolay.Enabled = false;      // visually smooth baseline
         _baselineProcessor.Db.Offset = 0.0;
 
-        baselineSpectrum = new double[FftSize];
+        baselineSpectrum = new double[TargetFftSize];
 
         // Break the long baseline capture into FFT-sized chunks
-        int bytesPerChunk = FftSize * 2; // adjust if your IQ format differs
+        int bytesPerChunk = TargetFftSize * 2; // adjust if your IQ format differs
         for (int offset = 0; offset + bytesPerChunk <= baselineIq.Length; offset += bytesPerChunk)
         {
             var chunk = new byte[bytesPerChunk];
             Buffer.BlockCopy(baselineIq, offset, chunk, 0, bytesPerChunk);
 
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSpectrum(chunk, TargetFftSize);
 
             // Feed each spectrum into IF_Average
             _baselineProcessor.Process(spectrum, baselineSpectrum);
@@ -276,7 +292,7 @@ public partial class VisualiseViewModel : ObservableObject
 
 
         // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
-        _captureProcessor = new IfAverageProcessor(FftSize);
+        _captureProcessor = new IfAverageProcessor(TargetFftSize);
         // Configure defaults
         _captureProcessor.Median.Enabled = true;
         _captureProcessor.Rfi.Enabled = true;
@@ -289,28 +305,27 @@ public partial class VisualiseViewModel : ObservableObject
         _captureProcessor.SavitzkyGolay.Enabled = false;
         _captureProcessor.Db.Offset = 0.0;
 
-        captureSpectrum = new double[FftSize];
+        captureSpectrum = new double[TargetFftSize];
 
         for (int offset = 0; offset + bytesPerChunk <= captureIq.Length; offset += bytesPerChunk)
         {
             var chunk = new byte[bytesPerChunk];
             Buffer.BlockCopy(captureIq, offset, chunk, 0, bytesPerChunk);
 
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSpectrum(chunk, TargetFftSize);
 
             // Feed each spectrum into IF_Average
             _captureProcessor.Process(spectrum, captureSpectrum);
         }
         SpectrumVm.Mode = SpectrumMode.IF;
 
-        SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(captureSpectrum); // Use actual center frequency and sample rate
 
     }
 
-    private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)
-    ProcessHiCore()
+    private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)  ProcessHiCore()
     {
         if (BaselineFile is null || CaptureFile is null)
             return (Array.Empty<double>(), Array.Empty<double>(), new HiStreamingPipeline());
@@ -326,15 +341,26 @@ public partial class VisualiseViewModel : ObservableObject
         if (baselineMeta.FftSize != captureMeta.FftSize)
             throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
 
-        FftSize = baselineMeta.FftSize;
+        ScanFftSize = baselineMeta.FftSize;
         FrequencyHz = baselineMeta.CentFreqHz;
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
 
-        int bytesPerFrame = FftSize * 2;
+        if (TargetFftSize == 0)
+            TargetFftSize = ScanFftSize;   // default to no downscaling
+
+
+        int bytesPerFrame = TargetFftSize * 2;
+
+        if (TargetFftSize < ScanFftSize)
+        {
+            // Downscale the IQ data to the target FFT size
+            baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
+            captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
+        }
 
         // --- 3. Create streaming accumulator ---
-        var acc = new HiStreamingAccumulator(FftSize);
+        var acc = new HiStreamingAccumulator(TargetFftSize);
 
         // --- 4. Accumulate baseline frames ---
         for (int offset = 0; offset + bytesPerFrame <= baselineIq.Length; offset += bytesPerFrame)
@@ -342,7 +368,7 @@ public partial class VisualiseViewModel : ObservableObject
             var chunk = new byte[bytesPerFrame];
             Buffer.BlockCopy(baselineIq, offset, chunk, 0, bytesPerFrame);
 
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSkAoPower(chunk, TargetFftSize);
             acc.AddBaselineFrame(spectrum);
         }
 
@@ -352,10 +378,11 @@ public partial class VisualiseViewModel : ObservableObject
             var chunk = new byte[bytesPerFrame];
             Buffer.BlockCopy(captureIq, offset, chunk, 0, bytesPerFrame);
 
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, FftSize);
+            var spectrum = _fftEngine.ComputeSkAoPower(chunk, TargetFftSize);
             acc.AddCaptureFrame(spectrum);
         }
 
+        FrameCount = $"{acc.BaselineFrames}/{acc.CaptureFrames}";
         // --- 6. Get averaged spectra ---
         var (baselineSpectrum, captureSpectrum) = acc.GetAveragedSpectra();
 
@@ -376,7 +403,7 @@ public partial class VisualiseViewModel : ObservableObject
         var (_, _, hi) = ProcessHiCore();
 
         SpectrumVm.Mode = SpectrumMode.HiVelocity;
-        SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
 
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.VelocityKmPerSec);
     }
@@ -386,7 +413,7 @@ public partial class VisualiseViewModel : ObservableObject
         var (_, _, hi) = ProcessHiCore();
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
-        SpectrumVm.UpdateParameters(FftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
 
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.FrequencyHz);
     }
@@ -406,12 +433,14 @@ public partial class VisualiseViewModel : ObservableObject
         if (baselineMeta.FftSize != captureMeta.FftSize)
             throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
 
-        FftSize = baselineMeta.FftSize;
+        ScanFftSize = baselineMeta.FftSize;
+        TargetFftSize = 256;   // SKAO pipeline expects 256 complex samples
         FrequencyHz = baselineMeta.CentFreqHz;
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
+        int targetFrames  = 16;
 
-        int bytesPerFrame = FftSize * 2;   // IQ: 2 bytes per complex sample
+        int bytesPerFrame = ScanFftSize * 2;   // IQ: 2 bytes per complex sample
         int totalFrames = baselineIq.Length / bytesPerFrame;
 
         if (totalFrames < SkaoConstants.NumIntegrations)
@@ -419,54 +448,13 @@ public partial class VisualiseViewModel : ObservableObject
                 $"Baseline FITS does not contain enough frames. " +
                 $"Need {SkaoConstants.NumIntegrations}, found {totalFrames}.");
 
-        // --- Downsample IQ from N → 256 complex samples ---
-        byte[] DownsampleIq(byte[] iqFrame, int originalFftSize)
-        {
-            const int targetFft = 256;
-            int factor = originalFftSize / targetFft;   // e.g. 4096/256 = 16
+        var downscaledBaselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
+        var downscaledCaptureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
 
-            var result = new byte[targetFft * 2];       // 256 complex samples → 512 bytes
+        var baselineSlice = ExtractFramesFlat(downscaledBaselineIq, TargetFftSize, targetFrames);
+        var captureSlice = ExtractFramesFlat(downscaledCaptureIq, TargetFftSize, targetFrames);
 
-            for (int i = 0; i < targetFft; i++)
-            {
-                int start = i * factor;
-
-                double sumI = 0;
-                double sumQ = 0;
-
-                for (int j = 0; j < factor; j++)
-                {
-                    int idx = (start + j) * 2;
-                    sumI += iqFrame[idx];
-                    sumQ += iqFrame[idx + 1];
-                }
-
-                result[i * 2] = (byte)(sumI / factor);
-                result[i * 2 + 1] = (byte)(sumQ / factor);
-            }
-
-            return result;
-        }
-
-        // --- Build 16 SKAO frames ---
-        var baselineFrames256 = new List<byte[]>();
-        var captureFrames256 = new List<byte[]>();
-
-        for (int i = 0; i < SkaoConstants.NumIntegrations; i++)
-        {
-            var chunkBase = new byte[bytesPerFrame];
-            var chunkCapt = new byte[bytesPerFrame];
-
-            Buffer.BlockCopy(baselineIq, i * bytesPerFrame, chunkBase, 0, bytesPerFrame);
-            Buffer.BlockCopy(captureIq, i * bytesPerFrame, chunkCapt, 0, bytesPerFrame);
-
-            baselineFrames256.Add(DownsampleIq(chunkBase, FftSize));
-            captureFrames256.Add(DownsampleIq(chunkCapt, FftSize));
-        }
-
-        // --- Flatten into SKAO byte[] slices ---
-        var baselineSlice = baselineFrames256.SelectMany(x => x).ToArray();
-        var captureSlice = captureFrames256.SelectMany(x => x).ToArray();
+        FrameCount = $"{targetFrames}/{targetFrames}";
 
         // --- Run SKAO pipeline ---
         var skao = new SkaoHiObservation();
@@ -492,5 +480,106 @@ public partial class VisualiseViewModel : ObservableObject
             hi.HiSpectrum,
             hi.FrequencyHz
         );
+    }
+
+    /// <summary>
+    /// Downscale raw IQ frames from originalFftSize → targetFftSize,
+    /// automatically determining the number of frames from the input length.
+    /// </summary>
+    public static byte[] DownscaleIq(byte[] iq, int originalFftSize, int targetFftSize)
+    {
+        int bytesPerFrameIn = originalFftSize * 2;      // IQ: 2 bytes per complex sample
+        int bytesPerFrameOut = targetFftSize * 2;
+
+        // Floor the number of frames, ignore any trailing partial frame
+        int numFrames = iq.Length / bytesPerFrameIn;
+        if (numFrames == 0)
+            throw new InvalidOperationException(
+                $"IQ buffer length {iq.Length} is too small for even one frame ({bytesPerFrameIn} bytes each).");
+
+        int factor = originalFftSize / targetFftSize;
+        if (originalFftSize % targetFftSize != 0)
+            throw new InvalidOperationException(
+                $"FFT downscale must be integer ratio: {originalFftSize} → {targetFftSize}");
+
+        var output = new byte[numFrames * bytesPerFrameOut];
+
+        byte[] DownsampleFrame(byte[] frame)
+        {
+            var result = new byte[bytesPerFrameOut];
+
+            for (int i = 0; i < targetFftSize; i++)
+            {
+                int start = i * factor;
+
+                double sumI = 0;
+                double sumQ = 0;
+
+                for (int j = 0; j < factor; j++)
+                {
+                    int idx = (start + j) * 2;
+                    sumI += frame[idx];
+                    sumQ += frame[idx + 1];
+                }
+
+                result[i * 2] = (byte)(sumI / factor);
+                result[i * 2 + 1] = (byte)(sumQ / factor);
+            }
+
+            return result;
+        }
+
+        for (int f = 0; f < numFrames; f++)
+        {
+            var frameIn = new byte[bytesPerFrameIn];
+            Buffer.BlockCopy(iq, f * bytesPerFrameIn, frameIn, 0, bytesPerFrameIn);
+
+            var frameOut = DownsampleFrame(frameIn);
+
+            Buffer.BlockCopy(frameOut, 0, output, f * bytesPerFrameOut, bytesPerFrameOut);
+        }
+
+        return output;
+    }
+
+
+    /// <summary>
+    /// Extracts `frameCount` IQ frames from an incoming byte[] using the specified FFT size.
+    /// Each frame = scanFftSize * 2 bytes (I,Q).
+    /// </summary>
+    public static List<byte[]> ExtractFrames(byte[] iq, int fftSize, int frameCount)
+    {
+        int bytesPerFrame = fftSize * 2;
+
+        int availableFrames = iq.Length / bytesPerFrame;
+        if (availableFrames < frameCount)
+            throw new InvalidOperationException(
+                $"Incoming IQ contains only {availableFrames} frames, but {frameCount} were requested.");
+
+        var frames = new List<byte[]>(frameCount);
+
+        for (int i = 0; i < frameCount; i++)
+        {
+            var frame = new byte[bytesPerFrame];
+            Buffer.BlockCopy(iq, i * bytesPerFrame, frame, 0, bytesPerFrame);
+            frames.Add(frame);
+        }
+
+        return frames;
+    }
+
+    public static byte[] ExtractFramesFlat(byte[] iq, int fftSize, int frameCount)
+    {
+        int bytesPerFrame = fftSize * 2;
+
+        int availableFrames = iq.Length / bytesPerFrame;
+        if (availableFrames < frameCount)
+            throw new InvalidOperationException(
+                $"Incoming IQ contains only {availableFrames} frames, but {frameCount} were requested.");
+
+        var output = new byte[frameCount * bytesPerFrame];
+        Buffer.BlockCopy(iq, 0, output, 0, frameCount * bytesPerFrame);
+
+        return output;
     }
 }

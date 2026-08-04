@@ -14,8 +14,13 @@
             <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="*"/>       <!-- Entry/Textbox-->
             <ColumnDefinition Width="5"/>
-            <ColumnDefinition Width="Auto"/>    <!-- Button-->
+            <ColumnDefinition Width="Auto"/>
+            <!-- Label -->
             <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="*"/>
+            <!-- Entry/Textbox-->
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto"/>    <!-- Button-->
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>  <!-- Caption-->
@@ -34,19 +39,21 @@
                        FontSize="20"
                        FontWeight="Bold"
                        Margin="0 0 0 10"/>
+        
         <TextBlock Grid.Column="0" Grid.Row="2" 
                    VerticalAlignment="Center"
-            Text="Baseline File" FontWeight="Bold" />
-        <TextBox Grid.Column="2" Grid.Row="2" VerticalAlignment="Center"
+                    Text="Baseline File" FontWeight="Bold" />
+        <TextBox Grid.Column="2" Grid.Row="2" Grid.ColumnSpan="6" 
+                 VerticalAlignment="Center"
             Text="{Binding BaselineFile, Mode=OneWay}" MinWidth="300"
                  HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"/>
-        <Button Grid.Column="4" Grid.Row="2"
+        <Button Grid.Column="8" Grid.Row="2"
             Content="Select Baseline FIT"
             Command="{Binding SelectBaselineFileCommand}"
             Visibility="{Binding BaselineAvailable, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
             Padding="10,4"
             Width="160"/>
-        <Button Grid.Column="4" Grid.Row="2"
+        <Button Grid.Column="8" Grid.Row="2"
             Content="Clear Baseline FIT"
             Command="{Binding ClearBaselineFileCommand}"
             Visibility="{Binding BaselineAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
@@ -55,16 +62,16 @@
 
         <TextBlock Grid.Column="0" Grid.Row="4" 
             Text="Capture File" FontWeight="Bold" />
-        <TextBox Grid.Column="2" Grid.Row="4" MinWidth="300" 
+        <TextBox Grid.Column="2" Grid.Row="4" Grid.ColumnSpan="6" MinWidth="300" 
                  VerticalAlignment="Center"
                  Text="{Binding CaptureFile, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"/>
-        <Button Grid.Column="4" Grid.Row="4"
+        <Button Grid.Column="8" Grid.Row="4"
             Content="Select Capture FIT"
             Command="{Binding SelectCaptureFileCommand}"
             Visibility="{Binding CaptureAvailable, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
             Padding="10,4"
             Width="160"/>
-        <Button Grid.Column="4" Grid.Row="4"
+        <Button Grid.Column="8" Grid.Row="4"
             Content="Clear Capture FIT"
             Command="{Binding ClearCaptureFileCommand}"
             Visibility="{Binding CaptureAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
@@ -81,19 +88,31 @@
                   SelectedValuePath="Mode"
                   DisplayMemberPath="Name" />
 
-        <Button Grid.Column="4" Grid.Row="6"
+        
+        
+        <TextBlock Grid.Column="4" Grid.Row="6" 
+            Text="Target FFT Size" FontWeight="Bold" />
+
+        <TextBox Grid.Column="6" Grid.Row="6" Width="50"
+                     Text="{Binding TargetFftSize}" HorizontalAlignment="Left"/>
+
+        <Button Grid.Column="8" Grid.Row="6"
             Content="Generate Chart"
             Command="{Binding GenerateChartCommand}"
             Padding="10,4"
             Width="160"/>
 
-        <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="6">
+        <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="9">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>  <!-- Centre  -->
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="Auto"/>    <!-- Entry/Textbox-->
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="Auto"/>  <!-- Button-->
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="5"/>
@@ -115,10 +134,14 @@
                        Text="Gain (dB)" FontWeight="Bold" />
             <TextBox Grid.Column="10"  Width="50"
                      Text="{Binding Gain, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+            <TextBlock Grid.Column="12" VerticalAlignment="Center"
+                       Text="Frames" FontWeight="Bold" />
+            <TextBox Grid.Column="14"  Width="100"
+                     Text="{Binding FrameCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
         </Grid>
         
         <views:SpectrumView 
-            Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="6"
+            Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9"
             Margin="0,10,0,0" 
             DataContext="{Binding SpectrumVm}"/>
     </Grid>
