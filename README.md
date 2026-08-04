@@ -111,6 +111,9 @@ Major components already exist, but many are incomplete or experimental.
 The application will connect and disconnect to an ASCOM Telescope Mount via the ASCOM Remote Server. If the telescope is Parked you are given the option of unparking (and also the option to park again when you disconnect.
 It will as respond to plugging and unplugging an RTL-SDR device (tested with a Nooelec NESDR SMArtee V5). An SDR device must be plugged in to enable the Plan View (which is the most complete view at the moment).
 The Calibrate button on the Plan View will run a calibration sequence and return a calibration profile.
+Plan view allows sweep plans to be added.
+Observe view will run a sweep plan and save rawIQ data files.
+Visualise View will display a chart given a baseline data file and a capture data file (created by the Observe View) using one of 4 experimental DSP pipelines, IF Average, Hi Frequency, Hi Velocity or SKAO TTRT
 
 ---
 
