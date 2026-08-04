@@ -254,7 +254,7 @@ The **HiPipeline** module is a full hydrogen‑line reduction pipeline designed 
 
 It is flexible, FFT‑size‑agnostic, and suitable for both hobbyist and research‑grade workflows.
 
-'''
+
                           ┌──────────────────────────────┐
                           │     Raw FFT Power Frames      │
                           │  (baseline + capture streams) │
@@ -311,5 +311,5 @@ It is flexible, FFT‑size‑agnostic, and suitable for both hobbyist and resear
                      │ - RatioSpectrum (bandpass‑flattened)      │
                      │ - HiSpectrum (continuum‑subtracted HI)    │
                      └──────────────────────────────────────────┘
-'''
+
 
