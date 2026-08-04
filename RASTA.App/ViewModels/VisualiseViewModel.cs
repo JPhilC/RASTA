@@ -40,6 +40,9 @@ public partial class VisualiseViewModel : ObservableObject
     private int targetFftSize;
 
     [ObservableProperty]
+    private int framesToUse;
+
+    [ObservableProperty]
     private string frameCount = string.Empty;
 
 
@@ -348,6 +351,8 @@ public partial class VisualiseViewModel : ObservableObject
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
+        if (TargetFftSize > ScanFftSize)
+            TargetFftSize = ScanFftSize;
 
 
         int bytesPerFrame = TargetFftSize * 2;
@@ -357,6 +362,12 @@ public partial class VisualiseViewModel : ObservableObject
             // Downscale the IQ data to the target FFT size
             baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
             captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
+        }
+
+        if (FramesToUse > 0)
+        {
+            baselineIq = ExtractFramesFlat(baselineIq, TargetFftSize, FramesToUse);
+            captureIq = ExtractFramesFlat(captureIq, TargetFftSize, FramesToUse);
         }
 
         // --- 3. Create streaming accumulator ---
@@ -568,17 +579,40 @@ public partial class VisualiseViewModel : ObservableObject
         return frames;
     }
 
+    /// <summary>
+    /// Extracts a flat sequence of FFT frames from an interleaved IQ byte buffer.
+    /// 
+    /// Each frame consists of <fftSize * 2> bytes (I and Q as 16‑bit signed values).
+    /// If the caller requests more frames than are actually present in the buffer,
+    /// the method safely returns the maximum number of complete frames available
+    /// instead of throwing an exception.
+    /// 
+    /// This makes the method robust when upstream capture lengths vary or when
+    /// callers request a fixed number of frames regardless of the actual IQ size.
+    /// 
+    /// Returns an empty array if no complete frames are available.
+    /// </summary>
     public static byte[] ExtractFramesFlat(byte[] iq, int fftSize, int frameCount)
     {
+        if (iq == null || iq.Length == 0)
+            throw new ArgumentException("IQ buffer is empty.", nameof(iq));
+
         int bytesPerFrame = fftSize * 2;
 
+        // How many complete frames are actually present?
         int availableFrames = iq.Length / bytesPerFrame;
-        if (availableFrames < frameCount)
-            throw new InvalidOperationException(
-                $"Incoming IQ contains only {availableFrames} frames, but {frameCount} were requested.");
 
-        var output = new byte[frameCount * bytesPerFrame];
-        Buffer.BlockCopy(iq, 0, output, 0, frameCount * bytesPerFrame);
+        // Clamp the requested frame count to what is available
+        int framesToReturn = Math.Min(frameCount, availableFrames);
+
+        // Nothing to return?
+        if (framesToReturn == 0)
+            return Array.Empty<byte>();
+
+        int bytesToCopy = framesToReturn * bytesPerFrame;
+
+        var output = new byte[bytesToCopy];
+        Buffer.BlockCopy(iq, 0, output, 0, bytesToCopy);
 
         return output;
     }

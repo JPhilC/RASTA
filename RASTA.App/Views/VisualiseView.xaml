@@ -12,14 +12,20 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>    <!-- Label -->
             <ColumnDefinition Width="5"/>
-            <ColumnDefinition Width="*"/>       <!-- Entry/Textbox-->
+            <ColumnDefinition Width="Auto"/>       <!-- Entry/Textbox-->
             <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="Auto"/>
             <!-- Label -->
             <ColumnDefinition Width="5"/>
-            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
             <!-- Entry/Textbox-->
             <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto"/>
+            <!-- Label -->
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto"/>
+            <!-- Entry/Textbox-->
+            <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="Auto"/>    <!-- Button-->
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
@@ -43,17 +49,17 @@
         <TextBlock Grid.Column="0" Grid.Row="2" 
                    VerticalAlignment="Center"
                     Text="Baseline File" FontWeight="Bold" />
-        <TextBox Grid.Column="2" Grid.Row="2" Grid.ColumnSpan="6" 
+        <TextBox Grid.Column="2" Grid.Row="2" Grid.ColumnSpan="9" 
                  VerticalAlignment="Center"
-            Text="{Binding BaselineFile, Mode=OneWay}" MinWidth="300"
+                 Text="{Binding BaselineFile, Mode=OneWay}" MinWidth="300"
                  HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"/>
-        <Button Grid.Column="8" Grid.Row="2"
+        <Button Grid.Column="12" Grid.Row="2"
             Content="Select Baseline FIT"
             Command="{Binding SelectBaselineFileCommand}"
             Visibility="{Binding BaselineAvailable, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
             Padding="10,4"
             Width="160"/>
-        <Button Grid.Column="8" Grid.Row="2"
+        <Button Grid.Column="12" Grid.Row="2"
             Content="Clear Baseline FIT"
             Command="{Binding ClearBaselineFileCommand}"
             Visibility="{Binding BaselineAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
@@ -62,16 +68,16 @@
 
         <TextBlock Grid.Column="0" Grid.Row="4" 
             Text="Capture File" FontWeight="Bold" />
-        <TextBox Grid.Column="2" Grid.Row="4" Grid.ColumnSpan="6" MinWidth="300" 
+        <TextBox Grid.Column="2" Grid.Row="4" Grid.ColumnSpan="9" MinWidth="300" 
                  VerticalAlignment="Center"
                  Text="{Binding CaptureFile, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"/>
-        <Button Grid.Column="8" Grid.Row="4"
+        <Button Grid.Column="12" Grid.Row="4"
             Content="Select Capture FIT"
             Command="{Binding SelectCaptureFileCommand}"
             Visibility="{Binding CaptureAvailable, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
             Padding="10,4"
             Width="160"/>
-        <Button Grid.Column="8" Grid.Row="4"
+        <Button Grid.Column="12" Grid.Row="4"
             Content="Clear Capture FIT"
             Command="{Binding ClearCaptureFileCommand}"
             Visibility="{Binding CaptureAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
@@ -96,7 +102,13 @@
         <TextBox Grid.Column="6" Grid.Row="6" Width="50"
                      Text="{Binding TargetFftSize}" HorizontalAlignment="Left"/>
 
-        <Button Grid.Column="8" Grid.Row="6"
+        <TextBlock Grid.Column="8" Grid.Row="6" 
+            Text="Frames to use" FontWeight="Bold" />
+
+        <TextBox Grid.Column="10" Grid.Row="6" Width="50"
+                     Text="{Binding FramesToUse}" HorizontalAlignment="Left"/>
+
+        <Button Grid.Column="14" Grid.Row="6"
             Content="Generate Chart"
             Command="{Binding GenerateChartCommand}"
             Padding="10,4"
@@ -141,7 +153,7 @@
         </Grid>
         
         <views:SpectrumView 
-            Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9"
+            Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="13"
             Margin="0,10,0,0" 
             DataContext="{Binding SpectrumVm}"/>
     </Grid>
