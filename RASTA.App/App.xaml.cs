@@ -11,7 +11,6 @@ using RASTA.Infrastructure.Services;
 using RASTA.Infrastructure.Storage;
 using RASTA.Infrastructure.Telescope;
 using RASTA.Processing.Calibration;
-using RASTA.Processing.Capture;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.Planning;
 using RASTA.Processing.Spectral;
@@ -70,7 +69,6 @@ namespace RASTA.App
             services.AddSingleton<CalibrationRepository>();
             services.AddSingleton<CalibrationService>();
             services.AddSingleton<Calibrator>();
-            services.AddSingleton<ObservationCaptureService>();
 
             // ---------------------------------------------------------
             // Alpaca client

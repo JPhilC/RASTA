@@ -388,7 +388,14 @@ public partial class ObserveViewModel : ObservableObject
                         FftSize = fftSize, // Set t
                         GainDb = gainDb,
                         ObservationDate = DateTime.UtcNow,
-                        DwellTimeSec = dwellSeconds
+                        DwellTimeSec = dwellSeconds,
+                        SiteLatitudeDeg = _settings.SiteLatitudeDeg,
+                        SiteLongitudeDeg = _settings.SiteLongitudeDeg,
+                        SiteElevationM = _settings.SiteElevationM,
+                        RaDeg = target.Mode == CoordinateMode.Equatorial ? target.RightAscensionHours * 15.0 : null,
+                        DecDeg = target.Mode == CoordinateMode.Equatorial ? target.DeclinationDeg : null,
+                        AzDeg = target.Mode == CoordinateMode.AltAz ? target.AzimuthDeg : null,
+                        AltDeg = target.Mode == CoordinateMode.AltAz ? target.ElevationDeg : null
                     };
 
                     // -----------------------------

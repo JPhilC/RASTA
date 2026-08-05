@@ -2,9 +2,12 @@
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
+using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Services;
-using RASTA.Processing.IfAverage;
+using RASTA.Processing.HiPipeline;
 using System.IO;
+using System.Runtime;
+using System.Windows.Input;
 
 namespace RASTA.Processing.Calibration
 {
@@ -21,6 +24,23 @@ namespace RASTA.Processing.Calibration
             _userOptionsService = userOptionsService;
         }
 
+        // How long after a gain change to wait, in seconds, before trusting samples -
+        // keeps a switching transient from biasing that gain's averaged spectrum.
+        private const double GainSettleTimeSec = 0.005;
+
+        // Maximum fraction of raw I/Q bytes allowed at the ADC rail (0 or 255 for the
+        // RTL-SDR's 8-bit samples) before a gain is considered to be overloading the
+        // front end. A few rail hits are expected from ordinary Gaussian noise; this is
+        // for detecting real saturation, not zero-tolerance.
+        private const double SaturationFractionThreshold = 0.0005; // 0.05%
+
+        private sealed record GainTrial(
+            double Gain,
+            double SaturationFraction,
+            double StdDev,
+            int SpurCount,
+            double Slope);
+
         /// <summary>
         /// Runs a full gain-sweep calibration and returns a CalibrationProfile.
         /// </summary>
@@ -33,34 +53,26 @@ namespace RASTA.Processing.Calibration
             Action<string, double>? progressCallback,
             CancellationToken ct)
         {
-            var ifAverage = new IfAverageProcessor(fftSize);
-
-            // For calibration, we want a very stable, flat baseline:
-            ifAverage.Median.Enabled = true;              // remove impulsive junk
-            ifAverage.Rfi.Enabled = true;                 // track bad frames
-            ifAverage.Intermediate.Window = 10;           // short-term average
-            ifAverage.LongTerm.Window = 50;               // long-term average
-            ifAverage.Background.SubractEnabled = false;         // no subtraction during calibration
-            ifAverage.SavitzkyGolay.Enabled = true;       // visually smooth baseline
-            ifAverage.Db.Offset = 0.0;
-
             var baseFolder = _userOptionsService.Options.CaptureFolder;
             var supportedGains = device.SupportedGainsDb.ToList();
             if (supportedGains.Count == 0)
                 throw new InvalidOperationException("SDR device reports no supported gains.");
 
-            var gainScores = new List<(double Gain, double Score, double[] Spectrum)>();
+            var gainTrials = new List<GainTrial>();
 
             int totalSteps = supportedGains.Count + 3; // +1 baseline, +1 finalize
             int currentStep = 0;
 
             // Compute sample count safely
             uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellTime.TotalSeconds);
-            
+
             string filePath = null;
             FitsFileMetaData meta = null;
 
             var startTime = DateTime.UtcNow;
+            int bytesPerFrame = fftSize * 2;
+            int settleFrames = (int)Math.Ceiling(sampleRateHz * GainSettleTimeSec / fftSize);
+
             foreach (var gain in supportedGains)
             {
                 ct.ThrowIfCancellationRequested();
@@ -75,31 +87,69 @@ namespace RASTA.Processing.Calibration
                     sampleCount,
                     ct).ConfigureAwait(false);
 
-                //// 2. FITS file
-                //filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "cal", startTime, frequencyHz, gain);
+                // Real ADC-saturation check on the raw I/Q bytes: samples pinned at the
+                // rails mean the front end is overloaded at this gain, regardless of what
+                // the resulting spectrum looks like.
+                double saturationFraction = ComputeSaturationFraction(rawIq);
 
-                //meta = new FitsFileMetaData
-                //{
-                //    Origin = "RTL-SDR",
-                //    DataFormat = "UINT8_IQ",
-                //    CentFreqHz = frequencyHz,
-                //    SampFreqHz = sampleRateHz,
-                //    GainDb = gain,
-                //    ObservationDate = DateTime.UtcNow,
-                //    DwellTimeSec = dwellTime.TotalSeconds
-                //};
+                // Average the power spectrum across every fftSize frame in this trial's
+                // capture (not just the first one), so flatness/spur/slope reflect this
+                // gain's actual receiver response rather than a single noisy periodogram.
+                // Uses the same SKAO-normalized power + accumulator as the baseline build,
+                // so trials are scored consistently with how the chosen baseline is built.
+                int totalFrames = rawIq.Length / bytesPerFrame;
+                int skip = Math.Min(settleFrames, Math.Max(totalFrames - 1, 0));
 
-                //_fitsFileWriter.WriteRawIq(filePath, rawIq, meta);
+                var trialAcc = new HiStreamingAccumulator(fftSize);
+                for (int f = skip; f < totalFrames; f++)
+                {
+                    var chunk = new byte[bytesPerFrame];
+                    Buffer.BlockCopy(rawIq, f * bytesPerFrame, chunk, 0, bytesPerFrame);
 
-                // Use your FFT engine to compute a spectrum
-                double[] spectrum = _fftEngine.ComputeSpectrum(rawIq, fftSize);
+                    var spectrum = _fftEngine.ComputeSkAoPower(chunk, fftSize);
+                    trialAcc.AddBaselineFrame(spectrum);
+                }
 
-                double score = ScoreSpectrum(spectrum);
-                gainScores.Add((gain, score, spectrum));
+                if (trialAcc.BaselineFrames == 0)
+                    throw new InvalidOperationException(
+                        $"Gain sweep dwell time is too short to average even one frame at gain {gain} dB.");
+
+                var avgSpectrum = trialAcc.GetBaselineAverage();
+
+                double std = ComputeStdDev(avgSpectrum);
+                double mean = avgSpectrum.Average();
+                int spurCount = avgSpectrum.Count(v => v > mean + 6 * std);
+                double slope = ComputeSlope(avgSpectrum);
+
+                gainTrials.Add(new GainTrial(gain, saturationFraction, std, spurCount, slope));
             }
 
-            // Choose best gain
-            var best = gainScores.OrderByDescending(g => g.Score).First();
+            // Saturation is a hard requirement, not something to trade off against
+            // flatness: any gain that measurably overloads the ADC is disqualified before
+            // scoring even starts.
+            var candidates = gainTrials.Where(t => t.SaturationFraction <= SaturationFractionThreshold).ToList();
+            if (candidates.Count == 0)
+            {
+                // Every gain saturated against the terminator (shouldn't normally happen) -
+                // fall back to whichever saturated the least rather than failing outright.
+                candidates = gainTrials.OrderBy(t => t.SaturationFraction).Take(1).ToList();
+            }
+
+            // Normalise the surviving metrics to [0,1] before combining them, so the
+            // weights below actually control the trade-off instead of whichever raw
+            // metric happens to have the largest magnitude.
+            double minStd = candidates.Min(t => t.StdDev), maxStd = candidates.Max(t => t.StdDev);
+            double minSpur = candidates.Min(t => t.SpurCount), maxSpur = candidates.Max(t => t.SpurCount);
+            double minSlope = candidates.Min(t => Math.Abs(t.Slope)), maxSlope = candidates.Max(t => Math.Abs(t.Slope));
+
+            var best = candidates
+                .Select(t => (
+                    t.Gain,
+                    Score: (1.0 - Normalize(t.StdDev, minStd, maxStd)) * 0.5            // flatter is better
+                         + (1.0 - Normalize(t.SpurCount, minSpur, maxSpur)) * 0.3       // fewer spurs is better
+                         + (1.0 - Normalize(Math.Abs(t.Slope), minSlope, maxSlope)) * 0.2)) // flatter slope is better
+                .OrderByDescending(s => s.Score)
+                .First();
 
             progressCallback?.Invoke($"Selected gain {best.Gain} dB", 0.95);
 
@@ -134,23 +184,26 @@ namespace RASTA.Processing.Calibration
 
             currentStep++;
             progressCallback?.Invoke($"Calculating baseline", (double)currentStep / totalSteps);
-            
-            var baselineSpectrum = new double[fftSize];
 
-            // Break the long baseline capture into FFT-sized chunks
+            // Build the averaged baseline the same way HiStreamingPipeline will later
+            // build the observation's averaged capture spectrum (SKAO-normalized power,
+            // chunked into fftSize frames, arithmetic mean) so the two are directly
+            // comparable when HiStreamingPipeline.Process combines them.
+            var accumulator = new HiStreamingAccumulator(fftSize);
+
             int bytesPerChunk = fftSize * 2; // adjust if your IQ format differs
             for (int offset = 0; offset + bytesPerChunk <= baselineRawIq.Length; offset += bytesPerChunk)
             {
                 var chunk = new byte[bytesPerChunk];
                 Buffer.BlockCopy(baselineRawIq, offset, chunk, 0, bytesPerChunk);
 
-                var spectrum = _fftEngine.ComputeSpectrum(chunk, fftSize);
-
-                // Feed each spectrum into IF_Average
-                ifAverage.Process(spectrum, baselineSpectrum);
+                var spectrum = _fftEngine.ComputeSkAoPower(chunk, fftSize);
+                accumulator.AddBaselineFrame(spectrum);
             }
 
-            // At this point, baselineSpectrum holds the averaged dB baseline
+            var baselineSpectrum = accumulator.GetBaselineAverage();
+
+            // At this point, baselineSpectrum holds the averaged linear-power baseline
 
             currentStep++;
             progressCallback?.Invoke("Finalizing calibration", (double)currentStep / totalSteps);
@@ -169,28 +222,30 @@ namespace RASTA.Processing.Calibration
             };
         }
 
-        private double ScoreSpectrum(double[] spectrum)
+        /// <summary>
+        /// Fraction of raw I/Q bytes sitting at the ADC rail (0 or 255 for the RTL-SDR's
+        /// unsigned 8-bit samples). This is the direct hardware measure of front-end
+        /// overload - unlike inspecting the derived spectrum, it can't be fooled by a
+        /// single strong spur that never actually saturated anything.
+        /// </summary>
+        private static double ComputeSaturationFraction(byte[] rawIq)
         {
-            double mean = spectrum.Average();
-            double std = ComputeStdDev(spectrum);
+            if (rawIq.Length == 0)
+                return 0.0;
 
-            int spurCount = spectrum.Count(v => v > mean + 6 * std);
+            int saturated = 0;
+            for (int i = 0; i < rawIq.Length; i++)
+            {
+                byte v = rawIq[i];
+                if (v == 0 || v == 255)
+                    saturated++;
+            }
 
-            double max = spectrum.Max();
-            int clipCount = spectrum.Count(v => v > max * 0.98);
-
-            double slope = ComputeSlope(spectrum);
-
-            double flatnessScore = 1.0 / (std + 1e-9);
-            double spurScore = 1.0 / (spurCount + 1);
-            double clipScore = 1.0 / (clipCount + 1);
-            double slopeScore = 1.0 / (Math.Abs(slope) + 1e-9);
-
-            return flatnessScore * 0.4 +
-                   spurScore * 0.3 +
-                   clipScore * 0.2 +
-                   slopeScore * 0.1;
+            return (double)saturated / rawIq.Length;
         }
+
+        private static double Normalize(double value, double min, double max) =>
+            max > min ? (value - min) / (max - min) : 0.0;
 
         private static double ComputeStdDev(double[] values)
         {

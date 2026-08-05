@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Reflection.PortableExecutable;
-using System.Text;
-using nom.tam.fits;
+﻿using nom.tam.fits;
 
 namespace RASTA.Core.Storage
 {
@@ -21,6 +17,10 @@ namespace RASTA.Core.Storage
 
         public DateTime ObservationDate { get; set; }
 
+        public double? SiteLatitudeDeg { get; set; }
+        public double? SiteLongitudeDeg { get; set; }
+        public double? SiteElevationM { get; set; }
+
         public double? RaDeg { get; set; }
         public double? DecDeg { get; set; }
         public double? AzDeg { get; set; }
@@ -37,6 +37,9 @@ namespace RASTA.Core.Storage
             hdu.AddValue("DWELL", DwellTimeSec, "Dwell time (s)");
             hdu.AddValue("DATE-OBS", ObservationDate.ToString("yyyy-MM-ddTHH:mm:ss"), null);
             hdu.AddValue("FFT_SIZE", FftSize, "FFT size");
+            if (SiteLatitudeDeg.HasValue) hdu.AddValue("SITELAT", SiteLatitudeDeg.Value, "Site latitude (deg)");
+            if (SiteLongitudeDeg.HasValue) hdu.AddValue("SITELON", SiteLongitudeDeg.Value, "Site longitude (deg)");
+            if (SiteElevationM.HasValue) hdu.AddValue("SITEELV", SiteElevationM.Value, "Site elevation (m)");
             if (RaDeg.HasValue) hdu.AddValue("RA", RaDeg.Value, "Right Ascension (deg)");
             if (DecDeg.HasValue) hdu.AddValue("DEC", DecDeg.Value, "Declination (deg)");
             if (AzDeg.HasValue) hdu.AddValue("AZ", AzDeg.Value, "Azimuth (deg)");
@@ -60,6 +63,9 @@ namespace RASTA.Core.Storage
                 meta.ObservationDate = obsDate;
             else
                 meta.ObservationDate = DateTime.MinValue;
+            meta.SiteLatitudeDeg = header.FindCard("SITELAT") != null ? header.GetDoubleValue("SITELAT") : null;
+            meta.SiteLongitudeDeg = header.FindCard("SITELON") != null ? header.GetDoubleValue("SITELON") : null;
+            meta.SiteElevationM = header.FindCard("SITEELV") != null ? header.GetDoubleValue("SITEELV") : null;
             meta.RaDeg = header.FindCard("RA") != null ? header.GetDoubleValue("RA") : null;
             meta.DecDeg = header.FindCard("DEC") != null ? header.GetDoubleValue("DEC") : null;
             meta.AzDeg = header.FindCard("AZ") != null ? header.GetDoubleValue("AZ") : null;
