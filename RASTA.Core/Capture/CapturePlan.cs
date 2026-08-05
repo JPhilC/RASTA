@@ -31,7 +31,6 @@ namespace RASTA.Core.Capture
         public double SampleRate { get; init; }
         public double CenterFrequency { get; init; }
         public int FftBins { get; init; }
-        public int Integrations { get; init; }
 
         public double SettleTimeSeconds { get; init; }
         public bool TrackingEnabled { get; init; }

@@ -47,5 +47,27 @@ namespace RASTA.App.ViewModels
             }
         }
 
+        public double DefaultCentreFrequencyHz
+        {
+            get => Options.DefaultCentreFrequencyHz;
+            set
+            {
+                Options.DefaultCentreFrequencyHz = value;
+                OnPropertyChanged();
+                Options.DefaultCentreFrequencyHz = value;
+            }
+        }
+
+        public double DefaultBandwidthHz
+        {
+            get => Options.DefaultBandwidthHz;
+            set
+            {
+                Options.DefaultBandwidthHz = value;
+                OnPropertyChanged();
+                Options.DefaultBandwidthHz = value;
+            }
+        }
+
     }
 }

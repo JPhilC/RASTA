@@ -49,6 +49,7 @@ namespace RASTA.Processing.Calibration
             double frequencyHz,
             double sampleRateHz,
             TimeSpan dwellTime,
+            TimeSpan baselineDwellTime,
             int fftSize,
             Action<string, double>? progressCallback,
             CancellationToken ct)
@@ -153,16 +154,22 @@ namespace RASTA.Processing.Calibration
 
             progressCallback?.Invoke($"Selected gain {best.Gain} dB", 0.95);
 
-            // Capture long baseline at chosen gain
+            // Capture long baseline at chosen gain. This capture alone can take far
+            // longer than any single gain trial, so it gets its own 0-1 progress run
+            // (real, byte-driven) instead of just advancing the coarse step counter.
             currentStep++;
-            progressCallback?.Invoke($"Selected gain {best.Gain} dB", (double)currentStep / totalSteps);
+            progressCallback?.Invoke($"Capturing baseline at {best.Gain} dB", 0.0);
+
+            uint baselineSampleCount = (uint)Math.Ceiling(sampleRateHz * baselineDwellTime.TotalSeconds);
 
             var baselineRawIq = await device.CaptureRawIqAsync(
                 frequencyHz,
                 sampleRateHz,
                 best.Gain,
-                sampleCount * 4,
-                ct).ConfigureAwait(false);
+                baselineSampleCount,
+                ct,
+                pct => progressCallback?.Invoke($"Capturing baseline at {best.Gain} dB", pct)
+                ).ConfigureAwait(false);
 
 
             // save the baseline to a FITS file
@@ -177,7 +184,7 @@ namespace RASTA.Processing.Calibration
                 FftSize = fftSize,
                 GainDb = best.Gain,
                 ObservationDate = DateTime.UtcNow,
-                DwellTimeSec = dwellTime.TotalSeconds * 4
+                DwellTimeSec = baselineDwellTime.TotalSeconds
             };
 
             _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);

@@ -1,6 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Logging;
+using RASTA.Infrastructure.Services;
 using RASTA.Infrastructure.Telescope;
 using System.Windows;
 
@@ -11,16 +12,22 @@ namespace RASTA.App.ViewModels
         private readonly ITelescopeMount _mount;
         private readonly TelescopeState _state;
         private readonly RastaLogger _logger;
+        private readonly UserOptionsService _optionsService;
 
         private bool _mountIsInitialising;
 
-        public SettingsViewModel(ITelescopeMount mount, TelescopeState state, RastaLogger logger)
+        public SettingsViewModel(ITelescopeMount mount, TelescopeState state, RastaLogger logger, UserOptionsService optionsService)
         {
             _mount = mount;
             _state = state;
             _logger = logger;
+            _optionsService = optionsService;
 
             OnAlpacaBaseUrlChanged(alpacaBaseUrl);
+
+            CalibrationFrequencyHz = _optionsService.Options.DefaultCentreFrequencyHz;
+            SampleRateHz = _optionsService.Options.DefaultBandwidthHz;
+            FftSize = _optionsService.Options.DefaultFftSize;
         }
 
         // -------------------------------
@@ -315,7 +322,7 @@ namespace RASTA.App.ViewModels
         // ---------------------------------------
 
         [ObservableProperty]
-        private double calibrationFrequencyHz = 1420405800 ; // 1420.405800 MHz
+        private double calibrationFrequencyHz = 1_420_405_752.0; // 1420.405752 MHz
 
         [ObservableProperty]
         private double sampleRateHz = 2.4e6; // 2.4 MHz
@@ -324,6 +331,12 @@ namespace RASTA.App.ViewModels
         private int fftSize = 4096;
 
         [ObservableProperty]
-        private int calibrationDwellSeconds = 5;    
+        private int gainDwellSeconds = 5;
+
+        // Baseline capture is independent of the per-gain sweep dwell above - it only
+        // needs to happen once, at the chosen gain, and deserves a much better-averaged
+        // reference since every later observation is divided by it.
+        [ObservableProperty]
+        private int baselineDwellSeconds = 20;
     }
 }

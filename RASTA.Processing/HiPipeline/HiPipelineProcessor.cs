@@ -109,6 +109,23 @@ namespace RASTA.Processing.HiPipeline
 
             return baselineAvg;
         }
+
+        /// <summary>
+        /// Returns the averaged capture spectrum only. Used for a live running average
+        /// against a baseline that was already fixed earlier (e.g. during Observe, where
+        /// the calibration baseline doesn't change frame to frame).
+        /// </summary>
+        public double[] GetCaptureAverage()
+        {
+            if (_captureFrames == 0)
+                throw new InvalidOperationException("Need at least one capture frame.");
+
+            var captureAvg = new double[_fftSize];
+            for (int i = 0; i < _fftSize; i++)
+                captureAvg[i] = _captureSum[i] / _captureFrames;
+
+            return captureAvg;
+        }
     }
 
     /// <summary>

@@ -202,11 +202,6 @@
                             <TextBlock Text="FFT Bins"/>
                             <TextBox Width="120" Text="{Binding FftBins}"/>
                         </StackPanel>
-
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Integrations"/>
-                            <TextBox Width="120" Text="{Binding Integrations}"/>
-                        </StackPanel>
                     </StackPanel>
                 </StackPanel>
 

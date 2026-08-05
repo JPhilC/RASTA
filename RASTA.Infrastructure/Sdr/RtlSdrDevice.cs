@@ -144,7 +144,8 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
     double sampleRateHz,
     double gainDb,
     uint sampleCount,
-    CancellationToken ct)
+    CancellationToken ct,
+    Action<double>? onProgress = null)
     {
         if (_device == null)
             throw new InvalidOperationException("SDR device not initialized.");
@@ -187,6 +188,8 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
                 ulong toCopy = Math.Min((ulong)raw.Length, bytesNeeded - writePos);
                 raw.Slice(0, (int)toCopy).CopyTo(output.AsSpan((int)writePos));
                 writePos += toCopy;
+
+                onProgress?.Invoke((double)writePos / bytesNeeded);
 
                 if (writePos >= bytesNeeded)
                     tcs.TrySetResult(true);

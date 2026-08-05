@@ -141,7 +141,7 @@ namespace RASTA.App.ViewModels
                     XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
                     XAxes[0].MinLimit = frequencies.First();
                     XAxes[0].MaxLimit = frequencies.Last();
-                    XAxes[0].MinStep = 100_000;
+                    XAxes[0].MinStep = ComputeBinStep(frequencies);
                     YAxes[0].Name = "Power";
                     break;
 
@@ -151,7 +151,7 @@ namespace RASTA.App.ViewModels
                     XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
                     XAxes[0].MinLimit = xAxis.First();
                     XAxes[0].MaxLimit = xAxis.Last();
-                    XAxes[0].MinStep = 50_000;
+                    XAxes[0].MinStep = ComputeBinStep(xAxis);
                     YAxes[0].Name = "Intensity [a.u.]";
                     break;
 
@@ -160,11 +160,19 @@ namespace RASTA.App.ViewModels
                     XAxes[0].Labeler = value => $"{value:F1} km/s";
                     XAxes[0].MinLimit = xAxis.First();
                     XAxes[0].MaxLimit = xAxis.Last();
-                    XAxes[0].MinStep = 1.0;
+                    XAxes[0].MinStep = ComputeBinStep(xAxis);
                     YAxes[0].Name = "Intensity [a.u.]";
                     break;
             }
         }
+
+        /// <summary>
+        /// One bin's worth of spacing along the given axis - used as MinStep so LiveCharts
+        /// can keep subdividing ticks as the user zooms in (its default auto-step behaviour),
+        /// without ever showing ticks finer than the data actually resolves.
+        /// </summary>
+        private static double ComputeBinStep(double[] axis) =>
+            axis.Length > 1 ? Math.Abs(axis[^1] - axis[0]) / (axis.Length - 1) : 0;
 
 
         // ---------------------------------------------------------
@@ -183,7 +191,7 @@ namespace RASTA.App.ViewModels
             XAxes[0].MinLimit = frequencies.First();
             XAxes[0].MaxLimit = frequencies.Last();
             XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";  // Convert to MHz with 2 decimals
-            XAxes[0].MinStep = 100_000; // 100 kHz step
+            XAxes[0].MinStep = ComputeBinStep(frequencies); // never subdivide finer than one FFT bin
 
             YAxes[0].MinLimit = -50d;
             YAxes[0].MaxLimit = 50d;

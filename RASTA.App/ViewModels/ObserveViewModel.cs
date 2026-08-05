@@ -7,19 +7,16 @@ using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Services;
-using RASTA.Processing.IfAverage;
+using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Planning;
 using System.Collections.Concurrent;
 using System.Reflection.Metadata;
 using System.Windows;
-using System.Windows.Threading;
 
 namespace RASTA.App.ViewModels;
 
 public partial class ObserveViewModel : ObservableObject
 {
-    private DispatcherTimer? _progressTimer;
-
     private readonly ITelescopeMount _mount;
     private readonly TelescopeState _mountState;
     private readonly SdrDeviceService _sdrDeviceService;
@@ -32,7 +29,6 @@ public partial class ObserveViewModel : ObservableObject
     private readonly StatusBarViewModel _statusBar;
     private readonly IFftEngine _fftEngine;
     private readonly UserOptionsService _optionsService;
-    private IfAverageProcessor _ifAverageProcessor;
     private CancellationTokenSource? _sweepCts;
 
     private CapturePlan? _activePlan;
@@ -142,9 +138,13 @@ public partial class ObserveViewModel : ObservableObject
 
     private double[]? calibrationBaselineSpectrum;
 
-    private double[] averageSpectrum;
-
-    private bool captureInProgress = false;
+    // Live HI pipeline state for the current dwell point. Reset per target so the
+    // displayed spectrum builds up over that pointing's captures only.
+    private HiStreamingAccumulator? _liveAccumulator;
+    private readonly HiStreamingPipeline _livePipeline = new();
+    private byte[] _liveLeftover = Array.Empty<byte>();
+    private double _liveSampleRateHz;
+    private double _liveCenterFreqHz;
 
     private void OnChunk(byte[] chunk)
     {
@@ -170,19 +170,45 @@ public partial class ObserveViewModel : ObservableObject
 
     private void ProcessChunk(byte[] chunk)
     {
-        if (calibrationBaselineSpectrum == null)
+        if (calibrationBaselineSpectrum == null || _liveAccumulator == null)
             return;
 
-        // 1. FFT → power spectrum (linear)
-        var spectrum = _fftEngine.ComputeSpectrum(chunk, fftSize);
+        // Raw streaming chunks arrive at whatever size the USB async buffer produced -
+        // not aligned to fftSize. Stitch them onto any leftover from the previous chunk
+        // and slice off every complete fftSize-aligned frame before computing power, so
+        // frames line up the same way they do when chunking a full FITS capture.
+        int bytesPerFrame = fftSize * 2;
 
-        _ifAverageProcessor.Process(spectrum, averageSpectrum);
+        var combined = new byte[_liveLeftover.Length + chunk.Length];
+        Buffer.BlockCopy(_liveLeftover, 0, combined, 0, _liveLeftover.Length);
+        Buffer.BlockCopy(chunk, 0, combined, _liveLeftover.Length, chunk.Length);
 
-        // 3. UI update
-        SpectrumVm.UpdateSpectrum(averageSpectrum);
+        int usableFrames = combined.Length / bytesPerFrame;
+        int usableBytes = usableFrames * bytesPerFrame;
+
+        for (int f = 0; f < usableFrames; f++)
+        {
+            var frame = new byte[bytesPerFrame];
+            Buffer.BlockCopy(combined, f * bytesPerFrame, frame, 0, bytesPerFrame);
+
+            var power = _fftEngine.ComputeSkAoPower(frame, fftSize);
+            _liveAccumulator.AddCaptureFrame(power);
+        }
+
+        int remainderLength = combined.Length - usableBytes;
+        _liveLeftover = new byte[remainderLength];
+        Buffer.BlockCopy(combined, usableBytes, _liveLeftover, 0, remainderLength);
+
+        if (_liveAccumulator.CaptureFrames == 0)
+            return; // not enough samples yet for even one aligned frame
+
+        var captureAvg = _liveAccumulator.GetCaptureAverage();
+        _livePipeline.Process(calibrationBaselineSpectrum, captureAvg, _liveSampleRateHz, _liveCenterFreqHz);
+
+        SpectrumVm.UpdateSpectrum(_livePipeline.HiSpectrum, _livePipeline.FrequencyHz);
     }
 
-    private async Task<byte[]> CaptureRawIqFromStreamAsync(uint sampleCount, CancellationToken ct)
+    private async Task<byte[]> CaptureRawIqFromStreamAsync(uint sampleCount, CancellationToken ct, Action<double>? onProgress = null)
     {
         ulong bytesNeeded = (ulong)sampleCount * 2UL;
         var output = new byte[bytesNeeded];
@@ -197,6 +223,9 @@ public partial class ObserveViewModel : ObservableObject
                 ulong toCopy = Math.Min((ulong)chunk.Length, bytesNeeded - writePos);
                 Array.Copy(chunk, 0, output, (int)writePos, (int)toCopy);
                 writePos += toCopy;
+
+                // Real, measured progress - not a time-based guess.
+                onProgress?.Invoke((double)writePos / bytesNeeded);
             }
             else
             {
@@ -281,25 +310,19 @@ public partial class ObserveViewModel : ObservableObject
             System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: dwellSeconds={dwellSeconds}, sampleRateHz={sampleRateHz}, sampleCount={sampleCount}");
 
             // Prepare the spectrum view model with the correct parameters for the current plan.
+            SpectrumVm.Mode = SpectrumMode.HiFrequency;
             SpectrumVm.UpdateParameters(fftSize, frequencyHz, sampleRateHz);
 
-            averageSpectrum = new double[fftSize];
+            _liveSampleRateHz = sampleRateHz;
+            _liveCenterFreqHz = frequencyHz;
 
             foreach (var target in sweepPlanResult.Points)
             {
-                // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
-                _ifAverageProcessor = new IfAverageProcessor(fftSize);
-                // Configure defaults
-                _ifAverageProcessor.Median.Enabled = true;
-                _ifAverageProcessor.Rfi.Enabled = true;
-                _ifAverageProcessor.Intermediate.Window = 10;
-                _ifAverageProcessor.LongTerm.Window = 20;
-                _ifAverageProcessor.Background.Load(calibrationBaselineSpectrum);
-                _ifAverageProcessor.Background.SubractEnabled = true;
-                _ifAverageProcessor.SavitzkyGolay.Enabled = true;
-                _ifAverageProcessor.Db.Offset = 0.0;
-
-                averageSpectrum = new double[fftSize];
+                // Fresh live accumulator for this pointing, so the displayed spectrum
+                // builds up over this target's captures only, against the fixed
+                // calibration baseline.
+                _liveAccumulator = new HiStreamingAccumulator(fftSize);
+                _liveLeftover = Array.Empty<byte>();
 
                 ct.ThrowIfCancellationRequested();
 
@@ -337,8 +360,8 @@ public partial class ObserveViewModel : ObservableObject
                 // -----------------------------------------
                 // NEW TARGET → reset the running spectrum
                 // -----------------------------------------
-                
-                SpectrumVm.UpdateSpectrum(averageSpectrum);
+
+                SpectrumVm.UpdateSpectrum(new double[fftSize]);
 
                 // Capture multiple files at this dwell point
                 for (int i = 0; i < filesPerPoint; i++)
@@ -357,22 +380,17 @@ public partial class ObserveViewModel : ObservableObject
                     _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
 
 
-                    StartProgressTimer(dwellSeconds);
-                    captureInProgress = true;
+                    BeginProgress();
 
+                    var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct, ReportProgress);
 
-                    var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct);
-
-                    captureInProgress = false;
-
-                    
                     // -----------------------------
                     // Stage 2b — Stop streaming for this file
                     // -----------------------------
                     _chunkWorkerCts.Cancel();
                     _chunkWorkerCts = null;
                     await _device.StopStreamingAsync();
-                    StopProgressTimer();
+                    EndProgress();
 
                     System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: captured {rawIq.Length} bytes in {(DateTime.Now - captureStartTime).TotalSeconds:F2} seconds");
 
@@ -402,11 +420,11 @@ public partial class ObserveViewModel : ObservableObject
                     // Stage 3 — Saving
                     // -----------------------------
                     _statusBar.CaptureStatus = $"Saving pos {targetIndex + 1} file {i + 1}";
-                    StartProgressTimer(1.0); // animate saving for 1 second
+                    BeginProgress();
 
                     _fitsFileWriter.WriteRawIq(fullPath, rawIq, meta);
 
-                    StopProgressTimer();
+                    EndProgress();
 
                 }
 
@@ -440,46 +458,23 @@ public partial class ObserveViewModel : ObservableObject
                     await _mount.FindHomeAsync();
                 }
             }
-            captureInProgress = false;
             IsBusy = false;
         }
     }
 
-    private void StartProgressTimer(double durationSeconds)
+    private void BeginProgress()
     {
         _statusBar.CaptureProgress = 0;
         _statusBar.IsCaptureInProgress = true;
-
-        double elapsed = 0;
-        double interval = 0.5; 
-
-        _progressTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(interval)
-        };
-
-        _progressTimer.Tick += (s, e) =>
-        {
-            elapsed += interval;
-            _statusBar.CaptureProgress = Math.Min(elapsed / durationSeconds, 1.0);
-
-            if (elapsed >= durationSeconds)
-            {
-                StopProgressTimer();
-            }
-        };
-
-        _progressTimer.Start();
     }
 
-    private void StopProgressTimer()
+    private void ReportProgress(double fraction)
     {
-        if (_progressTimer != null)
-        {
-            _progressTimer.Stop();
-            _progressTimer = null;
-        }
+        _statusBar.CaptureProgress = Math.Clamp(fraction, 0.0, 1.0);
+    }
 
+    private void EndProgress()
+    {
         _statusBar.IsCaptureInProgress = false;
         _statusBar.CaptureProgress = 0;
     }

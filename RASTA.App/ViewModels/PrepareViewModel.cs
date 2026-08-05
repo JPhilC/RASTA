@@ -108,13 +108,24 @@ public partial class PrepareViewModel : ViewModelBase
         }
     }
 
-    public int CalibrationDwellSeconds
+    public int GainDwellSeconds
     {
-        get => _settings.CalibrationDwellSeconds;
+        get => _settings.GainDwellSeconds;
         set
         {
-            _settings.CalibrationDwellSeconds = value;
-            ValidateDwell(value);
+            _settings.GainDwellSeconds = value;
+            ValidateGainDwell(value);
+            OnPropertyChanged();
+        }
+    }
+
+    public int BaselineDwellSeconds
+    {
+        get => _settings.BaselineDwellSeconds;
+        set
+        {
+            _settings.BaselineDwellSeconds = value;
+            ValidateBaselineDwell(value);
             OnPropertyChanged();
         }
     }
@@ -151,7 +162,8 @@ public partial class PrepareViewModel : ViewModelBase
         ValidateCalibrationFrequency(CalibrationFrequencyHz);
         ValidateSampleRate(SampleRateHz);
         ValidateFftSize(FftSize);
-        ValidateDwell(CalibrationDwellSeconds);
+        ValidateGainDwell(GainDwellSeconds);
+        ValidateBaselineDwell(BaselineDwellSeconds);
     }
 
     // -----------------------------
@@ -239,13 +251,22 @@ public partial class PrepareViewModel : ViewModelBase
             AddError(nameof(FftSize), "FFT size must be a power of two.");
     }
 
-    private void ValidateDwell(int value)
+    private void ValidateGainDwell(int value)
     {
-        ClearErrors(nameof(CalibrationDwellSeconds));
+        ClearErrors(nameof(GainDwellSeconds));
 
         if (value < 1 || value > 60)
-            AddError(nameof(CalibrationDwellSeconds),
-                "Dwell time must be between 1 and 60 seconds.");
+            AddError(nameof(GainDwellSeconds),
+                "Gain dwell time must be between 1 and 60 seconds.");
+    }
+
+    private void ValidateBaselineDwell(int value)
+    {
+        ClearErrors(nameof(BaselineDwellSeconds));
+
+        if (value < 5 || value > 300)
+            AddError(nameof(BaselineDwellSeconds),
+                "Baseline dwell time must be between 5 and 300 seconds.");
     }
 
     // -----------------------------
@@ -337,7 +358,8 @@ public partial class PrepareViewModel : ViewModelBase
         double frequencyHz = CalibrationFrequencyHz;
         double sampleRateHz = SampleRateHz;
         int fftSize = FftSize;
-        TimeSpan dwell = TimeSpan.FromSeconds(CalibrationDwellSeconds);
+        TimeSpan dwell = TimeSpan.FromSeconds(GainDwellSeconds);
+        TimeSpan baselineDwell = TimeSpan.FromSeconds(BaselineDwellSeconds);
 
         _calibrationCts = new CancellationTokenSource();
 
@@ -348,11 +370,12 @@ public partial class PrepareViewModel : ViewModelBase
                 frequencyHz,
                 sampleRateHz,
                 dwell,
+                baselineDwell,
                 fftSize,
                 (msg, pct) =>
                 {
-                    _statusBar.CaptureStatus = msg;
-                    _statusBar.CaptureProgress = pct;
+                        _statusBar.CaptureStatus = msg;
+                        _statusBar.CaptureProgress = pct;
                 },
                 _calibrationCts.Token);
 

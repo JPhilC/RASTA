@@ -10,7 +10,7 @@ namespace RASTA.Processing.HiPipeline
         public static class SkaoConstants
         {
             // From SKAO tabletop code (constants.py)
-            public const double HiFreqHz = 1_420_405_751.77;          // 1420.40575177 MHz
+            public const double HiFreqHz = 1_420_405_752.0;          // 1420.405752 MHz
             public const double SpeedOfLightKmPerSec = 299_792.458;   // km/s
 
             // These should match SKAO NUM_INTEGRATION_BINS / NUM_INTEGRATIONS

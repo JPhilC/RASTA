@@ -58,9 +58,8 @@ namespace RASTA.App.ViewModels
         [ObservableProperty] private double dwellSeconds = 1;
         [ObservableProperty] private int filesPerPoint = 1;
         [ObservableProperty] private double sampleRate = 2_400_000;
-        [ObservableProperty] private double centerFrequency = 1420_405_800;
+        [ObservableProperty] private double centerFrequency = 1420_405_752.0;  // 1420.405752 MHz
         [ObservableProperty] private int fftBins = 4096;
-        [ObservableProperty] private int integrations = 1;
         [ObservableProperty] private bool goToHomeAfterCapture = true;
 
         // Telescope parameters
@@ -87,6 +86,10 @@ namespace RASTA.App.ViewModels
             LoadSavedPlans();
 
             _sdrState.PropertyChanged += SdrState_PropertyChanged;
+
+            CenterFrequency = _userOptionsService.Options.DefaultCentreFrequencyHz;
+            SampleRate = _userOptionsService.Options.DefaultBandwidthHz;
+            FftBins = _userOptionsService.Options.DefaultFftSize;
         }
 
         private void SdrState_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -126,7 +129,6 @@ namespace RASTA.App.ViewModels
                 SampleRate = SampleRate,
                 CenterFrequency = CenterFrequency,
                 FftBins = FftBins,
-                Integrations = Integrations,
 
                 TrackingEnabled = TrackingEnabled,
                 SettleTimeSeconds = SettleTimeSeconds,
@@ -164,7 +166,6 @@ namespace RASTA.App.ViewModels
             SampleRate = plan.SampleRate;
             CenterFrequency = plan.CenterFrequency;
             FftBins = plan.FftBins;
-            Integrations = plan.Integrations;
 
             TrackingEnabled = plan.TrackingEnabled;
             SettleTimeSeconds = plan.SettleTimeSeconds;
@@ -205,7 +206,6 @@ namespace RASTA.App.ViewModels
                 SampleRate = plan.SampleRate,
                 CenterFrequency = plan.CenterFrequency,
                 FftBins = plan.FftBins,
-                Integrations = plan.Integrations,
 
                 TrackingEnabled = plan.TrackingEnabled,
                 SettleTimeSeconds = plan.SettleTimeSeconds,

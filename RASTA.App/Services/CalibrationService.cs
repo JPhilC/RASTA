@@ -60,6 +60,7 @@ namespace RASTA.App.Services
             double frequencyHz,
             double sampleRateHz,
             TimeSpan dwell,
+            TimeSpan baselineDwell,
             int fftSize,
             Action<string, double>? progress,
             CancellationToken ct)
@@ -69,6 +70,7 @@ namespace RASTA.App.Services
                 frequencyHz,
                 sampleRateHz,
                 dwell,
+                baselineDwell,
                 fftSize,
                 progress,
                 ct);

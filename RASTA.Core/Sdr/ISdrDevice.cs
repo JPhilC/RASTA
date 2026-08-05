@@ -14,7 +14,7 @@ public interface ISdrDevice : IDisposable
     // -----------------------------
     // RAW IQ capture (true RAW)
     // -----------------------------
-    Task<byte[]> CaptureRawIqAsync(double frequencyHz, double sampleRateHz, double gainDb, uint sampleCount, CancellationToken ct);
+    Task<byte[]> CaptureRawIqAsync(double frequencyHz, double sampleRateHz, double gainDb, uint sampleCount, CancellationToken ct, Action<double>? onProgress = null);
 
     // -----------------------------
     // Spectrum capture (FFT)
