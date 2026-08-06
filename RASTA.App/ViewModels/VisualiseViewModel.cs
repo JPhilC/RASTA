@@ -191,6 +191,8 @@ public partial class VisualiseViewModel : ObservableObject
                         ProcessFilesHiVelocity();
                     else if (Mode == SpectrumMode.TTRT)
                         ProcessSkaoTtrt();
+                    else if (Mode == SpectrumMode.Ratio)
+                        ProcessFilesRatio();
                 }
                 else if (BaselineFile is not null)
                 {
@@ -485,6 +487,20 @@ public partial class VisualiseViewModel : ObservableObject
         SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
 
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.FrequencyHz);
+    }
+
+    private void ProcessFilesRatio()
+    {
+        var (_, _, hi) = ProcessHiCore();
+
+        // RatioSpectrum (capture/baseline, before continuum subtraction) is strictly
+        // positive, so - unlike HiSpectrum - a dB view is valid here.
+        SpectrumVm.Mode = SpectrumMode.Ratio;
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+
+        var ratio = hi.RatioSpectrum;
+        SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(ratio) : ratio, hi.FrequencyHz);
+        SpectrumVm.YAxes[0].Name = UseDbScale ? "Ratio (dB)" : "Ratio";
     }
 
     private void ProcessSkaoTtrt()

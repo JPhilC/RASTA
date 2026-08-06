@@ -102,9 +102,9 @@
         <TextBox Grid.Column="6" Grid.Row="6" Width="50"
                      Text="{Binding TargetFftSize}" HorizontalAlignment="Left"/>
 
-        <CheckBox Grid.Column="8" Grid.Row="6" 
+        <CheckBox Grid.Column="8" Grid.Row="6"
                   VerticalAlignment="Center"
-                  Content="Show dB (baseline/capture only)"
+                  Content="Show dB (baseline/capture/ratio only)"
                   IsChecked="{Binding UseDbScale}"/>
 
         <Button Grid.Column="14" Grid.Row="6"

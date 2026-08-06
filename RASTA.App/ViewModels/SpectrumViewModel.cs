@@ -16,7 +16,8 @@ namespace RASTA.App.ViewModels
         IF,
         HiFrequency,
         HiVelocity,
-        TTRT
+        TTRT,
+        Ratio
     }
 
     public partial class SpectrumViewModel : ObservableObject
@@ -162,6 +163,18 @@ namespace RASTA.App.ViewModels
                     XAxes[0].MaxLimit = xAxis.Last();
                     XAxes[0].MinStep = ComputeBinStep(xAxis);
                     YAxes[0].Name = "Intensity [a.u.]";
+                    break;
+
+                case SpectrumMode.Ratio:
+                    // Bandpass-flattened capture/baseline ratio, before continuum
+                    // subtraction - strictly positive, so this is where a dB toggle
+                    // (set by the caller after UpdateSpectrum) is meaningful.
+                    XAxes[0].Name = "Frequency (MHz)";
+                    XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
+                    XAxes[0].MinLimit = xAxis.First();
+                    XAxes[0].MaxLimit = xAxis.Last();
+                    XAxes[0].MinStep = ComputeBinStep(xAxis);
+                    YAxes[0].Name = "Ratio";
                     break;
             }
         }

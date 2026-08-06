@@ -10,7 +10,8 @@ namespace RASTA.App.Helpers
                 new SpectrumModeItem(SpectrumMode.IF, "IF Spectrum"),
                 new SpectrumModeItem(SpectrumMode.HiFrequency, "HI (Frequency)"),
                 new SpectrumModeItem(SpectrumMode.HiVelocity, "HI (Velocity)"),
-                new SpectrumModeItem(SpectrumMode.TTRT, "SKAO TTRT")
+                new SpectrumModeItem(SpectrumMode.TTRT, "SKAO TTRT"),
+                new SpectrumModeItem(SpectrumMode.Ratio, "Bandpass Ratio")
             };
     }
 
