@@ -159,9 +159,14 @@
             
             <TextBlock Grid.Row="2" Grid.Column="4" VerticalAlignment="Center"
                        Text="LSR Correction" FontWeight="Bold" />
-            
+
             <TextBox Grid.Row="2" Grid.Column="6"  Width="100"
                      Text="{Binding LsrInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="8" VerticalAlignment="Center"
+                       Text="Files Combined" FontWeight="Bold" />
+            <TextBox Grid.Row="2" Grid.Column="10"  Width="50"
+                     Text="{Binding CombinedFileCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
         </Grid>
         
         <views:SpectrumView 

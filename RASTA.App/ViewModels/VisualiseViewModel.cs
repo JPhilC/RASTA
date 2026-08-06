@@ -6,6 +6,8 @@ using RASTA.Core.Storage;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
 using RASTA.Processing.IfAverage;
+using System.IO;
+using System.Text.RegularExpressions;
 
 namespace RASTA.App.ViewModels;
 
@@ -43,6 +45,12 @@ public partial class VisualiseViewModel : ObservableObject
 
     [ObservableProperty]
     private string frameCount = string.Empty;
+
+    // How many raw IQ files went into the currently displayed chart's capture data -
+    // 1 unless the selected capture file matched the "..._{n}of{total}.fits" pattern
+    // and sibling files were found alongside it (see ReadCombinedCaptureRawIq).
+    [ObservableProperty]
+    private int combinedFileCount = 1;
 
     // Set by ProcessHiCore whenever an LSR correction could be computed from the
     // capture file's recorded pointing/time/site, so the applied offset is visible
@@ -136,6 +144,119 @@ public partial class VisualiseViewModel : ObservableObject
         for (int i = 0; i < linear.Length; i++)
             db[i] = 10.0 * Math.Log10(Math.Max(linear[i], epsilon));
         return db;
+    }
+
+    private static readonly Regex MultiFileCapturePattern =
+        new(@"^(?<base>.+)_(?<index>\d+)of(?<total>\d+)$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// If the given capture file's name matches the ObserveViewModel-generated
+    /// "..._{index}of{total}.fits" pattern (multiple files captured at the same dwell
+    /// point - see FitsPathBuilder.BuildSweepFilePath), returns every sibling file, in
+    /// order, that actually exists alongside it in the same folder. Otherwise returns
+    /// just the single selected file.
+    /// </summary>
+    private static List<string> ResolveRelatedCaptureFiles(string captureFilePath)
+    {
+        string dir = Path.GetDirectoryName(captureFilePath) ?? string.Empty;
+        string fileNameNoExt = Path.GetFileNameWithoutExtension(captureFilePath);
+        string ext = Path.GetExtension(captureFilePath);
+
+        var match = MultiFileCapturePattern.Match(fileNameNoExt);
+        if (!match.Success)
+            return new List<string> { captureFilePath };
+
+        string basePart = match.Groups["base"].Value;
+        int total = int.Parse(match.Groups["total"].Value);
+
+        if (total <= 1)
+            return new List<string> { captureFilePath };
+
+        var related = new List<string>();
+        for (int i = 1; i <= total; i++)
+        {
+            string candidate = Path.Combine(dir, $"{basePart}_{i}of{total}{ext}");
+            if (File.Exists(candidate))
+                related.Add(candidate);
+        }
+
+        // Fall back to just the selected file if, for some reason, nothing matched -
+        // shouldn't happen since the selected file itself always matches its own name.
+        return related.Count > 0 ? related : new List<string> { captureFilePath };
+    }
+
+    /// <summary>
+    /// Reads a capture file plus any related "_{n}of{total}" sibling files found
+    /// alongside it (see ResolveRelatedCaptureFiles) and concatenates their raw IQ
+    /// into one buffer, reporting per-file read progress as it goes. Sets
+    /// CombinedFileCount so the UI shows how many files went into the result.
+    ///
+    /// Each file's IQ is trimmed to a whole number of its own native FFT frames
+    /// before being appended, so a frame extracted later by the caller's chunking
+    /// loop can never straddle the boundary between two separate (and physically
+    /// discontinuous) captures.
+    /// </summary>
+    private (FitsFileMetaData meta, byte[] iq) ReadCombinedCaptureRawIq(string captureFilePath)
+    {
+        var files = ResolveRelatedCaptureFiles(captureFilePath);
+        CombinedFileCount = files.Count;
+
+        FitsFileMetaData? combinedMeta = null;
+        var buffers = new List<byte[]>(files.Count);
+
+        for (int f = 0; f < files.Count; f++)
+        {
+            BeginProgress(files.Count > 1
+                ? $"Reading capture file {f + 1} of {files.Count}…"
+                : "Reading capture file…");
+
+            var (meta, iq) = _fitsFileIo.ReadRawIq(files[f]);
+
+            if (combinedMeta == null)
+            {
+                combinedMeta = meta;
+            }
+            else
+            {
+                if (meta.FftSize != combinedMeta.FftSize ||
+                    meta.SampFreqHz != combinedMeta.SampFreqHz ||
+                    meta.CentFreqHz != combinedMeta.CentFreqHz)
+                {
+                    throw new InvalidOperationException(
+                        $"Related capture file '{Path.GetFileName(files[f])}' has a different FFT size, " +
+                        "sample rate, or center frequency than the other files being combined.");
+                }
+
+                // Total integration time across all combined files, not just the first.
+                combinedMeta.DwellTimeSec += meta.DwellTimeSec;
+            }
+
+            int bytesPerNativeFrame = meta.FftSize * 2;
+            int usableLength = (iq.Length / bytesPerNativeFrame) * bytesPerNativeFrame;
+            if (usableLength != iq.Length)
+            {
+                var trimmed = new byte[usableLength];
+                Buffer.BlockCopy(iq, 0, trimmed, 0, usableLength);
+                iq = trimmed;
+            }
+
+            buffers.Add(iq);
+
+            ReportProgress((double)(f + 1) / files.Count);
+        }
+
+        int totalLength = 0;
+        foreach (var buf in buffers) totalLength += buf.Length;
+
+        var combined = new byte[totalLength];
+        int offset = 0;
+        foreach (var buf in buffers)
+        {
+            Buffer.BlockCopy(buf, 0, combined, offset, buf.Length);
+            offset += buf.Length;
+        }
+
+        return (combinedMeta!, combined);
     }
 
 
@@ -249,6 +370,7 @@ public partial class VisualiseViewModel : ObservableObject
     {
         if (BaselineFile is null)
             return;
+        CombinedFileCount = 1; // this view doesn't touch the capture file
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
         ScanFftSize = baselineMeta.FftSize;
         FrequencyHz = baselineMeta.CentFreqHz;
@@ -283,7 +405,7 @@ public partial class VisualiseViewModel : ObservableObject
     {
         if (CaptureFile is null)
             return;
-        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
+        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
         ScanFftSize = captureMeta.FftSize;
         FrequencyHz = captureMeta.CentFreqHz;
         SamplingHz = captureMeta.SampFreqHz;
@@ -318,7 +440,7 @@ public partial class VisualiseViewModel : ObservableObject
             return;
 
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
+        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
 
         // Perform some checks to ensure that the baseline and capture files are compatible
         if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
@@ -412,7 +534,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         // --- 1. Load FITS IQ data ---
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
+        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
 
         // --- 2. Validate metadata ---
         if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
@@ -557,7 +679,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         // --- Load FITS IQ ---
         var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = _fitsFileIo.ReadRawIq(CaptureFile);
+        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
 
         if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
             throw new InvalidOperationException("Sample rates of baseline and capture files do not match.");
