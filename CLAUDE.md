@@ -71,7 +71,17 @@ model from the root DI container and `NavigationViewModel` (bound to `MainWindow
 `CurrentViewModel`. The five workflow stages map 1:1 to `PrepareViewModel` / `PlanViewModel` /
 `ObserveViewModel` / `ProcessViewModel` / `VisualiseViewModel`. `NavigatePlan`/`NavigateObserve` are
 gated on `StatusBarViewModel.SdrConnected` (an SDR must be enumerated before you can move past
-Prepare).
+Prepare). `ObserveViewModel` no longer takes its plan from `PlanViewModel.SelectedPlan` on
+navigation — it builds its own `AvailablePlans` list (`LoadAvailablePlans`, using the same
+`IPlanRepository.ListPlans(sdrDeviceId)` call `PlanViewModel.LoadSavedPlans` uses) filtered to
+whichever `PlanType` matches the connected mount's current `TelescopeState.Mode` (`PlanMatchesMountMode`
+— Equatorial/AltAz plans need the mount actually in that mode to slew correctly; Drift plans, being a
+declination-based drift scan, are offered under Equatorial). The list refreshes reactively on
+`SdrState.SelectedDevice`/`TelescopeState.Mode`/`IsConnected` changes, and `NavigateObserve` also
+calls it explicitly so edits made on the Plan screen show up immediately. Because `ListPlans`
+deserializes fresh `CapturePlan` instances on every call, `LoadAvailablePlans` re-resolves the current
+selection by `FriendlyName` against the newly loaded instances rather than relying on reference
+equality, dropping it only if no plan with that name is still offered.
 
 ### The HI reduction pipeline (the scientific core)
 

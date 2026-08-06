@@ -10,6 +10,8 @@ using RASTA.Infrastructure.Services;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Planning;
 using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Reflection.Metadata;
 using System.Windows;
 
@@ -29,6 +31,7 @@ public partial class ObserveViewModel : ObservableObject
     private readonly StatusBarViewModel _statusBar;
     private readonly IFftEngine _fftEngine;
     private readonly UserOptionsService _optionsService;
+    private readonly IPlanRepository _planRepository;
     private CancellationTokenSource? _sweepCts;
 
     private CapturePlan? _activePlan;
@@ -41,11 +44,20 @@ public partial class ObserveViewModel : ObservableObject
             if (SetProperty(ref _activePlan, value))
             {
                 OnPropertyChanged(nameof(PlanName));
+                OnPropertyChanged(nameof(CanCaptureSweep));
+                OnPropertyChanged(nameof(CanDriftCapture));
             }
         }
     }
 
     public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
+
+    // Plans offered in the Observe dropdown - populated the same way
+    // PlanViewModel.SavedPlans is (IPlanRepository.ListPlans for the connected SDR
+    // device), then filtered to whichever PlanType matches the mount's current
+    // CoordinateMode (see LoadAvailablePlans/PlanMatchesMountMode). Selection is no
+    // longer pushed in from PlanViewModel.SelectedPlan on navigation.
+    public ObservableCollection<CapturePlan> AvailablePlans { get; } = new();
 
     public bool CanCaptureSweep => _activePlan != null
         && _device != null
@@ -91,7 +103,8 @@ public partial class ObserveViewModel : ObservableObject
         SweepPlanner planner,
         FitsFileIo fitsFileWriter,
         StatusBarViewModel statusBarViewModel,
-        IFftEngine fftEngine)
+        IFftEngine fftEngine,
+        IPlanRepository planRepository)
     {
         _settings = settingsViewModel;
         _optionsService = userOptionsService;
@@ -104,6 +117,7 @@ public partial class ObserveViewModel : ObservableObject
         _fitsFileWriter = fitsFileWriter;
         _sdrState = sdrState;
         _fftEngine = fftEngine;
+        _planRepository = planRepository;
         _device = sdrDeviceService.GetDevice();
 
         SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
@@ -114,8 +128,50 @@ public partial class ObserveViewModel : ObservableObject
         {
             sdrDevice.RawIqChunkAvailable += OnChunk;
         }
+
+        LoadAvailablePlans();
     }
 
+    /// <summary>
+    /// Populates AvailablePlans the same way PlanViewModel.LoadSavedPlans does -
+    /// IPlanRepository.ListPlans for the connected SDR device - then filters to plans
+    /// whose PlanType matches the mount's current CoordinateMode (see
+    /// PlanMatchesMountMode). Re-resolves the current selection against the freshly
+    /// loaded instances (ListPlans deserializes new objects every call, so the old
+    /// ActivePlan reference would otherwise match nothing in the reloaded list even if
+    /// "the same" plan, by name, is still present), or clears it if no longer offered -
+    /// e.g. the mount's coordinate mode changed since it was selected.
+    /// </summary>
+    public void LoadAvailablePlans()
+    {
+        string sdrDeviceId = _sdrState.SelectedDevice?.DeviceId ?? "UNKNOWN";
+        string? previouslySelectedName = ActivePlan?.FriendlyName;
+
+        AvailablePlans.Clear();
+        foreach (var plan in _planRepository.ListPlans(sdrDeviceId))
+        {
+            if (PlanMatchesMountMode(plan))
+                AvailablePlans.Add(plan);
+        }
+
+        ActivePlan = previouslySelectedName != null
+            ? AvailablePlans.FirstOrDefault(p => p.FriendlyName == previouslySelectedName)
+            : null;
+    }
+
+    /// <summary>
+    /// A plan is only offered if its PlanType matches the connected mount's current
+    /// CoordinateMode: Equatorial/AltAz plans need the mount actually in that mode to
+    /// slew correctly, and Drift plans (a declination-based drift scan) only make sense
+    /// under Equatorial tracking.
+    /// </summary>
+    private bool PlanMatchesMountMode(CapturePlan plan) => plan.PlanType switch
+    {
+        PlanType.AltAz => _mountState.Mode == CoordinateMode.AltAz,
+        PlanType.Equatorial => _mountState.Mode == CoordinateMode.Equatorial,
+        PlanType.Drift => _mountState.Mode == CoordinateMode.Equatorial,
+        _ => false
+    };
 
     private void MountState_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -123,6 +179,11 @@ public partial class ObserveViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(CanCaptureSweep));
             OnPropertyChanged(nameof(CanDriftCapture));
+        }
+
+        if (e.PropertyName is nameof(TelescopeState.IsConnected) or nameof(TelescopeState.Mode))
+        {
+            LoadAvailablePlans();
         }
     }
 
@@ -132,6 +193,11 @@ public partial class ObserveViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(CanCaptureSweep));
             OnPropertyChanged(nameof(CanDriftCapture));
+        }
+
+        if (e.PropertyName == nameof(SdrState.SelectedDevice))
+        {
+            LoadAvailablePlans();
         }
     }
 

@@ -26,8 +26,6 @@ namespace RASTA.App.ViewModels
 
         private readonly CalibrationService _calibrationService;
 
-        private readonly PlanViewModel _planViewModel;
-
         public SettingsViewModel Settings { get; }
 
         public StatusBarViewModel StatusBarViewModel { get; }
@@ -37,13 +35,12 @@ namespace RASTA.App.ViewModels
         [ObservableProperty]
         private object? currentViewModel;
 
-        public NavigationViewModel(NavigationService nav, SettingsViewModel settings, StatusBarViewModel statusBarViewModel, CalibrationService calibrationService, PlanViewModel planViewModel)
+        public NavigationViewModel(NavigationService nav, SettingsViewModel settings, StatusBarViewModel statusBarViewModel, CalibrationService calibrationService)
         {
             _nav = nav;
             Settings = settings;
             StatusBarViewModel = statusBarViewModel;
             _calibrationService = calibrationService;
-            _planViewModel = planViewModel;
 
             StatusBarViewModel.PropertyChanged += (_, args) =>
             {
@@ -86,9 +83,14 @@ namespace RASTA.App.ViewModels
         {
             CurrentSection = NavigationSection.Observe;
 
+            // Refresh the plan dropdown each time Observe is opened, in case plans were
+            // added/edited/deleted on the Plan screen since ObserveViewModel was created
+            // (it's effectively a singleton for the app's lifetime - see CLAUDE.md).
+            // Selection itself now lives entirely in ObserveViewModel, not pushed in from
+            // PlanViewModel.SelectedPlan.
             _nav.NavigateTo<ObserveViewModel>(vm =>
             {
-                vm.ActivePlan = _planViewModel.SelectedPlan;
+                vm.LoadAvailablePlans();
             });
 
             UpdateView();
