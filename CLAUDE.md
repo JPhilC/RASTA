@@ -144,6 +144,23 @@ strictly positive, unlike `HiSpectrum`, so it's the one mode that can validly be
 the **capture** file's recorded pointing/time/site (never the baseline — that's just a terminator
 reading with no meaningful pointing), falling back to 0 for files that predate that metadata.
 
+`HiStreamingPipeline.Process` also takes optional `smoothing`/`smoothingWindow`/`smoothingPolyOrder`
+parameters (`RASTA.Processing.Dsp.SmoothingKind`: `None`/`SavitzkyGolay`/`MovingAverage`, default
+`None`) applying an optional final smoothing pass to `HiSpectrum` only — never `RatioSpectrum` or the
+continuum fit, both already computed beforehand. `VisualiseViewModel` exposes this as `SmoothingKind`/
+`SmoothingWindow` (default window 21 bins). This is unrelated to the fixed 5-point kernel in
+`RASTA.Processing/Dsp/SavitzkyGolay.cs`, which stays reserved for `SkaoPipelineProcessor`'s
+unconditional, unmodified reference smoothing (`savgol_filter(sp, 5, 2)`, matching the SKAO algorithm
+exactly) — `HiStreamingPipeline`'s `SavitzkyGolay` option instead reuses the general, arbitrary-
+window/order SG implementation (`SavitzkyGolaySmooth`, scipy `mode='interp'`-equivalent edge handling)
+already present for RFI-outlier detection in the continuum fit. `MovingAverage` (`RASTA.Processing/
+Dsp/MovingAverage.cs`) is a plain centered boxcar average offered as a deliberately blunter
+alternative: it smooths harder for a given window but flattens/broadens real features more than SG's
+local-polynomial fit, since a real HI line (tens to hundreds of kHz wide) is far broader than a single
+FFT bin (~586 Hz at 2.4 Msps/4096 FFT) — the fixed 5-bin kernel barely perturbs a spectrum at that
+scale, which is why a wide, user-tunable window (not a different algorithm) is what actually reveals
+a line.
+
 Frame-level power spectra are computed by `IFftEngine.ComputeSkAoPower` (Hann-windowed, SKAO-style
 `|FFT/N·2|²` normalization) — this is the one to use for anything that will be averaged and fed
 into `HiStreamingAccumulator`, as opposed to `ComputeSpectrum` (unwindowed, single-frame; the last

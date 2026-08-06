@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using RASTA.Core.Astro;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
+using RASTA.Processing.Dsp;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
 using System.IO;
@@ -71,6 +72,21 @@ public partial class VisualiseViewModel : ObservableObject
     // subtracted and can be negative/zero, so it can't be log-scaled the same way.
     [ObservableProperty]
     private bool useDbScale = true;
+
+    // None by default, matching HiStreamingPipeline.Process's own default - the reference
+    // pipeline never smooths its final output, and leaving raw per-bin scatter visible is
+    // what let SpectrumViewModel.ApplyRobustYAxisRange reveal it in the first place. Only
+    // affects HiSpectrum (via ProcessHiCore); RatioSpectrum and the SKAO TTRT cross-check
+    // (SpectrumMode.TTRT, deliberately kept unmodified) are unaffected either way.
+    [ObservableProperty]
+    private SmoothingKind smoothingKind = SmoothingKind.None;
+
+    // A single FFT bin is far narrower than a real HI line, so the default window needs to
+    // span many bins before smoothing visibly does anything - see the "very small change"
+    // symptom that motivated making this configurable at all. User-tunable rather than fixed
+    // so it can be dialed to whatever the line width in a given capture actually calls for.
+    [ObservableProperty]
+    private int smoothingWindow = 21;
 
     public SpectrumViewModel SpectrumVm { get; private set; }
 
@@ -502,7 +518,9 @@ public partial class VisualiseViewModel : ObservableObject
             captureSpectrum,
             sampleRateHz: SamplingHz,
             centerFreqHz: FrequencyHz,
-            lsrCorrectionKmPerSec: lsrCorrectionKmPerSec
+            lsrCorrectionKmPerSec: lsrCorrectionKmPerSec,
+            smoothing: SmoothingKind,
+            smoothingWindow: SmoothingWindow
         );
 
         return (baselineSpectrum, captureSpectrum, hi);

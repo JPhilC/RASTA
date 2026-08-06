@@ -107,6 +107,19 @@
                   Content="Show dB (baseline/capture/ratio only)"
                   IsChecked="{Binding UseDbScale}"/>
 
+        <StackPanel Grid.Column="10" Grid.Row="6"
+                    Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="Smooth" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding Source={x:Static helpers:SmoothingKindValues.All}}"
+                      SelectedValue="{Binding SmoothingKind, Mode=TwoWay}"
+                      SelectedValuePath="Kind"
+                      DisplayMemberPath="Name"/>
+            <TextBlock Text="Window" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"/>
+            <TextBox Width="40" Text="{Binding SmoothingWindow}"
+                     ToolTip="Smoothing window width, in FFT bins (odd numbers only - even values are rounded up)"/>
+        </StackPanel>
+
         <Button Grid.Column="14" Grid.Row="6"
             Content="Generate Chart"
             Command="{Binding GenerateChartCommand}"

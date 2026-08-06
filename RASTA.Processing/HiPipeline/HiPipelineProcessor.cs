@@ -144,7 +144,9 @@ namespace RASTA.Processing.HiPipeline
             double sampleRateHz,
             double centerFreqHz,
             double lsrCorrectionKmPerSec = 0.0, // add AstronomyUtils.ComputeLsrCorrectionKmPerSec(...) here to report LSR velocity instead of raw topocentric
-            bool applySmoothing = false) // reference pipeline never smooths the final output
+            SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
+            int smoothingWindow = 5,
+            int smoothingPolyOrder = 2) // only used when smoothing == SavitzkyGolay
         {
             if (baselinePower == null) throw new ArgumentNullException(nameof(baselinePower));
             if (capturePower == null) throw new ArgumentNullException(nameof(capturePower));
@@ -207,11 +209,34 @@ namespace RASTA.Processing.HiPipeline
                 HiSpectrum[i] = RatioSpectrum[i] - continuum;
             }
 
-            // 7. Optional Savitzky–Golay smoothing
-            if (applySmoothing)
+            // 7. Optional final smoothing (display-only - never feeds back into the continuum
+            //    fit or RatioSpectrum, both already computed above). SkaoPipelineProcessor is
+            //    unaffected either way; it always applies its own fixed 5-point kernel to match
+            //    the SKAO reference algorithm exactly.
+            if (smoothing != SmoothingKind.None)
             {
-                ApplySavitzkyGolay(HiSpectrum);
+                HiSpectrum = ApplyFinalSmoothing(HiSpectrum, smoothing, smoothingWindow, smoothingPolyOrder);
             }
+        }
+
+        /// <summary>
+        /// Dispatches to whichever final-smoothing kernel the caller asked for. SavitzkyGolay
+        /// reuses the same general-purpose, arbitrary-window/order implementation already used
+        /// internally for RFI outlier detection (SavitzkyGolaySmooth below) rather than the
+        /// crude fixed-5-point RASTA.Processing.Dsp.SavitzkyGolay class, which is reserved for
+        /// SkaoPipelineProcessor's unmodified reference kernel.
+        /// </summary>
+        private static double[] ApplyFinalSmoothing(double[] data, SmoothingKind kind, int window, int polyOrder)
+        {
+            if (window < 1) window = 1;
+            if (window % 2 == 0) window++; // SG and the centered moving average both expect an odd window
+
+            return kind switch
+            {
+                SmoothingKind.SavitzkyGolay => SavitzkyGolaySmooth(data, window, polyOrder),
+                SmoothingKind.MovingAverage => MovingAverage.Smooth(data, window),
+                _ => data
+            };
         }
 
         /// <summary>
@@ -614,11 +639,6 @@ namespace RASTA.Processing.HiPipeline
             return (m, b);
         }
 
-        private static void ApplySavitzkyGolay(double[] data)
-        {
-            var sg = new SavitzkyGolay { Enabled = true };
-            sg.Process(data);
-        }
     }
 
     /// <summary>
@@ -653,7 +673,9 @@ namespace RASTA.Processing.HiPipeline
             double sampleRateHz,
             double centerFreqHz,
             double lsrCorrectionKmPerSec = 0.0,
-            bool applySmoothing = false) // reference pipeline never smooths the final output
+            SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
+            int smoothingWindow = 5,
+            int smoothingPolyOrder = 2)
         {
             var (baselineAvg, captureAvg) = _acc.GetAveragedSpectra();
             _pipe.Process(
@@ -662,7 +684,9 @@ namespace RASTA.Processing.HiPipeline
                 sampleRateHz,
                 centerFreqHz,
                 lsrCorrectionKmPerSec,
-                applySmoothing);
+                smoothing,
+                smoothingWindow,
+                smoothingPolyOrder);
         }
     }
 }
