@@ -590,7 +590,7 @@ public partial class ObserveViewModel : ObservableObject
 
         try
         {
-            isBusy = true;
+            IsBusy = true;
             if (target.Mode == CoordinateMode.Equatorial)
                 await _mount.SlewToRaDecAsync(target.RightAscensionHours, target.DeclinationDeg);
             else
@@ -598,7 +598,7 @@ public partial class ObserveViewModel : ObservableObject
         }
         finally
         {
-            isBusy = false;
+            IsBusy = false;
         }
     }
 
@@ -613,12 +613,12 @@ public partial class ObserveViewModel : ObservableObject
 
         try
         {
-            isBusy = true;
+            IsBusy = true;
             await _mount.SlewToAzAltAsync(azDeg, altDeg);
         }
         finally
         {
-            isBusy = false;
+            IsBusy = false;
         }
     }
 
@@ -633,12 +633,12 @@ public partial class ObserveViewModel : ObservableObject
 
         try
         {
-            isBusy = true;
+            IsBusy = true;
             await _mount.SlewToRaDecAsync(raHours, decDeg);
         }
         finally
         {
-            isBusy = false;
+            IsBusy = false;
         }
     }
 
@@ -654,12 +654,12 @@ public partial class ObserveViewModel : ObservableObject
 
         try
         {
-            isBusy = true;
+            IsBusy = true;
             await _mount.AbortSlewAsync();
         }
         finally
         {
-            isBusy = false;
+            IsBusy = false;
         }
     }
 
