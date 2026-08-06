@@ -5,7 +5,6 @@ using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
-using RASTA.Processing.IfAverage;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -17,8 +16,6 @@ public partial class VisualiseViewModel : ObservableObject
     private readonly FitsFileIo _fitsFileIo;
     private readonly IFftEngine _fftEngine;
     private readonly StatusBarViewModel _statusBar;
-    private IfAverageProcessor _baselineProcessor;
-    private IfAverageProcessor _captureProcessor;
 
     [ObservableProperty]
     private SpectrumMode mode = SpectrumMode.HiFrequency;
@@ -311,9 +308,7 @@ public partial class VisualiseViewModel : ObservableObject
             {
                 if (BaselineFile is not null && CaptureFile is not null)
                 {
-                    if (Mode == SpectrumMode.IF)
-                        ProcessFilesIf();
-                    else if (Mode == SpectrumMode.HiFrequency)
+                    if (Mode == SpectrumMode.HiFrequency)
                         ProcessFilesHiFrequency();
                     else if (Mode == SpectrumMode.HiVelocity)
                         ProcessFilesHiVelocity();
@@ -378,7 +373,7 @@ public partial class VisualiseViewModel : ObservableObject
         Gain = baselineMeta.GainDb;
 
         // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator - not IfAverageProcessor.
+        // per fftSize frame, arithmetic mean via HiStreamingAccumulator.
         var acc = new HiStreamingAccumulator(ScanFftSize);
         int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
 
@@ -394,7 +389,7 @@ public partial class VisualiseViewModel : ObservableObject
         // way HiStreamingPipeline.Process does for the combined baseline/capture views.
         baselineSpectrum = HiStreamingPipeline.FftShift(acc.GetBaselineAverage());
 
-        SpectrumVm.Mode = SpectrumMode.IF;
+        SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(baselineSpectrum) : baselineSpectrum);
@@ -412,7 +407,7 @@ public partial class VisualiseViewModel : ObservableObject
         Gain = captureMeta.GainDb;
 
         // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator - not IfAverageProcessor.
+        // per fftSize frame, arithmetic mean via HiStreamingAccumulator.
         var acc = new HiStreamingAccumulator(ScanFftSize);
         int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
 
@@ -426,105 +421,12 @@ public partial class VisualiseViewModel : ObservableObject
         // Same fix as ProcessBaseline: shift out of raw FFT-bin order before display.
         captureSpectrum = HiStreamingPipeline.FftShift(acc.GetCaptureAverage());
 
-        SpectrumVm.Mode = SpectrumMode.IF;
+        SpectrumVm.Mode = SpectrumMode.HiFrequency;
 
         SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(captureSpectrum) : captureSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
-    }
-
-    private void ProcessFilesIf()
-    {
-        if (BaselineFile is null || CaptureFile is null)
-            return;
-
-        var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
-
-        // Perform some checks to ensure that the baseline and capture files are compatible
-        if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
-            throw new InvalidOperationException("Sample rates of baseline and capture files do not match.");
-
-        //if (baselineMeta.CentFreqHz != captureMeta.CentFreqHz) 
-        //    throw new InvalidOperationException("Center frequencies of baseline and capture files do not match.");
-
-        if (baselineMeta.FftSize != captureMeta.FftSize)
-            throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
-
-        ScanFftSize = baselineMeta.FftSize;
-        FrequencyHz = baselineMeta.CentFreqHz;
-        SamplingHz = baselineMeta.SampFreqHz;
-        Gain = baselineMeta.GainDb;
-        if (TargetFftSize == 0)
-            TargetFftSize = ScanFftSize;   // default to no downscaling
-
-        if (TargetFftSize< ScanFftSize)
-        {
-            // Downscale the IQ data to the target FFT size
-            baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
-            captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
-        }
-
-        // Generate the baseline spectrum from the baseline IQ data
-        _baselineProcessor = new IfAverageProcessor(TargetFftSize);
-
-        // For calibration, we want a very stable, flat baseline:
-        _baselineProcessor.Median.Enabled = true;              // remove impulsive junk
-        _baselineProcessor.Rfi.Enabled = true;                 // track bad frames
-        _baselineProcessor.Intermediate.Window = 10;           // short-term average
-        _baselineProcessor.LongTerm.Window = 50;               // long-term average
-        _baselineProcessor.Background.SubractEnabled = false;         // no subtraction during calibration
-        _baselineProcessor.Background.DivideEnabled = false;         // no division during calibration
-        _baselineProcessor.LinearOutput = true;            // Output will be linear
-        _baselineProcessor.SavitzkyGolay.Enabled = false;      // visually smooth baseline
-        _baselineProcessor.Db.Offset = 0.0;
-
-        baselineSpectrum = new double[TargetFftSize];
-
-        // Break the long baseline capture into FFT-sized chunks
-        int bytesPerChunk = TargetFftSize * 2; // adjust if your IQ format differs
-
-        BeginProgress("Processing baseline…");
-        ForEachChunk(baselineIq, bytesPerChunk, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, TargetFftSize);
-
-            // Feed each spectrum into IF_Average
-            _baselineProcessor.Process(spectrum, baselineSpectrum);
-        });
-
-
-        // Initialise the IF_Average processor with the FFT size and calibration baseline spectrum
-        _captureProcessor = new IfAverageProcessor(TargetFftSize);
-        // Configure defaults
-        _captureProcessor.Median.Enabled = true;
-        _captureProcessor.Rfi.Enabled = true;
-        _captureProcessor.Intermediate.Window = 10;
-        _captureProcessor.LongTerm.Window = 20;
-        _captureProcessor.Background.Load(baselineSpectrum);
-        _captureProcessor.Background.SubractEnabled = true;
-        _captureProcessor.Background.DivideEnabled = false;
-        _captureProcessor.LinearOutput = false;
-        _captureProcessor.SavitzkyGolay.Enabled = false;
-        _captureProcessor.Db.Offset = 0.0;
-
-        captureSpectrum = new double[TargetFftSize];
-
-        BeginProgress("Processing capture…");
-        ForEachChunk(captureIq, bytesPerChunk, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSpectrum(chunk, TargetFftSize);
-
-            // Feed each spectrum into IF_Average
-            _captureProcessor.Process(spectrum, captureSpectrum);
-        });
-        SpectrumVm.Mode = SpectrumMode.IF;
-
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
-        // Update the SpectrumViewModel with the new data
-        SpectrumVm.UpdateSpectrum(captureSpectrum); // Use actual center frequency and sample rate
-
     }
 
     private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)  ProcessHiCore()

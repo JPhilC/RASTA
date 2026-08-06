@@ -57,8 +57,8 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
   Remote Server, not direct COM), `FftEngine` (FFT via `MathNet.Numerics`), JSON-backed repositories
   (`JsonPlanRepository`, `CalibrationRepository`, `JsonObservationStorage`).
 - **RASTA.Processing** — pure algorithms, no UI/hardware: the HI reduction pipeline
-  (`HiPipeline/`), the older IF-averaging chain (`IfAverage/`), calibration (`Calibrator`), sweep
-  planning (`SweepPlanner`), and visualisation data builders (`Gridding/`, `VisualisationData/`).
+  (`HiPipeline/`), a small shared DSP helper (`Dsp/SavitzkyGolay.cs`), calibration (`Calibrator`),
+  sweep planning (`SweepPlanner`), and visualisation data builders (`Gridding/`, `VisualisationData/`).
 - **RASTA.App** — WPF MVVM shell. `App.xaml.cs` is the single composition root: one
   `ServiceCollection` is built once at startup (no scopes are ever created afterward, so
   `AddScoped` view models in practice behave like singletons for the app's lifetime — don't assume a
@@ -103,22 +103,31 @@ reading with no meaningful pointing), falling back to 0 for files that predate t
 
 Frame-level power spectra are computed by `IFftEngine.ComputeSkAoPower` (Hann-windowed, SKAO-style
 `|FFT/N·2|²` normalization) — this is the one to use for anything that will be averaged and fed
-into `HiStreamingAccumulator`, as opposed to `ComputeSpectrum` (unwindowed, single-frame, used only
-by the older IF-average path) or `PowerSpectrum` (raw, takes `Complex[]` directly). Note
-`ComputeSkAoPower` deliberately does *not* fftshift its output (DC stays at index 0) — callers that
-display an averaged spectrum without running it through `HiStreamingPipeline.Process` (e.g.
-`VisualiseViewModel.ProcessBaseline`/`ProcessCapture`) must call the now-public
-`HiStreamingPipeline.FftShift` themselves before plotting, or a receiver DC/LO-leakage spike ends up
-misplaced at the edge of the frequency axis instead of the center.
+into `HiStreamingAccumulator`, as opposed to `ComputeSpectrum` (unwindowed, single-frame; the last
+remaining caller is `RtlSdrDevice`'s own internal use, not anything in the HI pipeline) or
+`PowerSpectrum` (raw, takes `Complex[]` directly). Note `ComputeSkAoPower` deliberately does *not*
+fftshift its output (DC stays at index 0) — callers that display an averaged spectrum without running
+it through `HiStreamingPipeline.Process` (e.g. `VisualiseViewModel.ProcessBaseline`/`ProcessCapture`)
+must call the now-public `HiStreamingPipeline.FftShift` themselves before plotting, or a receiver
+DC/LO-leakage spike ends up misplaced at the edge of the frequency axis instead of the center.
 
-**`RASTA.Processing/IfAverage/*`** (median filter → RFI detector → intermediate/long-term averaging
-→ background subtract/divide → dB conversion → Savitzky-Golay) is an older signal-averaging chain
-ported from an SDRSharp plugin, being progressively phased out in favor of
-`HiStreamingAccumulator`/`HiStreamingPipeline`. Already migrated off it: the calibration baseline
-build (`Calibrator.cs`), `ObserveViewModel`'s live spectrum display, and
-`VisualiseViewModel.ProcessBaseline`/`ProcessCapture`. Still on it: `VisualiseViewModel.ProcessFilesIf`
-(the combined `IF` mode). Don't reach for `IfAverageProcessor` in new work without checking whether
-the surrounding code has already moved to the `HiPipeline` accumulator instead.
+**`RASTA.Processing/IfAverage/*` has been removed.** It was a signal-averaging chain (median filter
+→ RFI detector → intermediate/long-term *moving-average* → background subtract/divide → dB
+conversion → Savitzky-Golay) ported from Daniel M. Kamiński's SDR AVE plugin for SDR#. Comparing it
+against the original plugin surfaced why it never picked up the HI line when tried: both the port and
+the original average in a fixed-size sliding ring buffer (a live-display design, meant to keep
+refreshing a real-time view), not a cumulative average — run once over a whole recorded FITS capture,
+it only ever reflects the last `Intermediate.Window × LongTerm.Window` raw FFT frames (a couple of
+seconds), discarding the rest of the dwell regardless of how long it ran. It also averaged in
+`sqrt(power)` space rather than power, compressing the faint HI excess further (Jensen's inequality).
+The plugin's real design was to export short block-averages to text files and let the user co-add
+those externally (e.g. in Excel/MATLAB) — RASTA never implemented that export/co-add step, so the
+port was never doing full-dwell integration either way. `SpectrumMode.IF` and its combined-file "IF
+Spectrum" chart mode (which drove it) were removed entirely, including from `SpectrumModeValues.All`;
+`ProcessBaseline`/`ProcessCapture` (the standalone baseline/capture charts) now set
+`SpectrumVm.Mode = SpectrumMode.HiFrequency` instead. The one real dependency the chain had -
+`SavitzkyGolay` (also used by `HiStreamingPipeline`/`SkaoPipelineProcessor` for their own optional
+smoothing pass) - was promoted to `RASTA.Processing/Dsp/SavitzkyGolay.cs` rather than deleted.
 
 ### Calibration flow
 

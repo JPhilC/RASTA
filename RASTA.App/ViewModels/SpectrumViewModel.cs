@@ -13,7 +13,6 @@ namespace RASTA.App.ViewModels
 {
     public enum SpectrumMode
     {
-        IF,
         HiFrequency,
         HiVelocity,
         TTRT,
@@ -137,15 +136,6 @@ namespace RASTA.App.ViewModels
         {
             switch (Mode)
             {
-                case SpectrumMode.IF:
-                    XAxes[0].Name = "Frequency (MHz)";
-                    XAxes[0].Labeler = value => $"{value / 1_000_000.0:F2} MHz";
-                    XAxes[0].MinLimit = frequencies.First();
-                    XAxes[0].MaxLimit = frequencies.Last();
-                    XAxes[0].MinStep = ComputeBinStep(frequencies);
-                    YAxes[0].Name = "Power";
-                    break;
-
                 case SpectrumMode.HiFrequency:
                     case SpectrumMode.TTRT:
                     XAxes[0].Name = "Frequency (MHz)";
@@ -224,11 +214,12 @@ namespace RASTA.App.ViewModels
 
             liveSpectrum = newSpectrum;
 
-            // If caller supplied an X-axis (HI modes), use it
+            // If caller supplied an X-axis (HI modes), use it; otherwise fall back to the
+            // plain frequency axis (standalone baseline/capture charts).
             if (newXAxis != null)
                 xAxis = newXAxis;
             else
-                xAxis = frequencies; // IF mode
+                xAxis = frequencies;
 
             App.Current.Dispatcher.Invoke(() =>
             {

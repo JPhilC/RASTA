@@ -1,5 +1,5 @@
 ﻿using MathNet.Numerics.IntegralTransforms;
-using RASTA.Processing.IfAverage;
+using RASTA.Processing.Dsp;
 using System.Numerics;
 
 namespace RASTA.Processing.HiPipeline

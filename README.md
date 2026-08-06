@@ -37,10 +37,10 @@ Whether it reaches that goal or not, RASTA is designed to be a rewarding enginee
 - A capture sweep that drives the mount through a plan, saves raw IQ to FITS with full pointing
   (RA/Dec **and** Az/Alt) and site metadata baked into the header, and shows a live,
   continuously-averaging HI spectrum as each dwell point is captured.
-- A Visualise view with five spectrum modes (IF, HI vs. Frequency, HI vs. Velocity, SKAO TTRT,
-  and a bandpass Ratio view for sanity-checking calibration before continuum subtraction), an
-  optional dB scale, and automatic combining of multi-file dwell points (`..._1of2.fits`,
-  `..._2of2.fits`, …) selected from a single file.
+- A Visualise view with four spectrum modes (HI vs. Frequency, HI vs. Velocity, SKAO TTRT, and a
+  bandpass Ratio view for sanity-checking calibration before continuum subtraction), an optional dB
+  scale, and automatic combining of multi-file dwell points (`..._1of2.fits`, `..._2of2.fits`, …)
+  selected from a single file.
 
 RASTA is not a polished product — it's a growing, working system with some still-placeholder edges (see below).
 
@@ -70,7 +70,7 @@ across many saved captures).
 
 ### 5. Visualise
 Load a baseline and/or capture FITS file (or a whole multi-file dwell point at once) and render
-it through one of five DSP modes, with dB and LSR-correction options.
+it through one of four DSP modes, with dB and LSR-correction options.
 
 ---
 
@@ -112,8 +112,9 @@ real, working loop end to end; Process is not yet wired up.
 - **Observe** runs a sweep plan, capturing raw IQ (optionally several files per dwell point) and
   showing a live HI spectrum as it goes.
 - **Visualise** loads baseline/capture FITS (auto-combining multi-file dwell points) and renders
-  IF, HI Frequency, HI Velocity, SKAO TTRT, or Bandpass Ratio charts, with dB scaling and an LSR
-  velocity correction applied from each file's recorded pointing, time, and site.
+  HI Frequency, HI Velocity, SKAO TTRT, or Bandpass Ratio charts (plus a standalone
+  frequency/power view when only a baseline or only a capture file is selected), with dB scaling
+  and an LSR velocity correction applied from each file's recorded pointing, time, and site.
 
 ---
 
@@ -145,10 +146,14 @@ community:
   (terminator + gain sweep + baseline calibration) / Observe (sky spectrum, HI velocity plot)
   workflow follows the same shape as the SKAO tabletop telescope's. Licensed BSD-3-Clause,
   © 2023 SKA Observatory.
-- **[Daniel M. Kamiński](https://github.com/DanielKami/SDR_AVE_new)** — the
-  `RASTA.Processing/IfAverage` signal-averaging chain (median filter, RFI detector,
-  intermediate/long-term averaging, background subtraction, Savitzky–Golay smoothing) is adapted
-  from his "SDR AVE" Advanced Signal Averaging Plugin for SDR# (SDRSharp), licensed GNU AGPL-3.0.
+- **[Daniel M. Kamiński](https://github.com/DanielKami/SDR_AVE_new)** — an early signal-averaging
+  chain (median filter, RFI detector, intermediate/long-term averaging, background subtraction,
+  Savitzky–Golay smoothing) was adapted from his "SDR AVE" Advanced Signal Averaging Plugin for SDR#
+  (SDRSharp), licensed GNU AGPL-3.0. It's since been removed from RASTA — comparing it against the
+  original plugin showed it was designed as a live, continuously-refreshing display (a sliding
+  window), not a full-dwell integrator for a fixed recorded file, so it was never suited to reducing
+  a whole capture into one spectrum the way `HiStreamingAccumulator` now does. Its one still-useful
+  piece, the Savitzky–Golay smoothing kernel, lives on in `RASTA.Processing/Dsp`.
 
 Thank you both — RASTA wouldn't have gotten this far without having real reference implementations
 to learn from and check against.
