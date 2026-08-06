@@ -10,9 +10,11 @@
 
     <Grid Margin="10">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto"/>    <!-- Label -->
+            <ColumnDefinition Width="Auto"/>
+            <!-- Label -->
             <ColumnDefinition Width="5"/>
-            <ColumnDefinition Width="Auto"/>       <!-- Entry/Textbox-->
+            <ColumnDefinition Width="Auto"/>
+            <!-- Entry/Textbox-->
             <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="Auto"/>
             <!-- Label -->
@@ -26,10 +28,14 @@
             <ColumnDefinition Width="Auto"/>
             <!-- Entry/Textbox-->
             <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="Auto"/>    <!-- Button-->
+            <ColumnDefinition Width="Auto"/>
+            <!-- Button-->
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>  <!-- Caption-->
+            <RowDefinition Height="Auto"/>
+            <!-- Caption-->
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="5"/>
@@ -40,12 +46,12 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-            <TextBlock Grid.Column="0" Grid.ColumnSpan="6" 
+        <TextBlock Grid.Column="0" Grid.ColumnSpan="6" 
                        Text="Visualisation"
                        FontSize="20"
                        FontWeight="Bold"
                        Margin="0 0 0 10"/>
-        
+
         <TextBlock Grid.Column="0" Grid.Row="2" 
                    VerticalAlignment="Center"
                     Text="Baseline File" FontWeight="Bold" />
@@ -94,8 +100,8 @@
                   SelectedValuePath="Mode"
                   DisplayMemberPath="Name" />
 
-        
-        
+
+
         <TextBlock Grid.Column="4" Grid.Row="6" 
             Text="Target FFT Size" FontWeight="Bold" />
 
@@ -107,18 +113,6 @@
                   Content="Show dB (baseline/capture/ratio only)"
                   IsChecked="{Binding UseDbScale}"/>
 
-        <StackPanel Grid.Column="10" Grid.Row="6"
-                    Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="Smooth" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-            <ComboBox Width="140"
-                      ItemsSource="{Binding Source={x:Static helpers:SmoothingKindValues.All}}"
-                      SelectedValue="{Binding SmoothingKind, Mode=TwoWay}"
-                      SelectedValuePath="Kind"
-                      DisplayMemberPath="Name"/>
-            <TextBlock Text="Window" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"/>
-            <TextBox Width="40" Text="{Binding SmoothingWindow}"
-                     ToolTip="Smoothing window width, in FFT bins (odd numbers only - even values are rounded up)"/>
-        </StackPanel>
 
         <Button Grid.Column="14" Grid.Row="6"
             Content="Generate Chart"
@@ -126,13 +120,32 @@
             Padding="10,4"
             Width="160"/>
 
-        <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="9">
+        <TextBlock Grid.Column="0" Grid.Row="8"
+                       Text="Smooth" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+        <ComboBox Grid.Column="2" Grid.Row="8"
+                HorizontalAlignment="Left" Width="140"
+                      ItemsSource="{Binding Source={x:Static helpers:SmoothingKindValues.All}}"
+                      SelectedValue="{Binding SmoothingKind, Mode=TwoWay}"
+                      SelectedValuePath="Kind"
+                      DisplayMemberPath="Name"/>
+        <TextBlock Grid.Column="4" Grid.Row="8" 
+                   HorizontalAlignment="Left"
+                   Text="Window" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"/>
+        <TextBox Grid.Column="6" Grid.Row="8" Width="40" 
+                 HorizontalAlignment="Left"
+                 Text="{Binding SmoothingWindow}"
+                     ToolTip="Smoothing window width, in FFT bins (odd numbers only - even values are rounded up)"/>
+
+        <Grid Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>  <!-- Centre  -->
+                <ColumnDefinition Width="Auto"/>
+                <!-- Centre  -->
                 <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="Auto"/>    <!-- Entry/Textbox-->
+                <ColumnDefinition Width="Auto"/>
+                <!-- Entry/Textbox-->
                 <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="Auto"/>  <!-- Button-->
+                <ColumnDefinition Width="Auto"/>
+                <!-- Button-->
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="5"/>
@@ -160,7 +173,7 @@
                        Text="Sampling (Hz)" FontWeight="Bold" />
             <controls:FrequencyEntryBox Grid.Column="6"  
                                         FrequencyHz="{Binding SamplingHz, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
-            
+
             <TextBlock Grid.Column="8" VerticalAlignment="Center"
                        Text="Gain (dB)" FontWeight="Bold" />
             <TextBox Grid.Column="10"  Width="50"
@@ -169,7 +182,7 @@
                        Text="Frames" FontWeight="Bold" />
             <TextBox Grid.Row="2" Grid.Column="2"  Width="100"
                      Text="{Binding FrameCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
-            
+
             <TextBlock Grid.Row="2" Grid.Column="4" VerticalAlignment="Center"
                        Text="LSR Correction" FontWeight="Bold" />
 
@@ -181,9 +194,9 @@
             <TextBox Grid.Row="2" Grid.Column="10"  Width="50"
                      Text="{Binding CombinedFileCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
         </Grid>
-        
+
         <views:SpectrumView 
-            Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="13"
+            Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="13"
             Margin="0,10,0,0" 
             DataContext="{Binding SpectrumVm}"/>
     </Grid>
