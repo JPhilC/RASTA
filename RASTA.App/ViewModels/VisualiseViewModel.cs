@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.Core.Astro;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Processing.HiPipeline;
@@ -42,6 +43,12 @@ public partial class VisualiseViewModel : ObservableObject
 
     [ObservableProperty]
     private string frameCount = string.Empty;
+
+    // Set by ProcessHiCore whenever an LSR correction could be computed from the
+    // capture file's recorded pointing/time/site, so the applied offset is visible
+    // rather than silently baked into the velocity axis.
+    [ObservableProperty]
+    private string lsrInfo = string.Empty;
 
 
     [ObservableProperty]
@@ -457,16 +464,56 @@ public partial class VisualiseViewModel : ObservableObject
         // --- 6. Get averaged spectra ---
         var (baselineSpectrum, captureSpectrum) = acc.GetAveragedSpectra();
 
-        // --- 7. Run streaming HI pipeline ---
+        // --- 7. LSR correction, from the capture's recorded pointing/time/site (the
+        // baseline is just a terminator reading - its own pointing is meaningless here).
+        double lsrCorrectionKmPerSec = TryComputeLsrCorrectionKmPerSec(captureMeta);
+        LsrInfo = lsrCorrectionKmPerSec != 0.0
+            ? $"{lsrCorrectionKmPerSec:+0.00;-0.00} km/s"
+            : "n/a (no pointing/site recorded)";
+
+        // --- 8. Run streaming HI pipeline ---
         var hi = new HiStreamingPipeline();
         hi.Process(
             baselineSpectrum,
             captureSpectrum,
             sampleRateHz: SamplingHz,
-            centerFreqHz: FrequencyHz
+            centerFreqHz: FrequencyHz,
+            lsrCorrectionKmPerSec: lsrCorrectionKmPerSec
         );
 
         return (baselineSpectrum, captureSpectrum, hi);
+    }
+
+    /// <summary>
+    /// Computes the LSR correction (km/s) for a captured file's pointing/time/site, or
+    /// 0 if the FITS metadata doesn't have enough recorded to compute it (e.g. older
+    /// files, or a capture with no site configured). Reconstructs RA/Dec from Az/Alt if
+    /// the file was captured in AltAz mode rather than Equatorial.
+    /// </summary>
+    private static double TryComputeLsrCorrectionKmPerSec(FitsFileMetaData meta)
+    {
+        if (meta.SiteLatitudeDeg is not double lat || meta.SiteLongitudeDeg is not double lon)
+            return 0.0;
+        if (meta.ObservationDate == DateTime.MinValue)
+            return 0.0;
+
+        double raHours, decDeg;
+
+        if (meta.RaDeg is double raDeg && meta.DecDeg is double dec)
+        {
+            raHours = raDeg / 15.0;
+            decDeg = dec;
+        }
+        else if (meta.AzDeg is double az && meta.AltDeg is double alt)
+        {
+            (raHours, decDeg) = AstronomyUtils.HorizontalToEquatorial(az, alt, meta.ObservationDate, lat, lon);
+        }
+        else
+        {
+            return 0.0; // no pointing recorded at all
+        }
+
+        return AstronomyUtils.ComputeLsrCorrectionKmPerSec(raHours, decDeg, meta.ObservationDate, lat, lon);
     }
 
     private void ProcessFilesHiVelocity()

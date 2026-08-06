@@ -143,6 +143,7 @@ namespace RASTA.Processing.HiPipeline
             double[] capturePower,
             double sampleRateHz,
             double centerFreqHz,
+            double lsrCorrectionKmPerSec = 0.0, // add AstronomyUtils.ComputeLsrCorrectionKmPerSec(...) here to report LSR velocity instead of raw topocentric
             bool applySmoothing = false) // reference pipeline never smooths the final output
         {
             if (baselinePower == null) throw new ArgumentNullException(nameof(baselinePower));
@@ -159,7 +160,9 @@ namespace RASTA.Processing.HiPipeline
             // 2. Frequency axis
             FrequencyHz = ComputeFrequencyAxis(n, sampleRateHz, centerFreqHz);
 
-            // 3. Velocity axis
+            // 3. Velocity axis (topocentric, then shifted to LSR by a single scalar
+            // offset - the correction depends only on pointing/time/site, not on
+            // frequency, so it's the same for every channel).
             VelocityKmPerSec = new double[n];
             for (int i = 0; i < n; i++)
             {
@@ -167,7 +170,8 @@ namespace RASTA.Processing.HiPipeline
                 // Radio velocity convention: v > 0 means redshifted / receding (f < f0).
                 // (Previously this was (f - HiFreqHz)/HiFreqHz, which inverted the sign.)
                 VelocityKmPerSec[i] =
-                    HiConstants.SpeedOfLightKmPerSec * ((HiConstants.HiFreqHz - f) / HiConstants.HiFreqHz);
+                    HiConstants.SpeedOfLightKmPerSec * ((HiConstants.HiFreqHz - f) / HiConstants.HiFreqHz)
+                    + lsrCorrectionKmPerSec;
             }
 
             // 4. Baseline division + scale
@@ -535,6 +539,7 @@ namespace RASTA.Processing.HiPipeline
         public void Compute(
             double sampleRateHz,
             double centerFreqHz,
+            double lsrCorrectionKmPerSec = 0.0,
             bool applySmoothing = false) // reference pipeline never smooths the final output
         {
             var (baselineAvg, captureAvg) = _acc.GetAveragedSpectra();
@@ -543,6 +548,7 @@ namespace RASTA.Processing.HiPipeline
                 captureAvg,
                 sampleRateHz,
                 centerFreqHz,
+                lsrCorrectionKmPerSec,
                 applySmoothing);
         }
     }

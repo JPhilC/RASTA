@@ -130,7 +130,14 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="5"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <TextBlock Grid.Column="0" VerticalAlignment="Center"
                        Text="Frequency (Hz)" FontWeight="Bold" />
             <controls:FrequencyEntryBox Grid.Column="2"  
@@ -145,10 +152,16 @@
                        Text="Gain (dB)" FontWeight="Bold" />
             <TextBox Grid.Column="10"  Width="50"
                      Text="{Binding Gain, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
-            <TextBlock Grid.Column="12" VerticalAlignment="Center"
+            <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center"
                        Text="Frames" FontWeight="Bold" />
-            <TextBox Grid.Column="14"  Width="100"
+            <TextBox Grid.Row="2" Grid.Column="2"  Width="100"
                      Text="{Binding FrameCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+            
+            <TextBlock Grid.Row="2" Grid.Column="4" VerticalAlignment="Center"
+                       Text="LSR Correction" FontWeight="Bold" />
+            
+            <TextBox Grid.Row="2" Grid.Column="6"  Width="100"
+                     Text="{Binding LsrInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
         </Grid>
         
         <views:SpectrumView 
