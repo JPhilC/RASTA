@@ -14,7 +14,12 @@
         <StackPanel Orientation="Horizontal" Grid.Row="0">
             <TextBlock Text="Friendly Name" FontWeight="Bold" Margin="0,0,5,0"/>
             <TextBox Text="{Binding PlanName, Mode=OneWay}" Width="300" HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"/>
-            <Button Content="Begin Sweep" Width="100" Height="30" 
+            <TextBlock Text="Est. Completion" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"
+                       Visibility="{Binding EstimatedCompletionTime, Converter={StaticResource NullToVisibilityConverter}}"/>
+            <TextBox Text="{Binding EstimatedCompletionTime, Mode=OneWay, StringFormat='{}{0:ddd HH:mm:ss}'}"
+                     Width="140" HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"
+                     Visibility="{Binding EstimatedCompletionTime, Converter={StaticResource NullToVisibilityConverter}}"/>
+            <Button Content="Begin Sweep" Width="100" Height="30"
                     Command="{Binding CaptureSweepCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding CanCaptureSweep, Converter={StaticResource BooleanToVisibilityConverter}}"/>
             <Button Content="Cancel Sweep" Width="100" Height="30" 

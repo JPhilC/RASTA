@@ -20,6 +20,7 @@
             <converters:DriftVisibilityConverter x:Key="DriftVisibilityConverter"/>
             <converters:PlanTypeToVisibilityConverter x:Key="PlanTypeToVisibilityConverter"/>
             <converters:BooleanInverterConverter x:Key="BooleanInverterConverter"/>
+            <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

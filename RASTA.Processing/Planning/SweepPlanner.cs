@@ -11,18 +11,29 @@ namespace RASTA.Processing.Planning
         public string? ErrorMessage { get; }
         public IReadOnlyList<TargetPoint> Points { get; }
 
-        private SweepPlanResult(bool success, string? error, IReadOnlyList<TargetPoint> points)
+        /// <summary>
+        /// Rough estimate (UTC) of when the whole sweep will finish, based on the planned
+        /// per-point dwell time plus the slew/settle overhead computed while ordering the
+        /// sweep (see BuildSweep). This is a planning-time estimate from nominal dwell/slew
+        /// figures only - callers actually executing the sweep should refine it against real
+        /// measured per-point timing as points complete (see ObserveViewModel.CaptureSweepAsync,
+        /// which does exactly that). Null when the plan failed to build.
+        /// </summary>
+        public DateTime? EstimatedCompletionUtc { get; }
+
+        private SweepPlanResult(bool success, string? error, IReadOnlyList<TargetPoint> points, DateTime? estimatedCompletionUtc)
         {
             Success = success;
             ErrorMessage = error;
             Points = points;
+            EstimatedCompletionUtc = estimatedCompletionUtc;
         }
 
-        public static SweepPlanResult Ok(IReadOnlyList<TargetPoint> points)
-            => new SweepPlanResult(true, null, points);
+        public static SweepPlanResult Ok(IReadOnlyList<TargetPoint> points, DateTime estimatedCompletionUtc)
+            => new SweepPlanResult(true, null, points, estimatedCompletionUtc);
 
         public static SweepPlanResult Fail(string error)
-            => new SweepPlanResult(false, error, Array.Empty<TargetPoint>());
+            => new SweepPlanResult(false, error, Array.Empty<TargetPoint>(), null);
     }
 
     public class SweepPlanner
@@ -115,7 +126,14 @@ namespace RASTA.Processing.Planning
                 index++;
             }
 
-            return SweepPlanResult.Ok(validated);
+            // Nominal completion estimate: every point gets the full planned dwell, plus
+            // the total slew/settle overhead accumulated while ordering the sweep above.
+            DateTime estimatedCompletionUtc =
+                startTimeUtc +
+                TimeSpan.FromTicks(dwell.Ticks * validated.Count) +
+                TimeSpan.FromSeconds(accumulatedSlewSeconds);
+
+            return SweepPlanResult.Ok(validated, estimatedCompletionUtc);
         }
 
         private static double ComputeElevationDeg(

@@ -70,6 +70,14 @@ public partial class ObserveViewModel : ObservableObject
     [ObservableProperty]
     private bool isBusy;
 
+    // Estimated wall-clock (local time) finish of the running sweep. Set from
+    // SweepPlanResult's nominal dwell/slew estimate when the sweep starts, then
+    // refined after every completed target using real measured per-point timing -
+    // same "real, not simulated" progress philosophy as everything else in this
+    // view model (see CaptureSweepAsync). Null when no sweep has run yet.
+    [ObservableProperty]
+    private DateTime? estimatedCompletionTime;
+
     public SpectrumViewModel SpectrumVm { get; private set; }
 
     public ObserveViewModel(
@@ -261,6 +269,7 @@ public partial class ObserveViewModel : ObservableObject
         }
 
         DateTime startTime = DateTime.UtcNow;
+        EstimatedCompletionTime = null; // clear any stale estimate from a previous run
 
         // Build the target points for the ActivePlan.
         // This will return a list of TargetPoint objects that represent the points to capture.
@@ -281,6 +290,10 @@ public partial class ObserveViewModel : ObservableObject
             MessageBox.Show(sweepPlanResult.ErrorMessage);
             return;
         }
+
+        // Initial estimate from the plan's nominal dwell/slew figures - refined below
+        // against real measured per-point timing as the sweep actually runs.
+        EstimatedCompletionTime = sweepPlanResult.EstimatedCompletionUtc?.ToLocalTime();
 
         // Enable tracking if the plan requires it and the mount supports it.
         if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
@@ -315,6 +328,12 @@ public partial class ObserveViewModel : ObservableObject
 
             _liveSampleRateHz = sampleRateHz;
             _liveCenterFreqHz = frequencyHz;
+
+            // Marks when actual capturing began (after mount/device setup above), used
+            // to measure real average time-per-point for refining EstimatedCompletionTime
+            // as the sweep progresses.
+            DateTime sweepExecutionStartUtc = DateTime.UtcNow;
+            int totalTargetPoints = sweepPlanResult.Points.Count;
 
             foreach (var target in sweepPlanResult.Points)
             {
@@ -428,6 +447,17 @@ public partial class ObserveViewModel : ObservableObject
 
                 }
 
+                // Refine the completion estimate from real, measured per-point timing
+                // achieved so far, rather than the plan's nominal dwell/slew figures -
+                // same "real, not simulated" progress convention used elsewhere.
+                int pointsCompleted = targetIndex + 1;
+                int pointsRemaining = totalTargetPoints - pointsCompleted;
+                TimeSpan elapsed = DateTime.UtcNow - sweepExecutionStartUtc;
+                TimeSpan avgPerPoint = TimeSpan.FromTicks(elapsed.Ticks / pointsCompleted);
+                EstimatedCompletionTime = pointsRemaining > 0
+                    ? (DateTime.UtcNow + TimeSpan.FromTicks(avgPerPoint.Ticks * pointsRemaining)).ToLocalTime()
+                    : DateTime.Now;
+
                 targetIndex++;
             }
             _statusBar.CaptureStatus = "Completed";
@@ -435,10 +465,12 @@ public partial class ObserveViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             _statusBar.CaptureStatus = "Cancelled";
+            EstimatedCompletionTime = null; // no longer meaningful once the sweep won't finish
         }
         catch (Exception ex)
         {
             _statusBar.CaptureStatus = "Error";
+            EstimatedCompletionTime = null;
             MessageBox.Show(ex.Message, "Sweep Error");
         }
         finally

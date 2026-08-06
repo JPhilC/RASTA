@@ -217,6 +217,12 @@ progress no matter how often you set the bound property. `ObserveViewModel.Start
 estimated elapsed time against a nominal duration instead of measuring real progress, and could hit
 100%/hide itself while the real work was still running.
 
+`ObserveViewModel.EstimatedCompletionTime` applies the same philosophy to session ETA: it starts from
+`SweepPlanResult.EstimatedCompletionUtc` (a nominal estimate from planned dwell/slew figures, computed
+once in `SweepPlanner.BuildSweep`), then after every completed target point it's overwritten using the
+*real* average time-per-point measured so far, extrapolated across the remaining points — not the
+original nominal figure held fixed for the whole run.
+
 ### Known incomplete / placeholder areas
 
 - `RASTA.Processing/Gridding/GridBuilder.cs` and `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`
