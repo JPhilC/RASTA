@@ -13,7 +13,6 @@ using RASTA.Infrastructure.Telescope;
 using RASTA.Processing.Calibration;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.Planning;
-using RASTA.Processing.Spectral;
 using RASTA.Processing.VisualisationData;
 using System.Windows;
 
@@ -103,7 +102,6 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // Processing
             // ---------------------------------------------------------
-            services.AddSingleton<SpectrumMath>();
             services.AddSingleton<SpectrumImageBuilder>();
             services.AddSingleton<HeatmapBuilder>();
             services.AddSingleton<GridBuilder>();
@@ -116,7 +114,6 @@ namespace RASTA.App
             services.AddScoped<PrepareViewModel>();
             services.AddScoped<PlanViewModel>();
             services.AddScoped<ObserveViewModel>();
-            services.AddScoped<ProcessViewModel>();
             services.AddScoped<VisualiseViewModel>();
             services.AddScoped<UserOptionsViewModel>();
             services.AddSingleton<NavigationService>();

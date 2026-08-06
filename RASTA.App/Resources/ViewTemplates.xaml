@@ -18,11 +18,6 @@
         <views:ObserveView/>
     </DataTemplate>
 
-    <!-- Process -->
-    <DataTemplate DataType="{x:Type vm:ProcessViewModel}">
-        <views:ProcessView/>
-    </DataTemplate>
-
     <!-- Visualise -->
     <DataTemplate DataType="{x:Type vm:VisualiseViewModel}">
         <views:VisualiseView/>

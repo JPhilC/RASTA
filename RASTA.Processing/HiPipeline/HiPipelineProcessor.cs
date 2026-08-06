@@ -157,6 +157,12 @@ namespace RASTA.Processing.HiPipeline
             baselinePower = FftShift(baselinePower);
             capturePower = FftShift(capturePower);
 
+            // 1b. Excise the receiver's fixed LO/DC-leakage spike (every zero-IF SDR,
+            // including the RTL-SDR this app targets, has one at exactly the tuned
+            // center frequency - see RemoveDcSpike for why the window is detected from
+            // the baseline rather than hardcoded).
+            RemoveDcSpike(baselinePower, capturePower);
+
             // 2. Frequency axis
             FrequencyHz = ComputeFrequencyAxis(n, sampleRateHz, centerFreqHz);
 
@@ -225,6 +231,113 @@ namespace RASTA.Processing.HiPipeline
             Array.Copy(data, 0, shifted, n - half, half);
 
             return shifted;
+        }
+
+        // How far above a robust local "normal" level counts as the DC/LO spike.
+        private const double DcSpikeThresholdRatio = 4.0;
+
+        // Upper bound on how many bins either side of center the spike can be judged to
+        // extend - generous versus the ~1-2 bins actually observed in practice (a Hann
+        // window's main lobe, which is what a pure DC offset turns into after windowing,
+        // is only about 4 bins wide regardless of FFT size).
+        private const int DcSpikeMaxHalfWidthBins = 4;
+
+        /// <summary>
+        /// Excises the fixed LO/DC-leakage spike every zero-IF SDR (including the
+        /// RTL-SDR this app targets) produces at exactly the tuned center frequency -
+        /// after FftShift that's always the middle bin of the array, regardless of
+        /// pointing or tuning choice.
+        ///
+        /// The window to excise is detected from baselinePower alone, never from
+        /// capturePower: the baseline is a terminator reading with zero sky signal, so
+        /// any bin that spikes there is unambiguously receiver artifact. Because the
+        /// decision never inspects the capture spectrum, this cannot excise genuine,
+        /// capture-only HI signal - if the tuned center frequency happens to coincide
+        /// with a target's actual line frequency but the baseline is flat there, nothing
+        /// gets touched. Only a spike that's present in the artifact-only baseline gets
+        /// interpolated away, identically, in both spectra.
+        /// </summary>
+        private static void RemoveDcSpike(double[] baselinePower, double[] capturePower)
+        {
+            int n = baselinePower.Length;
+            int center = n / 2;
+
+            double reference = LocalMedianExcluding(baselinePower, center, DcSpikeMaxHalfWidthBins);
+            if (reference <= 0)
+                return; // no usable "normal" level to compare against - leave spectra alone
+
+            int lo = center, hi = center;
+            bool anyElevated = false;
+
+            for (int offset = 0; offset <= DcSpikeMaxHalfWidthBins; offset++)
+            {
+                int left = center - offset;
+                int right = center + offset;
+                bool leftHigh = left >= 0 && baselinePower[left] > DcSpikeThresholdRatio * reference;
+                bool rightHigh = right < n && baselinePower[right] > DcSpikeThresholdRatio * reference;
+
+                if (!leftHigh && !rightHigh)
+                    break; // both sides back to normal - stop growing the window
+
+                anyElevated = true;
+                if (leftHigh) lo = left;
+                if (rightHigh) hi = right;
+            }
+
+            if (!anyElevated)
+                return; // baseline is flat at the center bin - nothing to excise
+
+            InterpolateRange(baselinePower, lo, hi);
+            InterpolateRange(capturePower, lo, hi);
+        }
+
+        /// <summary>
+        /// Median of a small window of bins just outside +-halfWidth of centerIndex, on
+        /// both sides - a "normal" reference level that the spike itself can't bias, as
+        /// long as halfWidth generously bounds its true extent.
+        /// </summary>
+        private static double LocalMedianExcluding(double[] data, int centerIndex, int halfWidth)
+        {
+            const int refWindow = 5;
+            var values = new System.Collections.Generic.List<double>();
+
+            for (int i = centerIndex - halfWidth - refWindow; i < centerIndex - halfWidth; i++)
+                if (i >= 0) values.Add(data[i]);
+
+            for (int i = centerIndex + halfWidth + 1; i <= centerIndex + halfWidth + refWindow; i++)
+                if (i < data.Length) values.Add(data[i]);
+
+            if (values.Count == 0)
+                return 0;
+
+            values.Sort();
+            return values[values.Count / 2];
+        }
+
+        /// <summary>
+        /// Replaces data[lo..hi] with a linear interpolation between its immediate
+        /// flanking bins. No-ops rather than interpolating off the end of the array if
+        /// the range is right at an edge (shouldn't happen in practice - the spike is
+        /// always near the center bin, far from either edge - but safe regardless).
+        /// </summary>
+        private static void InterpolateRange(double[] data, int lo, int hi)
+        {
+            int n = data.Length;
+            int leftIdx = lo - 1;
+            int rightIdx = hi + 1;
+
+            if (leftIdx < 0 || rightIdx >= n)
+                return;
+
+            double left = data[leftIdx];
+            double right = data[rightIdx];
+            int span = rightIdx - leftIdx;
+
+            for (int i = lo; i <= hi; i++)
+            {
+                double t = (double)(i - leftIdx) / span;
+                data[i] = left + (right - left) * t;
+            }
         }
 
         private static double[] ComputeFrequencyAxis(int length, double sampleRateHz, double centerFreqHz)

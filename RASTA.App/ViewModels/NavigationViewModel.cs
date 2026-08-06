@@ -14,7 +14,6 @@ namespace RASTA.App.ViewModels
             Prepare,
             Plan,
             Observe,
-            Process,
             Visualise,
             Options
         }
@@ -30,7 +29,14 @@ namespace RASTA.App.ViewModels
 
         public StatusBarViewModel StatusBarViewModel { get; }
 
-        public bool CanObserve => StatusBarViewModel.SdrConnected;
+        // Plan doesn't need a mount attached - PlanType/CoordinateMode is a free choice
+        // on the Plan screen itself, not detected from a connected mount.
+        public bool CanNavigatePlan => StatusBarViewModel.SdrConnected;
+
+        // Observe drives an actual mount slew (and ObserveViewModel.LoadAvailablePlans
+        // filters plans by the mount's detected CoordinateMode), so it needs both an SDR
+        // and a connected mount, not just the SDR.
+        public bool CanNavigateObserve => StatusBarViewModel.SdrConnected && StatusBarViewModel.TelescopeConnected;
 
         [ObservableProperty]
         private object? currentViewModel;
@@ -44,9 +50,11 @@ namespace RASTA.App.ViewModels
 
             StatusBarViewModel.PropertyChanged += (_, args) =>
             {
-                if (args.PropertyName == nameof(StatusBarViewModel.SdrConnected))
+                if (args.PropertyName == nameof(StatusBarViewModel.SdrConnected) ||
+                    args.PropertyName == nameof(StatusBarViewModel.TelescopeConnected))
                 {
-                    OnPropertyChanged(nameof(CanObserve));
+                    OnPropertyChanged(nameof(CanNavigatePlan));
+                    OnPropertyChanged(nameof(CanNavigateObserve));
                     // Update command state on UI thread
                     Application.Current.Dispatcher.Invoke(() =>
                     {
@@ -69,7 +77,7 @@ namespace RASTA.App.ViewModels
             UpdateView();
         }
 
-        [RelayCommand(CanExecute = nameof(CanObserve))]
+        [RelayCommand(CanExecute = nameof(CanNavigatePlan))]
         private void NavigatePlan()
         {
             CurrentSection = NavigationSection.Plan;
@@ -78,7 +86,7 @@ namespace RASTA.App.ViewModels
             UpdateView();
         }
 
-        [RelayCommand(CanExecute = nameof(CanObserve))]
+        [RelayCommand(CanExecute = nameof(CanNavigateObserve))]
         private void NavigateObserve()
         {
             CurrentSection = NavigationSection.Observe;
@@ -93,15 +101,6 @@ namespace RASTA.App.ViewModels
                 vm.LoadAvailablePlans();
             });
 
-            UpdateView();
-        }
-
-        [RelayCommand]
-        private void NavigateProcess()
-        {
-            CurrentSection = NavigationSection.Process;
-
-            _nav.NavigateTo<ProcessViewModel>();
             UpdateView();
         }
 

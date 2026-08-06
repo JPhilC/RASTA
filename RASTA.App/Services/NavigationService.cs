@@ -40,9 +40,6 @@ namespace RASTA.App.Services
         public void NavigateToObserve() =>
             NavigateTo<ObserveViewModel>();
 
-        public void NavigateToProcess() =>
-            NavigateTo<ProcessViewModel>();
-
         public void NavigateToVisualise() =>
             NavigateTo<VisualiseViewModel>();
     }

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RASTA (Radio Astronomy Slew • Track • Acquire) is a hobby-grade .NET 10 WPF/MVVM app for amateur
 hydrogen-line (1420 MHz / 21cm) radio astronomy: it drives an ASCOM Alpaca telescope mount and an
-RTL-SDR receiver through a five-stage workflow — **Prepare → Plan → Observe → Process → Visualise** —
+RTL-SDR receiver through a four-stage workflow — **Prepare → Plan → Observe → Visualise** —
 to capture raw IQ data and reduce it into HI spectra. It's exploratory/experimental; large parts of
 the pipeline are still being reworked (see "Known incomplete / placeholder areas" below) — don't
 assume a component is finished or wired up just because it exists.
@@ -68,10 +68,14 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
 
 There's no router/framework — `NavigationService.NavigateTo<TViewModel>()` just resolves the view
 model from the root DI container and `NavigationViewModel` (bound to `MainWindow`) swaps
-`CurrentViewModel`. The five workflow stages map 1:1 to `PrepareViewModel` / `PlanViewModel` /
-`ObserveViewModel` / `ProcessViewModel` / `VisualiseViewModel`. `NavigatePlan`/`NavigateObserve` are
-gated on `StatusBarViewModel.SdrConnected` (an SDR must be enumerated before you can move past
-Prepare). `ObserveViewModel` no longer takes its plan from `PlanViewModel.SelectedPlan` on
+`CurrentViewModel`. The four workflow stages map 1:1 to `PrepareViewModel` / `PlanViewModel` /
+`ObserveViewModel` / `VisualiseViewModel`. `NavigatePlan` is gated on `StatusBarViewModel.SdrConnected`
+only (an SDR must be enumerated before you can move past Prepare) — Plan itself doesn't need a mount,
+since `PlanType`/`CoordinateMode` is a free choice on the Plan screen, not detected from a connected
+mount. `NavigateObserve` additionally requires `StatusBarViewModel.TelescopeConnected`, since it
+drives an actual mount slew and `ObserveViewModel.LoadAvailablePlans` filters plans by the mount's
+detected `CoordinateMode` — neither means anything without a mount attached. `ObserveViewModel` no
+longer takes its plan from `PlanViewModel.SelectedPlan` on
 navigation — it builds its own `AvailablePlans` list (`LoadAvailablePlans`, using the same
 `IPlanRepository.ListPlans(sdrDeviceId)` call `PlanViewModel.LoadSavedPlans` uses) filtered to
 whichever `PlanType` matches the connected mount's current `TelescopeState.Mode` (`PlanMatchesMountMode`
@@ -91,19 +95,35 @@ equality, dropping it only if no plan with that name is still offered.
 - `HiStreamingAccumulator` — sums arbitrary numbers of baseline/capture power frames, exposes
   `GetAveragedSpectra()` (needs both) or `GetBaselineAverage()` (baseline-only, used during
   calibration before any capture frames exist).
-- `HiStreamingPipeline` — fftshift → frequency axis → velocity axis (radio convention, centered on
-  1420.40575177 MHz) → baseline division (bandpass flattening) → linear continuum fit from two
-  small edge windows (channel-index based, RFI-outlier-rejected — *not* a velocity-magnitude mask
-  over most of the spectrum, despite what the fraction names might suggest) → continuum subtraction
-  → optional Savitzky–Golay smoothing.
+- `HiStreamingPipeline` — fftshift → DC/LO-spike excision (see below) → frequency axis → velocity
+  axis (radio convention, centered on 1420.40575177 MHz) → baseline division (bandpass flattening)
+  → linear continuum fit from two small edge windows (channel-index based, RFI-outlier-rejected —
+  *not* a velocity-magnitude mask over most of the spectrum, despite what the fraction names might
+  suggest) → continuum subtraction → optional Savitzky–Golay smoothing.
 - `HiStreamingProcessor` — convenience wrapper combining the two.
+
+`HiStreamingPipeline.Process` unconditionally runs `RemoveDcSpike` right after the fftshift: every
+zero-IF SDR (including the RTL-SDR this app targets) leaks a fixed LO/DC-offset spike at exactly the
+tuned center frequency, which after fftshift always lands on the array's center bin regardless of
+pointing — a receiver artifact, not sky signal (this is what produced the "spike always at ~1420.41
+MHz no matter where the scope pointed" symptom when the center frequency happened to be tuned close
+to the HI rest frequency itself). Rather than hardcoding a fixed bin window to blank — which could
+just as easily discard genuine HI emission if the tuned center ever coincided with a target's actual
+line frequency — the window is *detected from the baseline spectrum alone* (`LocalMedianExcluding` +
+a threshold-ratio scan outward from the center bin, capped at `DcSpikeMaxHalfWidthBins`). Since the
+baseline is a terminator reading with zero sky signal, any bin that spikes there is unambiguously
+instrumental; the decision never inspects the capture spectrum, so it structurally cannot excise
+real, capture-only signal. Only bins actually elevated in the baseline get linearly interpolated
+away, identically, in both baseline and capture, before anything downstream (ratio, continuum fit)
+sees them. `SkaoPipelineProcessor` deliberately does *not* get this fix — it exists specifically as
+an unmodified cross-check against the SKAO reference algorithm.
 
 `HiPipeline/SkaoPipelineProcessor.cs` is a separate, fixed-256-bin port of the SKAO TTRT reference
 pipeline, kept for cross-checking against `HiStreamingPipeline`'s FFT-size-agnostic version.
-`VisualiseViewModel` exposes it plus four other modes as `SpectrumMode`: `IF`, `HiFrequency`,
-`HiVelocity`, `TTRT`, `Ratio` (the bandpass-flattened capture/baseline ratio *before* continuum
-subtraction — strictly positive, unlike `HiSpectrum`, so it's the one mode besides `IF` that can
-validly be shown in dB; see `VisualiseViewModel.UseDbScale`/`ToDb`).
+`VisualiseViewModel` exposes it plus three other modes as `SpectrumMode`: `HiFrequency`, `HiVelocity`,
+`TTRT`, `Ratio` (the bandpass-flattened capture/baseline ratio *before* continuum subtraction —
+strictly positive, unlike `HiSpectrum`, so it's the one mode that can validly be shown in dB; see
+`VisualiseViewModel.UseDbScale`/`ToDb`).
 
 `HiStreamingPipeline.Process` (and `HiStreamingProcessor.Compute`) take an optional
 `lsrCorrectionKmPerSec` parameter (default 0), added as a flat offset to every channel's velocity —
@@ -240,5 +260,15 @@ original nominal figure held fixed for the whole run.
   intensity map). They are registered in DI but **not called from any View/ViewModel** — dead code
   for now — and they still consume the old `ObservationRecord.AveragedSpectrum.Max()` shape rather
   than `HiStreamingPipeline`'s baseline-divided, continuum-subtracted `HiSpectrum`. Expect these to
-  be reworked rather than extended as-is.
+  be reworked (not extended as-is) as the foundation for a planned multi-position mosaic/heatmap
+  view: point at a folder containing a baseline and several multi-file position captures, run each
+  position through `HiStreamingPipeline` the way `VisualiseViewModel.ProcessHiCore` does for one
+  file, then grid/plot the results. `RASTA.Processing/VisualisationData/SpectrumImageBuilder.cs` is
+  the same story — registered in DI, no caller.
+- The **Process** workflow stage (`ProcessViewModel`/`ProcessView`) has been removed outright rather
+  than reworked — it operated on the old `ObservationRecord`/`SpectrumMath` shape with no caller ever
+  supplying it data, and everything it nominally did already happens directly in Visualise. Its one
+  real dependency, `RASTA.Processing/Spectral/SpectrumMath.cs`, was removed with it (fully superseded
+  by `HiStreamingPipeline`'s proper baseline division/continuum fit and `RASTA.Processing/Dsp/
+  SavitzkyGolay.cs`).
 - `RASTA.Simulators` and `RASTA.Tests` are stub projects only (see Commands section above).

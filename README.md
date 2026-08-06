@@ -48,7 +48,7 @@ RASTA is not a polished product — it's a growing, working system with some sti
 
 ## 📡 Application Overview
 
-RASTA is structured around five workflow stages:
+RASTA is structured around four workflow stages:
 
 ### 1. Prepare
 Connect to the telescope and SDR, configure site/frequency/gain/FFT parameters, and run
@@ -63,12 +63,7 @@ Execute the plan: slew and track, capture raw IQ per dwell point (optionally as 
 show a live-updating HI spectrum built against the calibration baseline as each point is
 captured, and write everything to FITS with real progress feedback.
 
-### 4. Process
-Currently a placeholder — not wired into the rest of the app yet. The actual spectral reduction
-happens directly in Visualise; this stage is reserved for future work (e.g. batch reduction
-across many saved captures).
-
-### 5. Visualise
+### 4. Visualise
 Load a baseline and/or capture FITS file (or a whole multi-file dwell point at once) and render
 it through one of four DSP modes, with dB and LSR-correction options.
 
@@ -100,7 +95,7 @@ it through one of four DSP modes, with dB and LSR-correction options.
 ## 📈 Current Status
 
 RASTA is in active, exploratory development. The Prepare → Plan → Observe → Visualise path is a
-real, working loop end to end; Process is not yet wired up.
+real, working loop end to end.
 
 - The app connects/disconnects to an ASCOM telescope mount via the ASCOM Remote Server, offers to
   unpark a parked mount on connect (and to re-park on disconnect).
@@ -122,10 +117,10 @@ real, working loop end to end; Process is not yet wired up.
 
 These are hopes, not promises:
 
-- Wire up (or replace) the Process stage
-- Sky-mosaic / heatmap view combining many pointings — the early `Gridding`/`HeatmapBuilder` code
-  needs reworking to consume the current HI pipeline's output rather than the old data shape it
-  was written against
+- A multi-position mosaic/heatmap view — point at a folder containing a baseline and several
+  multi-file position captures, run each through the HI pipeline, and grid/plot the results. The
+  early `Gridding`/`HeatmapBuilder` code needs reworking to consume the current HI pipeline's
+  output rather than the old data shape it was written against
 - Real-time waterfall view
 - Automated multi-target calibration sequences
 - Multi-night drift-scan accumulation
