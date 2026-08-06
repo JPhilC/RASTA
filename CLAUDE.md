@@ -118,6 +118,19 @@ away, identically, in both baseline and capture, before anything downstream (rat
 sees them. `SkaoPipelineProcessor` deliberately does *not* get this fix — it exists specifically as
 an unmodified cross-check against the SKAO reference algorithm.
 
+`RemoveDcSpike`'s baseline-only trust also means it structurally *won't* catch a second, distinct
+artifact discovered after moving the default center frequency to 1420.7 MHz: a narrow, ~3-4x-elevated
+spur at a fixed **relative** offset from center (~+100 kHz — a rational fraction of the 2.4 MHz sample
+rate, consistent with a typical RTL-SDR self-generated "birdie"), confirmed pointing-invariant across
+an entire night's sweep (same bin regardless of RA/Dec) but *absent from that same session's baseline*
+— it only appears once a real antenna/LNA is on the front end, not with a terminator. Since it isn't
+baseline-verified the way the DC spike is, blanking it in `HiStreamingPipeline` itself would reintroduce
+exactly the "might discard genuine signal" risk `RemoveDcSpike` was designed to avoid, so it's left in
+the data. Instead `SpectrumViewModel.ApplyRobustYAxisRange` (used by both `UpdateSpectrum` overloads)
+sets the Y-axis from the 1st/99th percentile of the plotted spectrum plus a margin rather than raw
+`Min()`/`Max()`, so a handful of outlier bins like this can no longer squash the genuine spectral shape
+into a flat line — a display-only fix that never touches the underlying data.
+
 `HiPipeline/SkaoPipelineProcessor.cs` is a separate, fixed-256-bin port of the SKAO TTRT reference
 pipeline, kept for cross-checking against `HiStreamingPipeline`'s FFT-size-agnostic version.
 `VisualiseViewModel` exposes it plus three other modes as `SpectrumMode`: `HiFrequency`, `HiVelocity`,

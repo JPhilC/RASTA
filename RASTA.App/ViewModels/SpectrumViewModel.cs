@@ -234,8 +234,7 @@ namespace RASTA.App.ViewModels
             ApplyAxisMode();
 
             // Auto-scale Y-axis
-            YAxes[0].MinLimit = liveSpectrum.Min() - 5;
-            YAxes[0].MaxLimit = liveSpectrum.Max() + 5;
+            ApplyRobustYAxisRange(liveSpectrum);
         }
 
         public void UpdateSpectrum(double[] newSpectrum)
@@ -256,12 +255,46 @@ namespace RASTA.App.ViewModels
                 }
             });
 
-            YAxes[0].MinLimit = liveSpectrum.Min() - 5; // Add some padding
-            YAxes[0].MaxLimit = liveSpectrum.Max() + 5; // Add some padding
-
+            ApplyRobustYAxisRange(liveSpectrum);
         }
 
-        
+        /// <summary>
+        /// Sets the Y-axis range from the 1st/99th percentile of the data plus a margin,
+        /// rather than raw Min()/Max(). A handful of receiver-artifact/RFI bins (e.g. the
+        /// fixed-offset SDR spur seen at ~+100kHz from center, which - unlike the DC/LO
+        /// leakage at the tuned center - isn't visible in the baseline and so can't be
+        /// safely excised from the data itself, see HiStreamingPipeline.RemoveDcSpike) can
+        /// otherwise dominate a raw-min/max autoscale and squash the genuine spectral shape
+        /// into a flat line. This never touches the underlying data - only how much of the
+        /// Y range the chart devotes to outliers versus the real signal.
+        /// </summary>
+        private void ApplyRobustYAxisRange(double[] data)
+        {
+            if (data.Length == 0)
+                return;
+
+            var sorted = (double[])data.Clone();
+            Array.Sort(sorted);
+            int n = sorted.Length;
+
+            double Percentile(double p)
+            {
+                double idx = p * (n - 1);
+                int lo = (int)Math.Floor(idx);
+                int hi = (int)Math.Ceiling(idx);
+                if (lo == hi) return sorted[lo];
+                double frac = idx - lo;
+                return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
+            }
+
+            double p1 = Percentile(0.01);
+            double p99 = Percentile(0.99);
+            double range = p99 - p1;
+            double margin = range > 0 ? range * 0.15 : 5; // flat data (e.g. the zeroed reset spectrum) falls back to +-5
+
+            YAxes[0].MinLimit = p1 - margin;
+            YAxes[0].MaxLimit = p99 + margin;
+        }
 
         // ---------------------------------------------------------
         // INTERNAL REBUILD LOGIC
