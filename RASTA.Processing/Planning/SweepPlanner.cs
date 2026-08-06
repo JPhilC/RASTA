@@ -1,4 +1,4 @@
-﻿using RASTA.Core.Astro;
+using RASTA.Core.Astro;
 using RASTA.Core.Capture;
 using RASTA.Core.Planning;
 using RASTA.Core.Telescope;
@@ -47,74 +47,104 @@ namespace RASTA.Processing.Planning
                 ? BuildAltAzSweep(range)
                 : BuildEquatorialSweep(range);
 
+            // Greedily order the sweep to keep the scope as high above the horizon as
+            // possible throughout: at each step, visit whichever remaining point would
+            // be highest in the sky at its estimated arrival time (accounting for the
+            // slew from wherever the mount currently is). For AltAz plans elevation
+            // doesn't depend on time, so this simply visits the highest-elevation points
+            // first; for Equatorial plans it also accounts for targets rising/setting as
+            // the sweep runs. This prioritises staying high over minimising total slew
+            // distance - if the plan only gets partway through before running out of
+            // time or hitting the horizon limit, the best-positioned targets are captured
+            // first rather than whatever came next in raster order.
+            var remaining = rawPoints.ToList();
             var validated = new List<TargetPoint>();
 
             TargetPoint? previous = null;
             double accumulatedSlewSeconds = 0;
             int index = 0;
 
-            foreach (var p in rawPoints)
+            while (remaining.Count > 0)
             {
-                // Compute slew time from previous point
-                if (previous != null)
+                TargetPoint? best = null;
+                double bestElevationDeg = double.NegativeInfinity;
+                double bestSlewSeconds = 0;
+                DateTime bestArrivalTime = startTimeUtc;
+
+                foreach (var candidate in remaining)
                 {
-                    double slewDistanceDeg = AstronomyUtils.ComputeAngularDistance(previous, p);
-                    double slewSeconds = slewDistanceDeg / slewRateDegPerSec + settleTimeSeconds;
-                    accumulatedSlewSeconds += slewSeconds;
+                    double slewSeconds = 0;
+                    if (previous != null)
+                    {
+                        double slewDistanceDeg = AstronomyUtils.ComputeAngularDistance(previous, candidate);
+                        slewSeconds = slewDistanceDeg / slewRateDegPerSec + settleTimeSeconds;
+                    }
+
+                    DateTime arrivalTime =
+                        startTimeUtc +
+                        TimeSpan.FromTicks(dwell.Ticks * index) +
+                        TimeSpan.FromSeconds(accumulatedSlewSeconds + slewSeconds);
+
+                    double elDeg = ComputeElevationDeg(candidate, arrivalTime, siteLatitudeDeg, siteLongitudeDeg);
+
+                    if (elDeg > bestElevationDeg)
+                    {
+                        bestElevationDeg = elDeg;
+                        best = candidate;
+                        bestSlewSeconds = slewSeconds;
+                        bestArrivalTime = arrivalTime;
+                    }
                 }
 
-                // Compute arrival time
-                DateTime arrivalTime =
-                    startTimeUtc +
-                    TimeSpan.FromTicks(dwell.Ticks * index) +
-                    TimeSpan.FromSeconds(accumulatedSlewSeconds);
-
-                // Compute elevation at arrival time
-                double elDeg;
-
-                if (p.Mode == CoordinateMode.AltAz)
-                {
-                    elDeg = p.ElevationDeg;
-                }
-                else
-                {
-                    var (az, el) = AstronomyUtils.EquatorialToHorizontal(
-                        p.RightAscensionHours,
-                        p.DeclinationDeg,
-                        arrivalTime,
-                        siteLatitudeDeg,
-                        siteLongitudeDeg);
-
-                    elDeg = el;
-                }
-
-                // FAIL EARLY if below horizon
-                if (elDeg < minElevationDeg)
+                // 'best' is the highest-elevation option available at this step - if even
+                // that one is below the horizon limit, every remaining candidate is too.
+                if (bestElevationDeg < minElevationDeg)
                 {
                     string msg =
                         $"Sweep cancelled: point {index + 1} would be below the horizon.\n" +
-                        $"Elevation = {elDeg:F1}°, limit = {minElevationDeg:F1}°.\n" +
-                        $"Arrival time = {arrivalTime:HH:mm:ss} UTC.";
+                        $"Best remaining elevation = {bestElevationDeg:F1}°, limit = {minElevationDeg:F1}°.\n" +
+                        $"Arrival time = {bestArrivalTime:HH:mm:ss} UTC.";
 
                     return SweepPlanResult.Fail(msg);
                 }
 
-                validated.Add(p);
-                previous = p;
+                accumulatedSlewSeconds += bestSlewSeconds;
+                validated.Add(best!);
+                remaining.Remove(best!);
+                previous = best;
                 index++;
             }
 
             return SweepPlanResult.Ok(validated);
         }
 
+        private static double ComputeElevationDeg(
+            TargetPoint p,
+            DateTime atUtc,
+            double siteLatitudeDeg,
+            double siteLongitudeDeg)
+        {
+            if (p.Mode == CoordinateMode.AltAz)
+                return p.ElevationDeg;
+
+            var (_, elDeg) = AstronomyUtils.EquatorialToHorizontal(
+                p.RightAscensionHours,
+                p.DeclinationDeg,
+                atUtc,
+                siteLatitudeDeg,
+                siteLongitudeDeg);
+
+            return elDeg;
+        }
 
         private IEnumerable<TargetPoint> BuildAltAzSweep(TargetRange range)
         {
             var points = new List<TargetPoint>();
+            double stepDeg = Math.Abs(range.StepDeg);
 
-            for (double el = range.AltitudeStartDeg; el <= range.AltitudeEndDeg; el += range.StepDeg)
+            foreach (double el in StepRange(range.AltitudeStartDeg, range.AltitudeEndDeg, stepDeg))
             {
-                for (double az = range.AzimuthStartDeg; az <= range.AzimuthEndDeg; az += range.StepDeg)
+                foreach (double az in StepRange(range.AzimuthStartDeg, range.AzimuthEndDeg, stepDeg))
                 {
                     points.Add(TargetPoint.FromAzEl(az, el));
                 }
@@ -126,16 +156,38 @@ namespace RASTA.Processing.Planning
         private IEnumerable<TargetPoint> BuildEquatorialSweep(TargetRange range)
         {
             var points = new List<TargetPoint>();
-            
-            for (double dec = range.DecStartDeg; dec <= range.DecEndDeg; dec += range.StepDeg)
+            double stepDeg = Math.Abs(range.StepDeg);
+            double stepHours = DegreesToHours(stepDeg);
+
+            foreach (double dec in StepRange(range.DecStartDeg, range.DecEndDeg, stepDeg))
             {
-                for (double ra = range.RAStartHours; ra <= range.RAEndHours; ra += DegreesToHours(range.StepDeg))
+                foreach (double ra in StepRange(range.RAStartHours, range.RAEndHours, stepHours))
                 {
                     points.Add(TargetPoint.FromRaDec(ra, dec));
                 }
             }
 
             return points;
+        }
+
+        /// <summary>
+        /// Steps from start to end (inclusive) in increments of the given positive step
+        /// magnitude, automatically stepping downward when end &lt; start - so a range's
+        /// start/end can be given in either order regardless of which one is numerically
+        /// larger. Uses an integer step count rather than repeated floating-point addition
+        /// so accumulated rounding error can't silently drop (or duplicate) the final point.
+        /// </summary>
+        private static IEnumerable<double> StepRange(double start, double end, double step)
+        {
+            if (step <= 0)
+                yield break;
+
+            double span = end - start;
+            int sign = span >= 0 ? 1 : -1;
+            int count = (int)Math.Round(Math.Abs(span) / step, MidpointRounding.AwayFromZero);
+
+            for (int i = 0; i <= count; i++)
+                yield return start + sign * i * step;
         }
 
         private static double DegreesToHours(double degrees)

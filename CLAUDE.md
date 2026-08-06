@@ -151,6 +151,28 @@ run against a terminator on the SAWbird H1+ LNA input. Two jobs, in order:
    will later be averaged, so the two are directly comparable when `HiStreamingPipeline.Process`
    divides one by the other).
 
+### Sweep planning
+
+`SweepPlanner.BuildSweep` turns a `CapturePlan`'s `TargetRange` (RA/Dec or Az/El start, end, and step
+— whichever pair applies is picked from `plan.PlanType`, which in turn follows the connected mount's
+own coordinate mode, not a user toggle) into an ordered `List<TargetPoint>`. Two things worth knowing:
+
+- **Range direction is start/end-agnostic.** `StepRange` steps from start to end using the *absolute*
+  step magnitude, automatically counting downward if `end < start` — so e.g. `RAStartHours=20,
+  RAEndHours=4` sweeps downward through 20h→4h just as validly as the reverse. It steps by an integer
+  count rather than repeated float addition, so accumulated rounding error can't drop the final point.
+- **Points are ordered greedily by elevation, not raster order.** After the raw RA/Dec or Az/El grid
+  is generated, `BuildSweep` repeatedly picks whichever *remaining* point would be highest in the sky
+  at its estimated arrival time (accounting for slew time from the current position) as the next
+  target — not simply the next one in scan order. For AltAz plans elevation is time-invariant, so this
+  reduces to visiting highest-elevation points first; for Equatorial plans it also accounts for
+  targets rising/setting as the sweep runs long enough for LST to move. This deliberately prioritises
+  staying high over minimising total slew distance: if a plan only gets partway through before hitting
+  the horizon limit or running out of time, the best-positioned targets are the ones already captured.
+  The horizon-limit failure check is evaluated against the *best* remaining candidate each step, so a
+  plan only ever fails once every remaining point is below the limit, not just the next one in scan
+  order (which the old raster-order implementation could fail on prematurely).
+
 ### Capture and FITS conventions
 
 `ObserveViewModel` drives a `CapturePlan`/`TargetPoint` sweep against `ITelescopeMount` and
