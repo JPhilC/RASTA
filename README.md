@@ -167,7 +167,7 @@ RASTA is a hobby project — a place to explore ideas without deadlines, pressur
 
 ## 📄 License
 
-GNU GPL 3.0
+GNU AGPL 3.0
 
 ---
 
