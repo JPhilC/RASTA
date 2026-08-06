@@ -204,7 +204,14 @@ namespace RASTA.Processing.HiPipeline
             }
         }
 
-        private static double[] FftShift(double[] data)
+        /// <summary>
+        /// Re-orders a raw FFT-bin-order power spectrum (DC at index 0) into monotonic
+        /// frequency order (most negative frequency first, DC in the middle) - public so
+        /// callers displaying a single averaged spectrum directly (without running the
+        /// rest of the pipeline) can shift it the same way before plotting against a
+        /// monotonic frequency axis.
+        /// </summary>
+        public static double[] FftShift(double[] data)
         {
             int n = data.Length;
             int half = n / 2;
