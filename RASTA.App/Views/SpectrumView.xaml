@@ -8,6 +8,7 @@
         <lvc:CartesianChart Series="{Binding Series}"
                             XAxes="{Binding XAxes}"
                             YAxes="{Binding YAxes}"
+                            Sections="{Binding Sections}"
                             LegendPosition="Hidden"
                             AnimationsSpeed="0:0:0.2"
                             ZoomMode="X"
