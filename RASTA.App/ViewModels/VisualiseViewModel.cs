@@ -1,13 +1,11 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using RASTA.Core.Astro;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Processing.Dsp;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace RASTA.App.ViewModels;
 
@@ -90,12 +88,18 @@ public partial class VisualiseViewModel : ObservableObject
 
     public SpectrumViewModel SpectrumVm { get; private set; }
 
+    // Backs the "Mosaic" tab - the folder-wide, multi-position counterpart to this
+    // view model's single-file flow above. Owned here (rather than resolved separately
+    // by VisualiseView) so VisualiseView can embed MosaicView as a second tab purely by
+    // binding its DataContext to this property.
+    public MosaicViewModel MosaicVm { get; }
 
-    public VisualiseViewModel(FitsFileIo fits, IFftEngine fftEngine, StatusBarViewModel statusBar)
+    public VisualiseViewModel(FitsFileIo fits, IFftEngine fftEngine, StatusBarViewModel statusBar, MosaicViewModel mosaicVm)
     {
         _fitsFileIo = fits;
         _fftEngine = fftEngine;
         _statusBar = statusBar;
+        MosaicVm = mosaicVm;
         SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
     }
 
@@ -159,9 +163,6 @@ public partial class VisualiseViewModel : ObservableObject
         return db;
     }
 
-    private static readonly Regex MultiFileCapturePattern =
-        new(@"^(?<base>.+)_(?<index>\d+)of(?<total>\d+)$", RegexOptions.Compiled);
-
     /// <summary>
     /// If the given capture file's name matches the ObserveViewModel-generated
     /// "..._{index}of{total}.fits" pattern (multiple files captured at the same dwell
@@ -175,12 +176,8 @@ public partial class VisualiseViewModel : ObservableObject
         string fileNameNoExt = Path.GetFileNameWithoutExtension(captureFilePath);
         string ext = Path.GetExtension(captureFilePath);
 
-        var match = MultiFileCapturePattern.Match(fileNameNoExt);
-        if (!match.Success)
+        if (!FitsPathBuilder.TryParseSweepFileName(fileNameNoExt, out var basePart, out _, out var total))
             return new List<string> { captureFilePath };
-
-        string basePart = match.Groups["base"].Value;
-        int total = int.Parse(match.Groups["total"].Value);
 
         if (total <= 1)
             return new List<string> { captureFilePath };
@@ -202,74 +199,21 @@ public partial class VisualiseViewModel : ObservableObject
     /// Reads a capture file plus any related "_{n}of{total}" sibling files found
     /// alongside it (see ResolveRelatedCaptureFiles) and concatenates their raw IQ
     /// into one buffer, reporting per-file read progress as it goes. Sets
-    /// CombinedFileCount so the UI shows how many files went into the result.
-    ///
-    /// Each file's IQ is trimmed to a whole number of its own native FFT frames
-    /// before being appended, so a frame extracted later by the caller's chunking
-    /// loop can never straddle the boundary between two separate (and physically
-    /// discontinuous) captures.
+    /// CombinedFileCount so the UI shows how many files went into the result. The
+    /// actual read/validate/trim/concatenate work lives in FitsFileIo.ReadCombinedRawIq
+    /// (shared with MosaicViewModel's whole-folder flow) - this just resolves which
+    /// files belong together and bridges its progress callback to the status bar.
     /// </summary>
     private (FitsFileMetaData meta, byte[] iq) ReadCombinedCaptureRawIq(string captureFilePath)
     {
         var files = ResolveRelatedCaptureFiles(captureFilePath);
         CombinedFileCount = files.Count;
 
-        FitsFileMetaData? combinedMeta = null;
-        var buffers = new List<byte[]>(files.Count);
-
-        for (int f = 0; f < files.Count; f++)
+        return _fitsFileIo.ReadCombinedRawIq(files, (status, fraction) =>
         {
-            BeginProgress(files.Count > 1
-                ? $"Reading capture file {f + 1} of {files.Count}…"
-                : "Reading capture file…");
-
-            var (meta, iq) = _fitsFileIo.ReadRawIq(files[f]);
-
-            if (combinedMeta == null)
-            {
-                combinedMeta = meta;
-            }
-            else
-            {
-                if (meta.FftSize != combinedMeta.FftSize ||
-                    meta.SampFreqHz != combinedMeta.SampFreqHz ||
-                    meta.CentFreqHz != combinedMeta.CentFreqHz)
-                {
-                    throw new InvalidOperationException(
-                        $"Related capture file '{Path.GetFileName(files[f])}' has a different FFT size, " +
-                        "sample rate, or center frequency than the other files being combined.");
-                }
-
-                // Total integration time across all combined files, not just the first.
-                combinedMeta.DwellTimeSec += meta.DwellTimeSec;
-            }
-
-            int bytesPerNativeFrame = meta.FftSize * 2;
-            int usableLength = (iq.Length / bytesPerNativeFrame) * bytesPerNativeFrame;
-            if (usableLength != iq.Length)
-            {
-                var trimmed = new byte[usableLength];
-                Buffer.BlockCopy(iq, 0, trimmed, 0, usableLength);
-                iq = trimmed;
-            }
-
-            buffers.Add(iq);
-
-            ReportProgress((double)(f + 1) / files.Count);
-        }
-
-        int totalLength = 0;
-        foreach (var buf in buffers) totalLength += buf.Length;
-
-        var combined = new byte[totalLength];
-        int offset = 0;
-        foreach (var buf in buffers)
-        {
-            Buffer.BlockCopy(buf, 0, combined, offset, buf.Length);
-            offset += buf.Length;
-        }
-
-        return (combinedMeta!, combined);
+            _statusBar.CaptureStatus = status;
+            ReportProgress(fraction);
+        });
     }
 
 
@@ -477,8 +421,8 @@ public partial class VisualiseViewModel : ObservableObject
         if (TargetFftSize < ScanFftSize)
         {
             // Downscale the IQ data to the target FFT size
-            baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
-            captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
+            baselineIq = IqDownscaler.Downscale(baselineIq, ScanFftSize, TargetFftSize);
+            captureIq = IqDownscaler.Downscale(captureIq, ScanFftSize, TargetFftSize);
         }
 
         // --- 3. Create streaming accumulator ---
@@ -506,7 +450,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         // --- 7. LSR correction, from the capture's recorded pointing/time/site (the
         // baseline is just a terminator reading - its own pointing is meaningless here).
-        double lsrCorrectionKmPerSec = TryComputeLsrCorrectionKmPerSec(captureMeta);
+        double lsrCorrectionKmPerSec = captureMeta.ComputeLsrCorrectionKmPerSec();
         LsrInfo = lsrCorrectionKmPerSec != 0.0
             ? $"{lsrCorrectionKmPerSec:+0.00;-0.00} km/s"
             : "n/a (no pointing/site recorded)";
@@ -524,38 +468,6 @@ public partial class VisualiseViewModel : ObservableObject
         );
 
         return (baselineSpectrum, captureSpectrum, hi);
-    }
-
-    /// <summary>
-    /// Computes the LSR correction (km/s) for a captured file's pointing/time/site, or
-    /// 0 if the FITS metadata doesn't have enough recorded to compute it (e.g. older
-    /// files, or a capture with no site configured). Reconstructs RA/Dec from Az/Alt if
-    /// the file was captured in AltAz mode rather than Equatorial.
-    /// </summary>
-    private static double TryComputeLsrCorrectionKmPerSec(FitsFileMetaData meta)
-    {
-        if (meta.SiteLatitudeDeg is not double lat || meta.SiteLongitudeDeg is not double lon)
-            return 0.0;
-        if (meta.ObservationDate == DateTime.MinValue)
-            return 0.0;
-
-        double raHours, decDeg;
-
-        if (meta.RaDeg is double raDeg && meta.DecDeg is double dec)
-        {
-            raHours = raDeg / 15.0;
-            decDeg = dec;
-        }
-        else if (meta.AzDeg is double az && meta.AltDeg is double alt)
-        {
-            (raHours, decDeg) = AstronomyUtils.HorizontalToEquatorial(az, alt, meta.ObservationDate, lat, lon);
-        }
-        else
-        {
-            return 0.0; // no pointing recorded at all
-        }
-
-        return AstronomyUtils.ComputeLsrCorrectionKmPerSec(raHours, decDeg, meta.ObservationDate, lat, lon);
     }
 
     private void ProcessFilesHiVelocity()
@@ -626,8 +538,8 @@ public partial class VisualiseViewModel : ObservableObject
         // integration over a small, fixed-size slice), so just bracket the whole thing.
         BeginProgress("Processing SKAO TTRT…");
 
-        baselineIq = DownscaleIq(baselineIq, ScanFftSize, TargetFftSize);
-        captureIq = DownscaleIq(captureIq, ScanFftSize, TargetFftSize);
+        baselineIq = IqDownscaler.Downscale(baselineIq, ScanFftSize, TargetFftSize);
+        captureIq = IqDownscaler.Downscale(captureIq, ScanFftSize, TargetFftSize);
 
             FrameCount = $"{targetFrames}/{targetFrames}";
 
@@ -659,66 +571,4 @@ public partial class VisualiseViewModel : ObservableObject
         );
     }
 
-    /// <summary>
-    /// Downscale raw IQ frames from originalFftSize → targetFftSize,
-    /// automatically determining the number of frames from the input length.
-    /// </summary>
-    public static byte[] DownscaleIq(byte[] iq, int originalFftSize, int targetFftSize)
-    {
-        int bytesPerFrameIn = originalFftSize * 2;      // IQ: 2 bytes per complex sample
-        int bytesPerFrameOut = targetFftSize * 2;
-
-        // Floor the number of frames, ignore any trailing partial frame
-        int numFrames = iq.Length / bytesPerFrameIn;
-        if (numFrames == 0)
-            throw new InvalidOperationException(
-                $"IQ buffer length {iq.Length} is too small for even one frame ({bytesPerFrameIn} bytes each).");
-
-        int factor = originalFftSize / targetFftSize;
-        if (originalFftSize % targetFftSize != 0)
-            throw new InvalidOperationException(
-                $"FFT downscale must be integer ratio: {originalFftSize} → {targetFftSize}");
-
-        var output = new byte[numFrames * bytesPerFrameOut];
-
-        byte[] DownsampleFrame(byte[] frame)
-        {
-            var result = new byte[bytesPerFrameOut];
-
-            for (int i = 0; i < targetFftSize; i++)
-            {
-                int start = i * factor;
-
-                double sumI = 0;
-                double sumQ = 0;
-
-                for (int j = 0; j < factor; j++)
-                {
-                    int idx = (start + j) * 2;
-                    sumI += frame[idx];
-                    sumQ += frame[idx + 1];
-                }
-
-                result[i * 2] = (byte)(sumI / factor);
-                result[i * 2 + 1] = (byte)(sumQ / factor);
-            }
-
-            return result;
-        }
-
-        for (int f = 0; f < numFrames; f++)
-        {
-            var frameIn = new byte[bytesPerFrameIn];
-            Buffer.BlockCopy(iq, f * bytesPerFrameIn, frameIn, 0, bytesPerFrameIn);
-
-            var frameOut = DownsampleFrame(frameIn);
-
-            Buffer.BlockCopy(frameOut, 0, output, f * bytesPerFrameOut, bytesPerFrameOut);
-        }
-
-        return output;
-    }
-
-
-    
 }

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using RASTA.App.Services;
 using RASTA.App.ViewModels;
 using RASTA.Core.Processing;
@@ -12,8 +12,8 @@ using RASTA.Infrastructure.Storage;
 using RASTA.Infrastructure.Telescope;
 using RASTA.Processing.Calibration;
 using RASTA.Processing.Gridding;
+using RASTA.Processing.Mosaic;
 using RASTA.Processing.Planning;
-using RASTA.Processing.VisualisationData;
 using System.Windows;
 
 namespace RASTA.App
@@ -53,8 +53,8 @@ namespace RASTA.App
             // USB watcher (attaches to window handle when resolved)
             // ---------------------------------------------------------
             services.AddSingleton<UsbWatcherService>();
-            
-            
+
+
             services.AddSingleton<IUserPromptService, MessageBoxPromptService>();
 
             // ---------------------------------------------------------
@@ -102,9 +102,8 @@ namespace RASTA.App
             // ---------------------------------------------------------
             // Processing
             // ---------------------------------------------------------
-            services.AddSingleton<SpectrumImageBuilder>();
-            services.AddSingleton<HeatmapBuilder>();
             services.AddSingleton<GridBuilder>();
+            services.AddSingleton<MosaicProcessor>();
 
             // ---------------------------------------------------------
             // ViewModels
@@ -114,6 +113,7 @@ namespace RASTA.App
             services.AddScoped<PrepareViewModel>();
             services.AddScoped<PlanViewModel>();
             services.AddScoped<ObserveViewModel>();
+            services.AddScoped<MosaicViewModel>();
             services.AddScoped<VisualiseViewModel>();
             services.AddScoped<UserOptionsViewModel>();
             services.AddSingleton<NavigationService>();

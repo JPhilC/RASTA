@@ -1,4 +1,5 @@
 ﻿using nom.tam.fits;
+using RASTA.Core.Astro;
 
 namespace RASTA.Core.Storage
 {
@@ -45,6 +46,42 @@ namespace RASTA.Core.Storage
             if (AzDeg.HasValue) hdu.AddValue("AZ", AzDeg.Value, "Azimuth (deg)");
             if (AltDeg.HasValue) hdu.AddValue("ALT", AltDeg.Value, "Altitude (deg)");
 
+        }
+
+        /// <summary>
+        /// Computes the LSR correction (km/s) to add to a topocentric radio-convention
+        /// velocity axis for this capture's recorded pointing/time/site (see
+        /// AstronomyUtils.ComputeLsrCorrectionKmPerSec), or 0 if not enough was recorded to
+        /// compute it (e.g. older files, or a capture with no site configured). Reconstructs
+        /// RA/Dec from Az/Alt if the capture was made in AltAz mode rather than Equatorial.
+        /// Promoted from VisualiseViewModel.TryComputeLsrCorrectionKmPerSec so both the
+        /// single-capture Visualise flow and the multi-position Mosaic flow (which needs a
+        /// per-position correction, one pointing per file) share one implementation.
+        /// </summary>
+        public double ComputeLsrCorrectionKmPerSec()
+        {
+            if (SiteLatitudeDeg is not double lat || SiteLongitudeDeg is not double lon)
+                return 0.0;
+            if (ObservationDate == DateTime.MinValue)
+                return 0.0;
+
+            double raHours, decDeg;
+
+            if (RaDeg is double raDeg && DecDeg is double dec)
+            {
+                raHours = raDeg / 15.0;
+                decDeg = dec;
+            }
+            else if (AzDeg is double az && AltDeg is double alt)
+            {
+                (raHours, decDeg) = AstronomyUtils.HorizontalToEquatorial(az, alt, ObservationDate, lat, lon);
+            }
+            else
+            {
+                return 0.0; // no pointing recorded at all
+            }
+
+            return AstronomyUtils.ComputeLsrCorrectionKmPerSec(raHours, decDeg, ObservationDate, lat, lon);
         }
 
         public static FitsFileMetaData Read(BasicHDU[] hdus)

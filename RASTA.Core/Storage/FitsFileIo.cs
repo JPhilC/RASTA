@@ -51,6 +51,85 @@ namespace RASTA.Core.Storage
             return path;
         }
 
+        /// <summary>
+        /// Reads several FITS files that make up one dwell point (see
+        /// FitsPathBuilder.GroupSweepFiles/BuildSweepFilePath's "{n}of{total}" convention)
+        /// and concatenates their raw IQ into one buffer, reporting (status, fraction)
+        /// progress as it goes - the same convention Calibrator.RunFullCalibrationAsync
+        /// uses. Promoted from VisualiseViewModel.ReadCombinedCaptureRawIq so both the
+        /// single-capture Visualise flow and the multi-position Mosaic flow share one
+        /// implementation.
+        ///
+        /// Each file's IQ is trimmed to a whole number of its own native FFT frames before
+        /// being appended, so a frame extracted later by the caller's chunking loop can
+        /// never straddle the boundary between two separate (and physically discontinuous)
+        /// captures. All files must agree on FFT size, sample rate, and center frequency;
+        /// DwellTimeSec on the returned metadata is the sum across every file combined.
+        /// </summary>
+        public (FitsFileMetaData Meta, byte[] RawIq) ReadCombinedRawIq(
+            IReadOnlyList<string> filePaths,
+            Action<string, double>? progressCallback = null)
+        {
+            if (filePaths == null || filePaths.Count == 0)
+                throw new ArgumentException("At least one file path is required.", nameof(filePaths));
+
+            FitsFileMetaData? combinedMeta = null;
+            var buffers = new List<byte[]>(filePaths.Count);
+
+            for (int f = 0; f < filePaths.Count; f++)
+            {
+                string status = filePaths.Count > 1
+                    ? $"Reading file {f + 1} of {filePaths.Count}…"
+                    : "Reading file…";
+                progressCallback?.Invoke(status, (double)f / filePaths.Count);
+
+                var (meta, iq) = ReadRawIq(filePaths[f]);
+
+                if (combinedMeta == null)
+                {
+                    combinedMeta = meta;
+                }
+                else
+                {
+                    if (meta.FftSize != combinedMeta.FftSize ||
+                        meta.SampFreqHz != combinedMeta.SampFreqHz ||
+                        meta.CentFreqHz != combinedMeta.CentFreqHz)
+                    {
+                        throw new InvalidOperationException(
+                            $"Related capture file '{Path.GetFileName(filePaths[f])}' has a different FFT size, " +
+                            "sample rate, or center frequency than the other files being combined.");
+                    }
+
+                    // Total integration time across all combined files, not just the first.
+                    combinedMeta.DwellTimeSec += meta.DwellTimeSec;
+                }
+
+                int bytesPerNativeFrame = meta.FftSize * 2;
+                int usableLength = (iq.Length / bytesPerNativeFrame) * bytesPerNativeFrame;
+                if (usableLength != iq.Length)
+                {
+                    var trimmed = new byte[usableLength];
+                    Buffer.BlockCopy(iq, 0, trimmed, 0, usableLength);
+                    iq = trimmed;
+                }
+
+                buffers.Add(iq);
+
+                progressCallback?.Invoke(status, (double)(f + 1) / filePaths.Count);
+            }
+
+            int totalLength = buffers.Sum(b => b.Length);
+            var combined = new byte[totalLength];
+            int offset = 0;
+            foreach (var buf in buffers)
+            {
+                Buffer.BlockCopy(buf, 0, combined, offset, buf.Length);
+                offset += buf.Length;
+            }
+
+            return (combinedMeta!, combined);
+        }
+
         public (FitsFileMetaData Meta, byte[] RawIq) ReadRawIq(string filePath)
         {
             Fits fitsIn = new Fits(filePath);
