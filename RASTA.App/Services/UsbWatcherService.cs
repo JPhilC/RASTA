@@ -22,7 +22,22 @@ namespace RASTA.App.Services
         {
             _sdrService = sdrService;
 
-            _debounceTimer = new Timer(_ => _sdrService.EnumerateDevicesAsync());
+            // async void timer callback - must not let anything escape. An exception
+            // thrown here would be running on a raw ThreadPool thread with no await
+            // boundary for a caller to catch, which crashes the whole process (see
+            // App.OnAppDomainUnhandledException, which is the last line of defence for
+            // anything that still gets through despite this).
+            _debounceTimer = new Timer(async _ =>
+            {
+                try
+                {
+                    await _sdrService.EnumerateDevicesAsync();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"USB device enumeration failed: {ex.Message}");
+                }
+            });
 
             var window = Application.Current.MainWindow;
             var helper = new WindowInteropHelper(window);

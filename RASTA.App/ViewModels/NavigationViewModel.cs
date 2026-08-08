@@ -1,7 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.App.Helpers;
 using RASTA.App.Services;
-using System.Windows;
 
 namespace RASTA.App.ViewModels
 {
@@ -56,7 +56,7 @@ namespace RASTA.App.ViewModels
                     OnPropertyChanged(nameof(CanNavigatePlan));
                     OnPropertyChanged(nameof(CanNavigateObserve));
                     // Update command state on UI thread
-                    Application.Current.Dispatcher.Invoke(() =>
+                    UiThread.SafeInvoke(() =>
                     {
                         NavigatePlanCommand.NotifyCanExecuteChanged();
                         NavigateObserveCommand.NotifyCanExecuteChanged();

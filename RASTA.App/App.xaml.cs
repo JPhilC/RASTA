@@ -14,7 +14,9 @@ using RASTA.Processing.Calibration;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.Mosaic;
 using RASTA.Processing.Planning;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace RASTA.App
 {
@@ -22,14 +24,30 @@ namespace RASTA.App
     {
         public static IServiceProvider Services { get; private set; } = default!;
 
+        private RastaLogger? _logger;
+
         protected override void OnStartup(StartupEventArgs e)
         {
+            // ---------------------------------------------------------
+            // Global exception handling. Without these, ANY unhandled
+            // exception - on the UI thread, on a background thread (e.g.
+            // TelescopeService's polling loop or a Timer callback), or from
+            // an unobserved fire-and-forget Task - takes the whole process
+            // down with no log entry and no message to the user. Hooked up
+            // before anything else runs, since a startup-time failure is
+            // exactly the kind of thing this is meant to catch too.
+            // ---------------------------------------------------------
+            _logger = new RastaLogger("Logs/rasta.log");
+            DispatcherUnhandledException += OnDispatcherUnhandledException;
+            AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
             var services = new ServiceCollection();
 
             // ---------------------------------------------------------
             // Infrastructure
             // ---------------------------------------------------------
-            services.AddSingleton(new RastaLogger("Logs/rasta.log"));
+            services.AddSingleton(_logger);
             services.AddSingleton<UserOptionsService>();
             // ---------------------------------------------------------
             // Telescope state
@@ -127,6 +145,93 @@ namespace RASTA.App
             base.OnStartup(e);
         }
 
+        /// <summary>
+        /// Stops the app's background loops/watchers - TelescopeService's mount-polling
+        /// Task.Run loop, UsbWatcherService's USB debounce Timer, SdrDeviceService's device
+        /// handle - before shutdown finishes. Without this, they keep running past window
+        /// close and can still flip SdrState/TelescopeState.IsConnected from a background
+        /// thread; that PropertyChanged bubbles up into NavigationViewModel/PrepareViewModel,
+        /// which try to marshal onto Application.Current.Dispatcher - but Application.Current
+        /// can already be null by then, throwing a NullReferenceException (this is what
+        /// UiThread.SafeInvoke guards against too, but stopping the source here is the real
+        /// fix rather than just tolerating it at every call site).
+        /// </summary>
+        protected override void OnExit(ExitEventArgs e)
+        {
+            try
+            {
+                Services.GetService<TelescopeService>()?.Stop();
+                Services.GetService<UsbWatcherService>()?.Dispose();
+                Services.GetService<SdrDeviceService>()?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error($"Error during shutdown cleanup: {ex.Message}");
+            }
 
+            base.OnExit(e);
+        }
+
+        // ---------------------------------------------------------
+        // Global exception handlers
+        // ---------------------------------------------------------
+
+        /// <summary>
+        /// Catches anything unhandled that reaches the WPF dispatcher (UI thread) - e.g. an
+        /// exception escaping a XAML event handler, or a RelayCommand path that isn't fully
+        /// wrapped in its own try/catch. Logs it and shows the user a message instead of
+        /// silently crashing; e.Handled = true lets the app keep running.
+        /// </summary>
+        private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+        {
+            _logger?.Error($"Unhandled UI exception: {e.Exception}");
+
+            MessageBox.Show(
+                $"An unexpected error occurred:\n\n{e.Exception.Message}\n\n" +
+                "The application will try to continue - you may want to save your work and restart.",
+                "Unexpected Error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// Catches unhandled exceptions on any other thread (e.g. a raw ThreadPool/Timer
+        /// callback such as UsbWatcherService's debounce timer, or TelescopeService's
+        /// background polling loop if it were ever changed to rethrow). Unlike the
+        /// dispatcher handler above, this cannot stop the process from terminating
+        /// (e.IsTerminating is almost always true by the time this fires) - the best that
+        /// can be done is make sure it's logged and, best-effort, surfaced to the user
+        /// before the app goes down, instead of it happening silently.
+        /// </summary>
+        private void OnAppDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            _logger?.Error($"Fatal unhandled exception (process is terminating): {e.ExceptionObject}");
+
+            try
+            {
+                MessageBox.Show(
+                    $"A fatal error occurred and R.A.S.T.A. must close:\n\n{(e.ExceptionObject as Exception)?.Message}",
+                    "Fatal Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+                // Best effort only - the process may already be too far gone to show UI.
+            }
+        }
+
+        /// <summary>
+        /// Catches exceptions from a Task whose fault was never observed (awaited or
+        /// otherwise inspected) - e.g. a fire-and-forget Task.Run. Logging + SetObserved()
+        /// here means these get recorded instead of vanishing silently.
+        /// </summary>
+        private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            _logger?.Error($"Unobserved task exception: {e.Exception}");
+            e.SetObserved();
+        }
     }
 }
