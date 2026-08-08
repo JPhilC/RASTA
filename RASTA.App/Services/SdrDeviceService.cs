@@ -79,6 +79,28 @@ public class SdrDeviceService : IDisposable
             if (_state.SelectedDevice is null)
                 _state.SelectedDevice = list.First();
 
+            // If we already have this exact physical device open (matched by serial - stable
+            // across a re-enumeration, unlike Index, which can shift if some other USB
+            // device's insert/removal reorders the bus) and it's still present in the fresh
+            // list, there's nothing to do. This matters a lot now that a calibration run can
+            // take minutes (several confirmation prompts plus a real mount slew) - during
+            // that whole window, ANY unrelated USB event anywhere on the system (a totally
+            // different device attaching, a driver reconfiguring, ...) fires
+            // UsbWatcherService's debounce timer and lands back here. Unconditionally tearing
+            // down and reopening an already-working, still-present device on every such event
+            // was harmless while the calibration flow was quick; now, if it races with an
+            // in-progress capture (the gain sweep/baseline capture actively streaming from
+            // it), the forced dispose+reopen below can fail - and that failure was being
+            // reported (via HandleDeviceRemoved) as the SDR having been unplugged, even
+            // though it never was.
+            bool sameDeviceStillOpen =
+                _device != null &&
+                !string.IsNullOrEmpty(_state.SelectedDevice.Serial) &&
+                list.Any(d => d.Serial == _state.SelectedDevice.Serial);
+
+            if (sameDeviceStillOpen)
+                return;
+
             CreatePersistentDevice(_state.SelectedDevice.Index);
         });
     }

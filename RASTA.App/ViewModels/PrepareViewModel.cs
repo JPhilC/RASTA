@@ -395,6 +395,15 @@ public partial class PrepareViewModel : ViewModelBase
             var ct = _calibrationCts.Token;
 
             // ---- 2a. Gain sweep (still against the terminator) ----
+            // Re-fetch rather than reuse the reference captured before the reuse-vs-new
+            // prompt above: SdrDeviceService can still swap in a freshly-recreated device
+            // instance behind the scenes (e.g. after a spurious USB re-enumeration event -
+            // see SdrDeviceService.EnumerateDevicesAsync), and the old reference would then
+            // be a stale, already-disposed object that fails deep inside RtlSdrDevice with a
+            // confusing "SDR device not initialized" rather than a clear message here.
+            device = _sdrDeviceService.GetDevice()
+                ?? throw new InvalidOperationException("SDR device is no longer available - check the USB connection and try again.");
+
             double gainDb = await _calibrationService.RunGainSweepAsync(
                 device,
                 frequencyHz,
@@ -416,32 +425,75 @@ public partial class PrepareViewModel : ViewModelBase
                 "Press OK after you have reconnected your antenna for the cold-sky baseline capture.",
                 "Calibration");
 
-            var candidates = ColdSkyLocator.FindCandidates(
-                SiteLatitudeDeg, SiteLongitudeDeg, DateTime.UtcNow, HorizonLimitDeg);
+            // Azimuths already offered/rejected in this attempt - grows every time
+            // Recalculate is clicked (all currently-shown positions) or a slewed-to position
+            // is rejected as obstructed (just that one), so neither repeats a dud suggestion.
+            // See ColdSkyLocator.FindCandidates' excludeAzimuthsDeg.
+            var excludedAzimuthsDeg = new List<double>();
 
-            var chosen = await _userPromptService.PickColdSkyLocationAsync(candidates);
-            if (chosen is null)
+            IReadOnlyList<ColdSkyCandidate> GenerateCandidates() => ColdSkyLocator.FindCandidates(
+                SiteLatitudeDeg, SiteLongitudeDeg, DateTime.UtcNow, HorizonLimitDeg,
+                excludeAzimuthsDeg: excludedAzimuthsDeg);
+
+            IReadOnlyList<ColdSkyCandidate> Recalculate(IReadOnlyList<ColdSkyCandidate> currentlyShown)
             {
-                _statusBar.CaptureStatus = "Cancelled.";
-                _logger.Info("Calibration cancelled - no cold-sky position chosen.");
-                _statusBar.CalibratedGain = "Uncalibrated";
-                return;
+                excludedAzimuthsDeg.AddRange(currentlyShown.Select(c => c.AzimuthDeg));
+                return GenerateCandidates();
             }
 
-            // ---- 2c. Slew to the chosen position ----
-            _statusBar.CaptureStatus = "Slewing to cold-sky position…";
-            if (_mount.Mode == CoordinateMode.Equatorial)
+            var candidates = GenerateCandidates();
+            ColdSkyCandidate? chosen = null;
+
+            // Loop until the user confirms the actual, physically-slewed-to position is
+            // acceptable (e.g. not pointed at a building) - "No" sends them back to the
+            // picker, excluding the rejected position, rather than capturing a baseline
+            // against whatever's in the way.
+            while (true)
             {
-                await _mount.SlewToRaDecAsync(chosen.RightAscensionHours, chosen.DeclinationDeg);
+                chosen = await _userPromptService.PickColdSkyLocationAsync(candidates, Recalculate);
+                if (chosen is null)
+                {
+                    _statusBar.CaptureStatus = "Cancelled.";
+                    _logger.Info("Calibration cancelled - no cold-sky position chosen.");
+                    _statusBar.CalibratedGain = "Uncalibrated";
+                    return;
+                }
+
+                // ---- 2c. Slew to the chosen position ----
+                _statusBar.CaptureStatus = "Slewing to cold-sky position…";
+                if (_mount.Mode == CoordinateMode.Equatorial)
+                {
+                    await _mount.SlewToRaDecAsync(chosen.RightAscensionHours, chosen.DeclinationDeg);
+                }
+                else
+                {
+                    await _mount.SlewToAzAltAsync(chosen.AzimuthDeg, chosen.ElevationDeg);
+                }
+                if (!await WaitForSlewCompleteAsync(ct))
+                    return; // timed out - message already shown
+
+                _statusBar.CaptureStatus = "Confirming cold-sky position…";
+                bool positionOk = await _userPromptService.AskYesNoAsync(
+                    "Is the telescope's current position clear of obstructions (e.g. no building, tree, or " +
+                    "other horizon feature in the way)?\n\n" +
+                    "Choose No to go back and pick a different position instead.",
+                    "Confirm Cold-Sky Position");
+
+                if (positionOk)
+                    break;
+
+                _logger.Info($"Cold-sky position Az {chosen.AzimuthDeg:F1}°/Alt {chosen.ElevationDeg:F1}° rejected as obstructed - returning to picker.");
+                excludedAzimuthsDeg.Add(chosen.AzimuthDeg);
+                candidates = GenerateCandidates();
             }
-            else
-            {
-                await _mount.SlewToAzAltAsync(chosen.AzimuthDeg, chosen.ElevationDeg);
-            }
-            if (!await WaitForSlewCompleteAsync(ct))
-                return; // timed out - message already shown
 
             // ---- 2d. Capture the cold-sky baseline ----
+            // Re-fetch again - the confirm-position loop above can run for several minutes
+            // (picker, slew, confirmation prompt, possibly repeated), which is exactly the
+            // kind of window a stale device reference would go unnoticed in otherwise.
+            device = _sdrDeviceService.GetDevice()
+                ?? throw new InvalidOperationException("SDR device is no longer available - check the USB connection and try again.");
+
             Calibration = await _calibrationService.CaptureColdSkyBaselineAsync(
                 device,
                 frequencyHz,
@@ -480,12 +532,40 @@ public partial class PrepareViewModel : ViewModelBase
         }
         finally
         {
+            // Return the mount to its home position before finishing up, the same way
+            // ObserveViewModel.CaptureSweepAsync does at the end of a sweep - the cold-sky
+            // capture leaves the mount pointed away from home, and there's no reason to
+            // leave it there, whether calibration succeeded, failed, or was cancelled after
+            // a slew already happened. Tracking is switched off first, mirroring
+            // ObserveViewModel's ordering - this mount setup has already been seen to refuse
+            // a slew while tracking is active (see the "SlewToAltAz is not allowed when
+            // tracking is True" Alpaca error in the logs).
+            try
+            {
+                if (await _mount.GetTrackingAsync() && await _mount.GetCanSetTrackingAsync())
+                {
+                    await _mount.SetTrackingAsync(false);
+                }
+                if (await _mount.GetCanFindHomeAsync())
+                {
+                    _statusBar.CaptureStatus = "Returning telescope to home position…";
+                    await _mount.FindHomeAsync();
+
+                    // Only claim success once the mount is actually home - leave a prior
+                    // "Cancelled."/"Failed." status alone rather than papering over it.
+                    if (IsCalibrated)
+                        _statusBar.CaptureStatus = "Calibration complete.";
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"Failed to return telescope to home position after calibration: {ex.Message}");
+            }
+
             _calibrationCts?.Dispose();
             _calibrationCts = null;
             IsCalibrationRunning = false;
             _statusBar.IsCaptureInProgress = false;
-
-
         }
     }
 

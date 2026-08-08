@@ -47,12 +47,22 @@ namespace RASTA.App.Views
 
     public partial class ColdSkySelectionWindow : Window
     {
+        private readonly Func<IReadOnlyList<ColdSkyCandidate>, IReadOnlyList<ColdSkyCandidate>> _recalculate;
+
         public ColdSkyCandidate? SelectedCandidate { get; private set; }
 
-        public ColdSkySelectionWindow(IReadOnlyList<ColdSkyCandidate> candidates)
+        public ColdSkySelectionWindow(
+            IReadOnlyList<ColdSkyCandidate> candidates,
+            Func<IReadOnlyList<ColdSkyCandidate>, IReadOnlyList<ColdSkyCandidate>> recalculate)
         {
             InitializeComponent();
 
+            _recalculate = recalculate;
+            DisplayCandidates(candidates);
+        }
+
+        private void DisplayCandidates(IReadOnlyList<ColdSkyCandidate> candidates)
+        {
             CandidateList.ItemsSource = candidates
                 .Select((c, i) => new ColdSkyCandidateRow(c, i))
                 .ToList();
@@ -65,6 +75,25 @@ namespace RASTA.App.Views
                 SelectedCandidate = row.Candidate;
                 DialogResult = true;
             }
+        }
+
+        /// <summary>
+        /// Asks the caller (see IUserPromptService.PickColdSkyLocationAsync) for a fresh set
+        /// of candidates - typically excluding the azimuths currently on screen, so this
+        /// doesn't just re-suggest the same spots - and redisplays them without closing the
+        /// dialog. If the fresh set comes back empty (an extreme edge case - see
+        /// ColdSkyLocator's own "never come up empty for a sane horizon limit" fallback),
+        /// the currently displayed candidates are left alone rather than showing a blank list.
+        /// </summary>
+        private void RecalculateButton_Click(object sender, RoutedEventArgs e)
+        {
+            var current = ((List<ColdSkyCandidateRow>)CandidateList.ItemsSource)
+                .Select(row => row.Candidate)
+                .ToList();
+
+            var fresh = _recalculate(current);
+            if (fresh.Count > 0)
+                DisplayCandidates(fresh);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)

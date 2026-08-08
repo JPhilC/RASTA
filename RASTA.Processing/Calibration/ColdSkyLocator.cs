@@ -22,14 +22,29 @@ namespace RASTA.Processing.Calibration
         // for a sane horizon limit, even at a site/time where nothing is very "cold".
         private static readonly double[] GalacticLatitudeThresholdsDeg = { 40.0, 30.0, 20.0, 10.0, 0.0 };
 
+        // How close (in azimuth) a fresh candidate has to steer clear of a direction the
+        // caller wants excluded (see excludeAzimuthsDeg below) - wide, since a real-world
+        // obstruction like a building or tree blocks a range of azimuths, not one exact
+        // degree.
+        private const double ExclusionRadiusDeg = 20.0;
+
         private sealed record Candidate(ColdSkyCandidate Point, double AbsGalacticLatitudeDeg);
 
+        /// <param name="excludeAzimuthsDeg">
+        /// Azimuths to steer clear of (within ExclusionRadiusDeg) - directions already
+        /// offered/rejected in this calibration attempt (e.g. blocked by a building), so a
+        /// "Recalculate" or "try another position" request doesn't just re-suggest the same
+        /// spot. Silently ignored if honouring it would leave fewer than <paramref
+        /// name="count"/> candidates, same "never come up empty" fallback philosophy as the
+        /// Galactic latitude threshold search below.
+        /// </param>
         public static IReadOnlyList<ColdSkyCandidate> FindCandidates(
             double siteLatDeg,
             double siteLonDeg,
             DateTime utcNow,
             double horizonLimitDeg,
-            int count = 4)
+            int count = 4,
+            IReadOnlyCollection<double>? excludeAzimuthsDeg = null)
         {
             var elevations = ElevationOffsetsDeg
                 .Select(offset => Math.Min(horizonLimitDeg + offset, MaxElevationDeg))
@@ -49,6 +64,16 @@ namespace RASTA.Processing.Calibration
                         new ColdSkyCandidate(az, el, raHours, decDeg, lDeg, bDeg),
                         Math.Abs(bDeg)));
                 }
+            }
+
+            if (excludeAzimuthsDeg is { Count: > 0 })
+            {
+                var withExclusions = pool
+                    .Where(c => excludeAzimuthsDeg.All(az => CircularAzimuthDistanceDeg(c.Point.AzimuthDeg, az) >= ExclusionRadiusDeg))
+                    .ToList();
+
+                if (withExclusions.Count >= count)
+                    pool = withExclusions;
             }
 
             // Pick the coldest threshold that still leaves enough candidates to choose from.

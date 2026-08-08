@@ -30,9 +30,11 @@ namespace RASTA.App.Services
             return Task.CompletedTask;
         }
 
-        public Task<ColdSkyCandidate?> PickColdSkyLocationAsync(IReadOnlyList<ColdSkyCandidate> candidates)
+        public Task<ColdSkyCandidate?> PickColdSkyLocationAsync(
+            IReadOnlyList<ColdSkyCandidate> candidates,
+            Func<IReadOnlyList<ColdSkyCandidate>, IReadOnlyList<ColdSkyCandidate>> recalculate)
         {
-            var window = new ColdSkySelectionWindow(candidates)
+            var window = new ColdSkySelectionWindow(candidates, recalculate)
             {
                 Owner = Application.Current?.MainWindow
             };
