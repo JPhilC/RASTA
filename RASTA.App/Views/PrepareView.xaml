@@ -107,6 +107,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -171,6 +172,12 @@
                     Height="40"
                     Command="{Binding CancelCalibrationCommand}"
                     Visibility="{Binding IsCalibrationRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+            <!-- Hint when a new calibration can't be run because the mount isn't connected -->
+            <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
+                       Text="Connect the telescope to run a new calibration (a cold-sky baseline capture needs it to slew)."
+                       Foreground="Gray" Margin="5,5,0,0" TextWrapping="Wrap"
+                       Visibility="{Binding IsConnectedMount, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
 
         </Grid>
 

@@ -1,4 +1,6 @@
-﻿using System.Windows;
+﻿using RASTA.App.Views;
+using RASTA.Core.Calibration;
+using System.Windows;
 
 namespace RASTA.App.Services
 {
@@ -26,6 +28,18 @@ namespace RASTA.App.Services
                 MessageBoxImage.Information);
 
             return Task.CompletedTask;
+        }
+
+        public Task<ColdSkyCandidate?> PickColdSkyLocationAsync(IReadOnlyList<ColdSkyCandidate> candidates)
+        {
+            var window = new ColdSkySelectionWindow(candidates)
+            {
+                Owner = Application.Current?.MainWindow
+            };
+
+            bool? result = window.ShowDialog();
+
+            return Task.FromResult(result == true ? window.SelectedCandidate : null);
         }
     }
 }

@@ -1,12 +1,13 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.App.Helpers;
 using RASTA.App.Services;
 using RASTA.Core.Calibration;
 using RASTA.Core.Sdr;
+using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Logging;
 using RASTA.Processing.Calibration;
 using System.ComponentModel;
-using System.Windows;
 
 namespace RASTA.App.ViewModels;
 
@@ -20,6 +21,8 @@ public partial class PrepareViewModel : ViewModelBase
     private readonly CalibrationService _calibrationService;
     private readonly IUserPromptService _userPromptService;
     private readonly StatusBarViewModel _statusBar;
+    private readonly ITelescopeMount _mount;
+    private readonly TelescopeState _mountState;
 
     #region Properties ...
     // -----------------------------
@@ -144,7 +147,9 @@ public partial class PrepareViewModel : ViewModelBase
         CalibrationService calibrationService,
         RastaLogger logger,
         IUserPromptService userPromptService,
-        StatusBarViewModel statusBar)
+        StatusBarViewModel statusBar,
+        ITelescopeMount mount,
+        TelescopeState mountState)
     {
         _settings = settings;
         _telescopeService = telescopeService;
@@ -154,6 +159,8 @@ public partial class PrepareViewModel : ViewModelBase
         _sdrState = sdrState;
         _calibrationService = calibrationService;
         _logger = logger;
+        _mount = mount;
+        _mountState = mountState;
 
         _sdrState.PropertyChanged += SdrStatePropertyChanged;
         _settings.PropertyChanged += SettingsPropertyChanged;
@@ -172,7 +179,7 @@ public partial class PrepareViewModel : ViewModelBase
 
     protected override void NotifyCommandsOfCanExecuteChanged()
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        UiThread.SafeInvoke(() =>
         {
             RunCalibrationCommand.NotifyCanExecuteChanged();
         });
@@ -188,7 +195,7 @@ public partial class PrepareViewModel : ViewModelBase
         {
             OnPropertyChanged(nameof(IsConnectedSdr));
             OnPropertyChanged(nameof(CanRunCalibration));
-            Application.Current.Dispatcher.Invoke(() =>
+            UiThread.SafeInvoke(() =>
             {
                 RunCalibrationCommand.NotifyCanExecuteChanged();
             });
@@ -213,6 +220,11 @@ public partial class PrepareViewModel : ViewModelBase
 
             case nameof(SettingsViewModel.IsConnected):
                 OnPropertyChanged(nameof(IsConnectedMount));
+                OnPropertyChanged(nameof(CanRunCalibration));
+                UiThread.SafeInvoke(() =>
+                {
+                    RunCalibrationCommand.NotifyCanExecuteChanged();
+                });
                 break;
         }
     }
@@ -301,7 +313,7 @@ public partial class PrepareViewModel : ViewModelBase
 
 
     public bool CanRunCalibration =>
-        IsConnectedSdr && !HasErrors;
+        IsConnectedSdr && IsConnectedMount && !HasErrors;
 
     [RelayCommand(CanExecute = nameof(CanRunCalibration))]
     private async Task RunCalibrationAsync()
@@ -313,6 +325,15 @@ public partial class PrepareViewModel : ViewModelBase
             return;
         }
 
+        if (!_settings.IsConnected)
+        {
+            // Defensive - CanRunCalibration already gates the button on this, but the
+            // command could still be invoked directly (e.g. the mount dropping the
+            // connection between the button becoming enabled and the click landing).
+            _statusBar.CaptureStatus = "Telescope must be connected to run a new calibration.";
+            return;
+        }
+
         // ---------------------------------------------------------
         // 1. Check for previously saved calibration
         // ---------------------------------------------------------
@@ -320,12 +341,18 @@ public partial class PrepareViewModel : ViewModelBase
 
         if (existing != null)
         {
+            string pointingInfo = existing.BaselineAzimuthDeg.HasValue
+                ? $"Baseline pointing: Az {existing.BaselineAzimuthDeg:F1}°, Alt {existing.BaselineElevationDeg:F1}° " +
+                  $"(Galactic b = {existing.BaselineGalacticLatitudeDeg:F1}°).\n\n"
+                : string.Empty;
+
             bool reuse = await _userPromptService.AskYesNoAsync(
                 $"A previous calibration exists (Gain = {existing.GainDb:F1} dB).\n\n" +
                 $"Calibration was performed at {existing.CenterFrequencyHz / 1e6:F3} MHz,\n" +
                 $"Sample Rate = {existing.SampleRateHz / 1e6:F3} MHz,\n" +
                 $"FFT Size = {existing.FftSize}, " +
                 $"On {existing.TimestampUtc.ToLocalTime():g}.\n\n" +
+                pointingInfo +
                 $"Do you want to reuse it instead of running a new calibration?",
                 "Reuse Calibration");
 
@@ -365,29 +392,79 @@ public partial class PrepareViewModel : ViewModelBase
 
         try
         {
-            Calibration = await _calibrationService.RunCalibrationAsync(
+            var ct = _calibrationCts.Token;
+
+            // ---- 2a. Gain sweep (still against the terminator) ----
+            double gainDb = await _calibrationService.RunGainSweepAsync(
                 device,
                 frequencyHz,
                 sampleRateHz,
                 dwell,
-                baselineDwell,
                 fftSize,
                 (msg, pct) =>
                 {
-                        _statusBar.CaptureStatus = msg;
-                        _statusBar.CaptureProgress = pct;
+                    _statusBar.CaptureStatus = msg;
+                    _statusBar.CaptureProgress = pct;
                 },
-                _calibrationCts.Token);
+                ct);
+
+            _statusBar.CaptureStatus = $"Gain selected: {gainDb:F1} dB";
+            _logger.Info($"Gain sweep complete. Selected gain {gainDb:F1} dB.");
+
+            // ---- 2b. Reconnect antenna, then pick a cold-sky position ----
+            await _userPromptService.AskOkAsync(
+                "Press OK after you have reconnected your antenna for the cold-sky baseline capture.",
+                "Calibration");
+
+            var candidates = ColdSkyLocator.FindCandidates(
+                SiteLatitudeDeg, SiteLongitudeDeg, DateTime.UtcNow, HorizonLimitDeg);
+
+            var chosen = await _userPromptService.PickColdSkyLocationAsync(candidates);
+            if (chosen is null)
+            {
+                _statusBar.CaptureStatus = "Cancelled.";
+                _logger.Info("Calibration cancelled - no cold-sky position chosen.");
+                _statusBar.CalibratedGain = "Uncalibrated";
+                return;
+            }
+
+            // ---- 2c. Slew to the chosen position ----
+            _statusBar.CaptureStatus = "Slewing to cold-sky position…";
+            if (_mount.Mode == CoordinateMode.Equatorial)
+            {
+                await _mount.SlewToRaDecAsync(chosen.RightAscensionHours, chosen.DeclinationDeg);
+            }
+            else
+            {
+                await _mount.SlewToAzAltAsync(chosen.AzimuthDeg, chosen.ElevationDeg);
+            }
+            if (!await WaitForSlewCompleteAsync(ct))
+                return; // timed out - message already shown
+
+            // ---- 2d. Capture the cold-sky baseline ----
+            Calibration = await _calibrationService.CaptureColdSkyBaselineAsync(
+                device,
+                frequencyHz,
+                sampleRateHz,
+                gainDb,
+                baselineDwell,
+                fftSize,
+                chosen,
+                SiteLatitudeDeg,
+                SiteLongitudeDeg,
+                SiteElevationM,
+                (msg, pct) =>
+                {
+                    _statusBar.CaptureStatus = msg;
+                    _statusBar.CaptureProgress = pct;
+                },
+                ct);
 
             IsCalibrated = true;
             _statusBar.CaptureStatus = $"Done. Gain = {Calibration.GainDb:F1} dB";
             _statusBar.CalibratedGain = $"Gain = {Calibration.GainDb:F1} dB";
-            _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb:F1} dB.");
-
-            await _userPromptService.AskOkAsync(
-            "Press OK after you have reconnected your antenna.",
-            "Calibration");
-
+            _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb:F1} dB, " +
+                         $"cold-sky Az {chosen.AzimuthDeg:F1}°/Alt {chosen.ElevationDeg:F1}°.");
         }
         catch (OperationCanceledException)
         {
@@ -409,6 +486,36 @@ public partial class PrepareViewModel : ViewModelBase
             _statusBar.IsCaptureInProgress = false;
 
 
+        }
+    }
+
+    /// <summary>
+    /// Polls the mount's IsSlewing flag every 500ms until it clears, with a 30s timeout -
+    /// same pattern ObserveViewModel.CaptureSweepAsync uses to wait out a slew. Returns false
+    /// (after showing a warning) if the slew times out, true once it completes normally.
+    /// </summary>
+    private async Task<bool> WaitForSlewCompleteAsync(CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            while (_mountState.IsSlewing)
+            {
+                await Task.Delay(500, timeoutCts.Token);
+            }
+            return true;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // ct was not cancelled - this was our timeout firing.
+            await _userPromptService.AskOkAsync(
+                "Slew timed out after 30 seconds. Calibration will be abandoned.",
+                "Warning");
+            _statusBar.CaptureStatus = "Slew timed out.";
+            _statusBar.CalibratedGain = "Uncalibrated";
+            return false;
         }
     }
 

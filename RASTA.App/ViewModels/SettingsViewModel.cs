@@ -331,7 +331,7 @@ namespace RASTA.App.ViewModels
         private int fftSize = 4096;
 
         [ObservableProperty]
-        private int gainDwellSeconds = 5;
+        private int gainDwellSeconds = 3;
 
         // Baseline capture is independent of the per-gain sweep dwell above - it only
         // needs to happen once, at the chosen gain, and deserves a much better-averaged

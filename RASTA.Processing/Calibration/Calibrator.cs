@@ -42,35 +42,35 @@ namespace RASTA.Processing.Calibration
             double Slope);
 
         /// <summary>
-        /// Runs a full gain-sweep calibration and returns a CalibrationProfile.
+        /// Runs the gain-sweep phase of calibration only, against whatever the front end is
+        /// currently connected to (a terminator, for a proper calibration) - captures a short
+        /// trial at each SDR-supported gain, hard-rejects any that show real ADC saturation,
+        /// then scores the survivors on flatness/spur-count/slope and returns the winner.
+        /// Split out from the old RunFullCalibrationAsync so the caller (PrepareViewModel) can
+        /// insert its own UI steps - prompting to reconnect the antenna, picking a cold-sky
+        /// pointing, slewing there - between this and CaptureColdSkyBaselineAsync below.
         /// </summary>
-        public async Task<CalibrationProfile> RunFullCalibrationAsync(
+        public async Task<double> RunGainSweepAsync(
             ISdrDevice device,
             double frequencyHz,
             double sampleRateHz,
             TimeSpan dwellTime,
-            TimeSpan baselineDwellTime,
             int fftSize,
             Action<string, double>? progressCallback,
             CancellationToken ct)
         {
-            var baseFolder = _userOptionsService.Options.CaptureFolder;
             var supportedGains = device.SupportedGainsDb.ToList();
             if (supportedGains.Count == 0)
                 throw new InvalidOperationException("SDR device reports no supported gains.");
 
             var gainTrials = new List<GainTrial>();
 
-            int totalSteps = supportedGains.Count + 3; // +1 baseline, +1 finalize
+            int totalSteps = supportedGains.Count + 1; // +1 finalize
             int currentStep = 0;
 
             // Compute sample count safely
             uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellTime.TotalSeconds);
 
-            string filePath = null;
-            FitsFileMetaData meta = null;
-
-            var startTime = DateTime.UtcNow;
             int bytesPerFrame = fftSize * 2;
             int settleFrames = (int)Math.Ceiling(sampleRateHz * GainSettleTimeSec / fftSize);
 
@@ -152,45 +152,77 @@ namespace RASTA.Processing.Calibration
                 .OrderByDescending(s => s.Score)
                 .First();
 
-            progressCallback?.Invoke($"Selected gain {best.Gain} dB", 0.95);
-
-            // Capture long baseline at chosen gain. This capture alone can take far
-            // longer than any single gain trial, so it gets its own 0-1 progress run
-            // (real, byte-driven) instead of just advancing the coarse step counter.
             currentStep++;
-            progressCallback?.Invoke($"Capturing baseline at {best.Gain} dB", 0.0);
+            progressCallback?.Invoke($"Selected gain {best.Gain} dB", (double)currentStep / totalSteps);
+
+            return best.Gain;
+        }
+
+        /// <summary>
+        /// Captures the calibration baseline at a mount pointing already chosen and slewed to
+        /// by the caller (see ColdSkyLocator/PrepareViewModel) - this replaces the old
+        /// terminator-based baseline capture that used to run immediately after the gain
+        /// sweep. Writes the raw IQ to FITS (prefix "base", same as before, so
+        /// FitsPathBuilder.IsBaselineFile/MosaicViewModel's auto-pick keep working) with the
+        /// pointing and site recorded on the header, builds the averaged linear-power baseline
+        /// the same way HiStreamingPipeline will later average an observation's capture
+        /// spectrum, and returns the completed CalibrationProfile.
+        /// </summary>
+        public async Task<CalibrationProfile> CaptureColdSkyBaselineAsync(
+            ISdrDevice device,
+            double frequencyHz,
+            double sampleRateHz,
+            double gainDb,
+            TimeSpan baselineDwellTime,
+            int fftSize,
+            ColdSkyCandidate location,
+            double siteLatitudeDeg,
+            double siteLongitudeDeg,
+            double siteElevationM,
+            Action<string, double>? progressCallback,
+            CancellationToken ct)
+        {
+            var baseFolder = _userOptionsService.Options.CaptureFolder;
+            var startTime = DateTime.UtcNow;
+
+            progressCallback?.Invoke($"Capturing cold-sky baseline at {gainDb} dB", 0.0);
 
             uint baselineSampleCount = (uint)Math.Ceiling(sampleRateHz * baselineDwellTime.TotalSeconds);
 
             var baselineRawIq = await device.CaptureRawIqAsync(
                 frequencyHz,
                 sampleRateHz,
-                best.Gain,
+                gainDb,
                 baselineSampleCount,
                 ct,
-                pct => progressCallback?.Invoke($"Capturing baseline at {best.Gain} dB", pct)
+                pct => progressCallback?.Invoke($"Capturing cold-sky baseline at {gainDb} dB", pct)
                 ).ConfigureAwait(false);
 
-
             // save the baseline to a FITS file
-            filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "base", startTime, frequencyHz, best.Gain);
+            string filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "base", startTime, frequencyHz, gainDb);
 
-            meta = new FitsFileMetaData
+            var meta = new FitsFileMetaData
             {
                 Origin = "RTL-SDR",
                 DataFormat = "UINT8_IQ",
                 CentFreqHz = frequencyHz,
                 SampFreqHz = sampleRateHz,
                 FftSize = fftSize,
-                GainDb = best.Gain,
+                GainDb = gainDb,
                 ObservationDate = DateTime.UtcNow,
-                DwellTimeSec = baselineDwellTime.TotalSeconds
+                DwellTimeSec = baselineDwellTime.TotalSeconds,
+                SiteLatitudeDeg = siteLatitudeDeg,
+                SiteLongitudeDeg = siteLongitudeDeg,
+                SiteElevationM = siteElevationM,
+                RaDeg = location.RightAscensionHours * 15.0,
+                DecDeg = location.DeclinationDeg,
+                AzDeg = location.AzimuthDeg,
+                AltDeg = location.ElevationDeg
             };
 
             _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);
 
-            currentStep++;
-            progressCallback?.Invoke($"Calculating baseline", (double)currentStep / totalSteps);
+            progressCallback?.Invoke("Calculating baseline", 0.9);
 
             // Build the averaged baseline the same way HiStreamingPipeline will later
             // build the observation's averaged capture spectrum (SKAO-normalized power,
@@ -210,22 +242,24 @@ namespace RASTA.Processing.Calibration
 
             var baselineSpectrum = accumulator.GetBaselineAverage();
 
-            // At this point, baselineSpectrum holds the averaged linear-power baseline
-
-            currentStep++;
-            progressCallback?.Invoke("Finalizing calibration", (double)currentStep / totalSteps);
+            progressCallback?.Invoke("Finalizing calibration", 1.0);
 
             return new CalibrationProfile
             {
                 CenterFrequencyHz = frequencyHz,
                 SampleRateHz = sampleRateHz,
                 FftSize = fftSize,
-                GainDb = best.Gain,
+                GainDb = gainDb,
                 BaselineSpectrum = baselineSpectrum,
                 BaselineMean = baselineSpectrum.Average(),
                 BaselineStdDev = ComputeStdDev(baselineSpectrum),
                 TimestampUtc = DateTime.UtcNow,
-                DeviceId = device.DeviceId
+                DeviceId = device.DeviceId,
+                BaselineAzimuthDeg = location.AzimuthDeg,
+                BaselineElevationDeg = location.ElevationDeg,
+                BaselineRaDeg = location.RightAscensionHours * 15.0,
+                BaselineDecDeg = location.DeclinationDeg,
+                BaselineGalacticLatitudeDeg = location.GalacticLatitudeDeg
             };
         }
 

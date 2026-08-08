@@ -257,6 +257,37 @@ namespace RASTA.Core.Astro
             return jd;
         }
 
+        // North Galactic Pole (J2000-ish, IAU 1958 definition) and the galactic longitude
+        // of the North Celestial Pole - the standard constants for a direct equatorial ->
+        // galactic conversion, same low-precision-analytic style as the rest of this file.
+        private const double NgpRaDeg = 192.85948;
+        private const double NgpDecDeg = 27.12825;
+        private const double GalacticLongitudeOfNcpDeg = 122.93192;
+
+        /// <summary>
+        /// Converts equatorial (RA/Dec) coordinates to Galactic longitude/latitude (l, b),
+        /// both in degrees. Used to steer clear of the Galactic plane (strong HI emission)
+        /// when picking a "cold sky" calibration baseline position - see ColdSkyLocator.
+        /// </summary>
+        public static (double lDeg, double bDeg) EquatorialToGalactic(double raHours, double decDeg)
+        {
+            double ra = raHours * 15.0 * Math.PI / 180.0;
+            double dec = decDeg * Math.PI / 180.0;
+            double ngpRa = NgpRaDeg * Math.PI / 180.0;
+            double ngpDec = NgpDecDeg * Math.PI / 180.0;
+
+            double sinB = Math.Sin(dec) * Math.Sin(ngpDec) + Math.Cos(dec) * Math.Cos(ngpDec) * Math.Cos(ra - ngpRa);
+            double b = Math.Asin(sinB);
+
+            double y = Math.Cos(dec) * Math.Sin(ra - ngpRa);
+            double x = Math.Sin(dec) * Math.Cos(ngpDec) - Math.Cos(dec) * Math.Sin(ngpDec) * Math.Cos(ra - ngpRa);
+            double l = GalacticLongitudeOfNcpDeg - Math.Atan2(y, x) * 180.0 / Math.PI;
+
+            l = NormalizeDegrees(l);
+
+            return (l, b * 180.0 / Math.PI);
+        }
+
         public static double ComputeAngularDistance(TargetPoint a, TargetPoint b)
         {
             if (a.Mode == CoordinateMode.AltAz && b.Mode == CoordinateMode.AltAz)

@@ -52,26 +52,59 @@ namespace RASTA.App.Services
         }
 
         /// <summary>
-        /// Runs a new calibration, updates CurrentCalibration,
-        /// and persists it to disk.
+        /// Runs the gain-sweep phase of a new calibration and returns the chosen gain (dB).
+        /// Does not touch CurrentCalibration or persist anything - the profile isn't complete
+        /// until CaptureColdSkyBaselineAsync below finishes. Split out so PrepareViewModel can
+        /// insert its reconnect-antenna prompt, cold-sky picker, and slew between the two.
         /// </summary>
-        public async Task<CalibrationProfile> RunCalibrationAsync(
+        public Task<double> RunGainSweepAsync(
             ISdrDevice device,
             double frequencyHz,
             double sampleRateHz,
             TimeSpan dwell,
-            TimeSpan baselineDwell,
             int fftSize,
             Action<string, double>? progress,
             CancellationToken ct)
         {
-            var profile = await _calibrator.RunFullCalibrationAsync(
+            return _calibrator.RunGainSweepAsync(
                 device,
                 frequencyHz,
                 sampleRateHz,
                 dwell,
+                fftSize,
+                progress,
+                ct);
+        }
+
+        /// <summary>
+        /// Captures the cold-sky baseline at a pointing already slewed to by the caller,
+        /// completing the calibration - updates CurrentCalibration and persists it to disk.
+        /// </summary>
+        public async Task<CalibrationProfile> CaptureColdSkyBaselineAsync(
+            ISdrDevice device,
+            double frequencyHz,
+            double sampleRateHz,
+            double gainDb,
+            TimeSpan baselineDwell,
+            int fftSize,
+            ColdSkyCandidate location,
+            double siteLatitudeDeg,
+            double siteLongitudeDeg,
+            double siteElevationM,
+            Action<string, double>? progress,
+            CancellationToken ct)
+        {
+            var profile = await _calibrator.CaptureColdSkyBaselineAsync(
+                device,
+                frequencyHz,
+                sampleRateHz,
+                gainDb,
                 baselineDwell,
                 fftSize,
+                location,
+                siteLatitudeDeg,
+                siteLongitudeDeg,
+                siteElevationM,
                 progress,
                 ct);
 

@@ -51,6 +51,26 @@
         /// Ensures calibration is tied to the correct hardware.
         /// </summary>
         public string DeviceId { get; init; } = string.Empty;
+
+        // -----------------------------------------------------------------
+        // Cold-sky baseline pointing (null for older profiles captured
+        // against a terminator, before this was tracked).
+        // -----------------------------------------------------------------
+
+        /// <summary>Azimuth (deg) the mount was pointed at for the baseline capture.</summary>
+        public double? BaselineAzimuthDeg { get; init; }
+
+        /// <summary>Elevation (deg) the mount was pointed at for the baseline capture.</summary>
+        public double? BaselineElevationDeg { get; init; }
+
+        /// <summary>Right Ascension (deg) of the baseline capture's pointing.</summary>
+        public double? BaselineRaDeg { get; init; }
+
+        /// <summary>Declination (deg) of the baseline capture's pointing.</summary>
+        public double? BaselineDecDeg { get; init; }
+
+        /// <summary>Galactic latitude (deg) of the baseline capture's pointing - higher |b| means further from the HI-rich Galactic plane, i.e. "colder".</summary>
+        public double? BaselineGalacticLatitudeDeg { get; init; }
     }
 }
 
