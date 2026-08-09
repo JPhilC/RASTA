@@ -23,6 +23,14 @@ namespace RASTA.Processing.HiPipeline
         public const int RfiFilterWindow = 5;
         public const int RfiFilterPolyOrder = 2;
         public const double RfiFilterSigma = 3.0;
+
+        // Fixed display-scale multiplier baked into RatioSpectrum (capturePower/baselinePower
+        // x this) purely to put the linear ratio in a nicer numeric range - not a calibrated
+        // physical unit. Named so callers that need to recover the *raw* ratio (e.g.
+        // MosaicProcessor, converting a peak to dB relative to the cold-sky baseline, where
+        // baseline power == capture power should read 0 dB) can divide it back out instead of
+        // duplicating the magic number.
+        public const double RatioDisplayScale = 300.0;
     }
 
     /// <summary>
@@ -191,9 +199,8 @@ namespace RASTA.Processing.HiPipeline
                 RatioSpectrum[i] = (b <= 0.0) ? 0.0 : c / b;
             }
 
-            const double scale = 300.0;
             for (int i = 0; i < n; i++)
-                RatioSpectrum[i] *= scale;
+                RatioSpectrum[i] *= HiConstants.RatioDisplayScale;
 
             // 5. Continuum fit input: two small edge windows (channel-index based,
             //    NOT a velocity-magnitude mask), with RFI outliers removed before

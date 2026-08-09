@@ -88,8 +88,13 @@
                 <RowDefinition Height="5"/>
                 <RowDefinition Height="2*"/>
             </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Row="0">
+            <TabControl Grid.Row="0" Grid.Column="0">
                 <TabItem Header="Sky Mosaic">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -98,14 +103,18 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Center">
-                            <Image Source="{Binding SkyHeatmap.Image}" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"
+                        <Border Grid.Row="0"
+                                BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Center">
+                                <Image Source="{Binding SkyHeatmap.Image}" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"
                                    MaxWidth="960" MaxHeight="520"/>
                         </Border>
 
                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
                             <TextBlock Text="{Binding SkyHeatmap.YAxisLabel}" Margin="0,0,15,0"/>
                             <TextBlock Text="{Binding SkyHeatmap.XAxisLabel}"/>
+                            <CheckBox Content="Smooth blend" IsChecked="{Binding UseSmoothBlend}"
+                                      VerticalAlignment="Center" Margin="25,0,0,0"
+                                      ToolTip="Bilinear-interpolate between neighbouring cell centers instead of one flat colour per measured cell"/>
                         </StackPanel>
 
                         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
@@ -123,7 +132,7 @@
                 </TabItem>
             </TabControl>
 
-            <DataGrid Grid.Row="10" ItemsSource="{Binding Positions}" AutoGenerateColumns="False"
+            <DataGrid Grid.Row="0" Grid.Column="2" ItemsSource="{Binding Positions}" AutoGenerateColumns="False"
                       IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="*"/>
