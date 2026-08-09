@@ -154,7 +154,7 @@ namespace RASTA.Processing.Mosaic
                 velocityAxis ??= pipeline.VelocityKmPerSec;
 
                 double lineStrengthDb = ComputeLineStrengthDb(
-                    pipeline.VelocityKmPerSec, pipeline.RatioSpectrum, pipeline.HiSpectrum, integratedWindowKmPerSec);
+                    pipeline.VelocityKmPerSec, pipeline.RatioSpectrum, integratedWindowKmPerSec);
 
                 CoordinateMode mode = captureMeta.RaDeg.HasValue && captureMeta.DecDeg.HasValue
                     ? CoordinateMode.Equatorial
@@ -183,42 +183,40 @@ namespace RASTA.Processing.Mosaic
         }
 
         /// <summary>
-        /// Finds the strongest HiSpectrum channel within +-windowKmPerSec of 0 (the
-        /// LSR-corrected line center) and reports it as dB above the local continuum -
-        /// "how far above the noise floor does the strongest part of the line rise". Since
-        /// HiStreamingPipeline.Process only exposes RatioSpectrum (pre-subtraction) and
-        /// HiSpectrum (post-subtraction), the continuum at any channel is recoverable
-        /// algebraically as RatioSpectrum - HiSpectrum (exact, by how HiSpectrum was
-        /// constructed) without needing the pipeline to expose the fitted continuum itself.
-        /// RatioSpectrum is a baseline-divided ratio, strictly positive by construction, so
-        /// (unlike HiSpectrum, which is continuum-subtracted and can be negative) a plain
-        /// 10*log10 ratio is valid here. Returns NaN if no channel falls in the window, or if
-        /// the local continuum/ratio come out non-positive (shouldn't happen with real data,
-        /// but division/log guard regardless) - callers should skip NaN positions rather than
-        /// treat them as "0 dB".
+        /// Finds the strongest RatioSpectrum channel within +-windowKmPerSec of 0 (the
+        /// LSR-corrected line center) and reports it as dB *relative to the cold-sky baseline*
+        /// - "how much brighter is the sky here than the cold-sky reference", not "how much
+        /// brighter than this same pointing's own local continuum". This is deliberately
+        /// single-differenced: RatioSpectrum (capturePower/baselinePower x
+        /// HiConstants.RatioDisplayScale) already carries the only division against a
+        /// reference this metric applies - unlike the earlier local-continuum-referenced
+        /// version (which additionally divided out a per-position linear fit from
+        /// HiStreamingPipeline's own continuum subtraction), so a position with no HI signal
+        /// at all reads close to 0 dB here rather than a fraction of a dB. That also means this
+        /// map isn't HI-line-only - broad continuum brightness differences across the sky (e.g.
+        /// toward the Galactic plane) show up too, same as the raw calibrated power a receiver
+        /// would show relative to a cold-sky zero point. Returns NaN if no channel falls in the
+        /// window, or if the peak ratio comes out non-positive (shouldn't happen with real
+        /// data, but the log guard stays regardless) - callers should skip NaN positions rather
+        /// than treat them as "0 dB".
         /// </summary>
         private static double ComputeLineStrengthDb(
-            double[] velocityKmPerSec, double[] ratioSpectrum, double[] hiSpectrum, double windowKmPerSec)
+            double[] velocityKmPerSec, double[] ratioSpectrum, double windowKmPerSec)
         {
             int peakIndex = -1;
-            double peakHi = double.NegativeInfinity;
+            double peakRatio = double.NegativeInfinity;
             for (int i = 0; i < velocityKmPerSec.Length; i++)
             {
-                if (Math.Abs(velocityKmPerSec[i]) <= windowKmPerSec && hiSpectrum[i] > peakHi)
+                if (Math.Abs(velocityKmPerSec[i]) <= windowKmPerSec && ratioSpectrum[i] > peakRatio)
                 {
-                    peakHi = hiSpectrum[i];
+                    peakRatio = ratioSpectrum[i];
                     peakIndex = i;
                 }
             }
-            if (peakIndex < 0)
+            if (peakIndex < 0 || peakRatio <= 0)
                 return double.NaN;
 
-            double ratioPeak = ratioSpectrum[peakIndex];
-            double continuumAtPeak = ratioPeak - hiSpectrum[peakIndex];
-            if (ratioPeak <= 0 || continuumAtPeak <= 0)
-                return double.NaN;
-
-            return 10.0 * Math.Log10(ratioPeak / continuumAtPeak);
+            return 10.0 * Math.Log10(peakRatio / HiConstants.RatioDisplayScale);
         }
 
         private static void ForEachChunk(byte[] iq, int bytesPerChunk, Action<byte[]> processChunk)

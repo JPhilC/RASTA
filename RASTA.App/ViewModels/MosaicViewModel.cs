@@ -36,11 +36,16 @@ public class MosaicHeatmapDisplay
 /// Backs the "Mosaic" tab in Visualise: points at a session folder (one baseline + many
 /// dwell-point capture groups across positions), runs every position through the same
 /// HiStreamingPipeline VisualiseViewModel.ProcessHiCore uses for a single file (via
-/// MosaicProcessor), and renders the combined result as a sky-mosaic heatmap (RA/Dec x HI
-/// line strength in dB) and a 3D surface (see MosaicSurfaceView) built from that same grid.
-/// The heatmap renders via HeatmapImageBuilder (a hand-rolled BitmapSource) rather than
-/// LiveChartsCore's HeatSeries, which produced a blank chart against real, well-spread
-/// session data - see HeatmapImageBuilder's remarks.
+/// MosaicProcessor), and renders the combined result as a sky-mosaic heatmap (RA/Dec x peak
+/// power relative to the cold-sky baseline, in dB - see MosaicProcessor.ComputeLineStrengthDb)
+/// and a 3D surface (see MosaicSurfaceView) built from that same grid. The heatmap renders via
+/// HeatmapImageBuilder (a hand-rolled BitmapSource) rather than LiveChartsCore's HeatSeries,
+/// which produced a blank chart against real, well-spread session data - see
+/// HeatmapImageBuilder's remarks. UseSmoothBlend switches HeatmapImageBuilder.Build (one flat
+/// colour per measured cell, the default - each cell is a real independent measurement) for
+/// HeatmapImageBuilder.BuildBlended (bilinear-interpolated between neighbouring cell centers,
+/// for a continuous-looking gradient); both read the same cached grid, so toggling it re-renders
+/// instantly without reprocessing the session.
 ///
 /// Two other visualisations were tried here and dropped: a stacked-line "waterfall" of every
 /// position's spectrum (a live scrolling waterfall belongs to an actual capture in progress -
@@ -75,6 +80,16 @@ public partial class MosaicViewModel : ObservableObject
 
     [ObservableProperty]
     private string statusSummary = string.Empty;
+
+    // Off by default - HeatmapImageBuilder.Build (one flat colour per measured cell) stays the
+    // default rendering, unchanged. Toggling this on re-renders the already-cached grid via
+    // HeatmapImageBuilder.BuildBlended instead of reprocessing the session.
+    [ObservableProperty]
+    private bool useSmoothBlend;
+
+    // The grid behind the currently-displayed heatmap/surface, kept so toggling UseSmoothBlend
+    // can re-render immediately instead of re-running MosaicProcessor against the FITS files.
+    private GridBuilder.MosaicGridResult? _lastGrid;
 
     public bool BaselineAvailable => BaselineFile is not null;
 
@@ -180,6 +195,12 @@ public partial class MosaicViewModel : ObservableObject
 
     partial void OnBaselineFileChanged(string? value) => OnPropertyChanged(nameof(BaselineAvailable));
 
+    partial void OnUseSmoothBlendChanged(bool value)
+    {
+        if (_lastGrid is not null)
+            RenderSkyHeatmap(_lastGrid);
+    }
+
     [RelayCommand]
     private async Task GenerateMosaicAsync()
     {
@@ -215,13 +236,27 @@ public partial class MosaicViewModel : ObservableObject
     private void BuildSkyHeatmap(MosaicResult result)
     {
         var grid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg);
+        _lastGrid = grid;
+        RenderSkyHeatmap(grid);
+    }
+
+    /// <summary>
+    /// Re-renders the heatmap/legend/3D-surface grid from an already-built
+    /// GridBuilder.MosaicGridResult - split out from BuildSkyHeatmap so toggling
+    /// UseSmoothBlend can call this directly against _lastGrid instead of re-running
+    /// MosaicProcessor against the session's FITS files.
+    /// </summary>
+    private void RenderSkyHeatmap(GridBuilder.MosaicGridResult grid)
+    {
         bool altAz = grid.Mode == CoordinateMode.AltAz;
         var (min, max) = FindRange(grid.IntensityGrid);
         var (pixelWidth, pixelHeight) = SizeImageForGrid(grid.IntensityGrid);
 
         SkyHeatmap = new MosaicHeatmapDisplay
         {
-            Image = HeatmapImageBuilder.Build(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true),
+            Image = UseSmoothBlend
+                ? HeatmapImageBuilder.BuildBlended(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true)
+                : HeatmapImageBuilder.Build(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true),
             XAxisLabel = altAz
                 ? $"Azimuth: {grid.AxisXCenters[0]:F1}° → {grid.AxisXCenters[^1]:F1}°"
                 : $"RA: {grid.AxisXCenters[0]:F1}h → {grid.AxisXCenters[^1]:F1}h",
