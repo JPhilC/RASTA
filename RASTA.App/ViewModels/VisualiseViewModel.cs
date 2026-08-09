@@ -30,6 +30,13 @@ public partial class VisualiseViewModel : ObservableObject
 
     private double[]? captureSpectrum;
 
+    // Pre-despike copies of the arrays above, cached purely for
+    // ExportDespikeDebugCsvCommand - lets a raw-vs-despiked diagnostic dump be produced
+    // without recomputing anything, and without disturbing the despiked arrays used for
+    // display.
+    private double[]? rawBaselineSpectrum;
+    private double[]? rawCaptureSpectrum;
+
     [ObservableProperty]
     private double[]? correctedSpectrum;
 
@@ -71,6 +78,29 @@ public partial class VisualiseViewModel : ObservableObject
     [ObservableProperty]
     private bool useDbScale = true;
 
+    // Opt-in narrowband-RFI excision (HiStreamingPipeline.Despike) - off by default,
+    // matching the pipeline's own default. Applies to the standalone baseline/capture
+    // views (ProcessBaseline/ProcessCapture) as well as the combined HiFrequency/
+    // HiVelocity/Ratio modes via ProcessHiCore; deliberately left out of ProcessSkaoTtrt,
+    // which stays an unmodified cross-check against the SKAO reference algorithm (same
+    // reasoning RemoveDcSpike already follows). Mirrored into MosaicVm so the Mosaic tab's
+    // processing follows this one toggle rather than needing a second control of its own.
+    [ObservableProperty]
+    private bool despikeEnabled;
+
+    partial void OnDespikeEnabledChanged(bool value) => MosaicVm.DespikeEnabled = value;
+
+    // How many local-noise standard deviations above the local median counts as a spike -
+    // see HiStreamingPipeline.Despike. Exposed as a live control (rather than fixed at
+    // HiConstants.DefaultDespikeThresholdSigma) because the right value depends on how
+    // heavily-averaged a given spectrum is: a shorter capture dwell has a noisier local
+    // floor than a long baseline dwell, so may need a lower threshold to catch the same
+    // spikes - lower this if spikes are still visible with Despike ticked.
+    [ObservableProperty]
+    private double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma;
+
+    partial void OnDespikeThresholdSigmaChanged(double value) => MosaicVm.DespikeThresholdSigma = value;
+
     // None by default, matching HiStreamingPipeline.Process's own default - the reference
     // pipeline never smooths its final output, and leaving raw per-bin scatter visible is
     // what let SpectrumViewModel.ApplyRobustYAxisRange reveal it in the first place. Only
@@ -100,6 +130,9 @@ public partial class VisualiseViewModel : ObservableObject
         _fftEngine = fftEngine;
         _statusBar = statusBar;
         MosaicVm = mosaicVm;
+        // Keep Mosaic in sync with this view's despike controls from the start.
+        MosaicVm.DespikeEnabled = DespikeEnabled;
+        MosaicVm.DespikeThresholdSigma = DespikeThresholdSigma;
         SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
     }
 
@@ -348,6 +381,9 @@ public partial class VisualiseViewModel : ObservableObject
         // index 0) - shift it into monotonic frequency order before display, the same
         // way HiStreamingPipeline.Process does for the combined baseline/capture views.
         baselineSpectrum = HiStreamingPipeline.FftShift(acc.GetBaselineAverage());
+        rawBaselineSpectrum = baselineSpectrum;
+        if (DespikeEnabled)
+            baselineSpectrum = HiStreamingPipeline.Despike(baselineSpectrum, SamplingHz, DespikeThresholdSigma);
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
@@ -380,6 +416,9 @@ public partial class VisualiseViewModel : ObservableObject
 
         // Same fix as ProcessBaseline: shift out of raw FFT-bin order before display.
         captureSpectrum = HiStreamingPipeline.FftShift(acc.GetCaptureAverage());
+        rawCaptureSpectrum = captureSpectrum;
+        if (DespikeEnabled)
+            captureSpectrum = HiStreamingPipeline.Despike(captureSpectrum, SamplingHz, DespikeThresholdSigma);
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
 
@@ -387,6 +426,56 @@ public partial class VisualiseViewModel : ObservableObject
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(captureSpectrum) : captureSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
+    }
+
+    /// <summary>
+    /// Diagnostic dump of the raw-vs-despiked baseline/capture arrays cached by the last
+    /// ProcessBaseline/ProcessCapture run (i.e. the standalone single-file views - run
+    /// Generate Chart there first, with Baseline/Capture Only, not the combined
+    /// HiFrequency/Ratio mode, since that goes through ProcessHiCore's pair-based despike
+    /// instead and doesn't cache a "before" state). One row per FFT bin: bin index,
+    /// frequency, and whichever of raw/despiked baseline/capture were generated. Written
+    /// next to the source FITS file so it's easy to find, and readable directly off disk -
+    /// no need to paste the contents anywhere. No CanExecute gating (unlike most commands
+    /// here, which is deliberate - see e.g. ProcessBaseline/ProcessCapture's own early
+    /// returns): this can run moments after a background Task.Run finishes populating the
+    /// raw*Spectrum fields, and NotifyCanExecuteChanged from a background thread isn't
+    /// safe to rely on here, so the guard is a plain early return instead.
+    /// </summary>
+    [RelayCommand]
+    private void ExportDespikeDebugCsv()
+    {
+        double[]? reference = rawCaptureSpectrum ?? rawBaselineSpectrum;
+        if (reference is null)
+        {
+            _statusBar.CaptureStatus = "Nothing to export yet - run Generate Chart first.";
+            return;
+        }
+
+        string sourceFile = CaptureFile ?? BaselineFile!;
+        string dir = Path.GetDirectoryName(sourceFile) ?? ".";
+        string baseName = Path.GetFileNameWithoutExtension(sourceFile);
+        string path = Path.Combine(dir, $"{baseName}_despike_debug.csv");
+
+        int n = reference.Length;
+        double df = SamplingHz / n;
+        int mid = n / 2;
+
+        using (var writer = new StreamWriter(path, append: false))
+        {
+            writer.WriteLine("Index,FrequencyHz,CaptureRaw,CaptureDespiked,BaselineRaw,BaselineDespiked");
+            for (int i = 0; i < n; i++)
+            {
+                double freq = FrequencyHz + (i - mid) * df;
+                string captureRaw = rawCaptureSpectrum is not null ? rawCaptureSpectrum[i].ToString("G6") : "";
+                string captureDespiked = captureSpectrum is not null ? captureSpectrum[i].ToString("G6") : "";
+                string baselineRaw = rawBaselineSpectrum is not null ? rawBaselineSpectrum[i].ToString("G6") : "";
+                string baselineDespiked = baselineSpectrum is not null ? baselineSpectrum[i].ToString("G6") : "";
+                writer.WriteLine($"{i},{freq:F1},{captureRaw},{captureDespiked},{baselineRaw},{baselineDespiked}");
+            }
+        }
+
+        _statusBar.CaptureStatus = $"Exported despike debug CSV: {path}";
     }
 
     private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)  ProcessHiCore()
@@ -463,6 +552,8 @@ public partial class VisualiseViewModel : ObservableObject
             sampleRateHz: SamplingHz,
             centerFreqHz: FrequencyHz,
             lsrCorrectionKmPerSec: lsrCorrectionKmPerSec,
+            despike: DespikeEnabled,
+            despikeThresholdSigma: DespikeThresholdSigma,
             smoothing: SmoothingKind,
             smoothingWindow: SmoothingWindow
         );

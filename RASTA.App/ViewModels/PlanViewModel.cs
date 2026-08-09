@@ -61,6 +61,7 @@ namespace RASTA.App.ViewModels
         [ObservableProperty] private double centerFrequency = 1420_405_752.0;  // 1420.405752 MHz
         [ObservableProperty] private int fftBins = 4096;
         [ObservableProperty] private bool goToHomeAfterCapture = true;
+        [ObservableProperty] private bool despikeEnabled = false;
 
         // Telescope parameters
         [ObservableProperty] private double settleTimeSeconds = 1;
@@ -133,6 +134,7 @@ namespace RASTA.App.ViewModels
                 TrackingEnabled = TrackingEnabled,
                 SettleTimeSeconds = SettleTimeSeconds,
                 GoToHomeAfterCapture = GoToHomeAfterCapture,
+                DespikeEnabled = DespikeEnabled,
 
                 DriftDeclinationDeg = DriftDeclinationDeg,
                 DriftDurationMinutes = DriftDurationMinutes,
@@ -170,6 +172,7 @@ namespace RASTA.App.ViewModels
             TrackingEnabled = plan.TrackingEnabled;
             SettleTimeSeconds = plan.SettleTimeSeconds;
             GoToHomeAfterCapture = plan.GoToHomeAfterCapture;
+            DespikeEnabled = plan.DespikeEnabled;
 
             DriftDeclinationDeg = plan.DriftDeclinationDeg;
             DriftDurationMinutes = plan.DriftDurationMinutes;
@@ -210,6 +213,7 @@ namespace RASTA.App.ViewModels
                 TrackingEnabled = plan.TrackingEnabled,
                 SettleTimeSeconds = plan.SettleTimeSeconds,
                 GoToHomeAfterCapture = plan.GoToHomeAfterCapture,
+                DespikeEnabled = plan.DespikeEnabled,
 
                 DriftDeclinationDeg = plan.DriftDeclinationDeg,
                 DriftDurationMinutes = plan.DriftDurationMinutes,

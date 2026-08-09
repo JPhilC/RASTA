@@ -66,10 +66,12 @@ namespace RASTA.Processing.Mosaic
             int targetFftSize,
             double integratedWindowKmPerSec,
             Action<string, double>? progressCallback,
+            bool despike = false,
+            double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma,
             CancellationToken ct = default)
         {
             return Task.Run(
-                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, ct),
+                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, despike, despikeThresholdSigma, ct),
                 ct);
         }
 
@@ -79,6 +81,8 @@ namespace RASTA.Processing.Mosaic
             int targetFftSize,
             double integratedWindowKmPerSec,
             Action<string, double>? progressCallback,
+            bool despike,
+            double despikeThresholdSigma,
             CancellationToken ct)
         {
             string baselineFullPath = Path.GetFullPath(baselineFilePath);
@@ -148,7 +152,7 @@ namespace RASTA.Processing.Mosaic
                 double lsrCorrectionKmPerSec = captureMeta.ComputeLsrCorrectionKmPerSec();
 
                 var pipeline = new HiStreamingPipeline();
-                pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec);
+                pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma);
 
                 frequencyAxis ??= pipeline.FrequencyHz;
                 velocityAxis ??= pipeline.VelocityKmPerSec;
