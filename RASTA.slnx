@@ -12,6 +12,14 @@
     <Platform Solution="*|x64" Project="x64" />
     <Platform Solution="Debug|Any CPU" Project="x64" />
   </Project>
+  <Project Path="RASTA.Setup/RASTA.Setup.wixproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
+  <Project Path="RASTA.Bundle/RASTA.Bundle.wixproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
+  </Project>
   <Project Path="RASTA.Core/RASTA.Core.csproj" Id="c35f092b-7cb4-44c9-948b-6a965bbecba5">
     <Platform Solution="*|x64" Project="x64" />
     <Platform Solution="Debug|Any CPU" Project="x64" />

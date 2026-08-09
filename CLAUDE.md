@@ -283,6 +283,57 @@ once in `SweepPlanner.BuildSweep`), then after every completed target point it's
 *real* average time-per-point measured so far, extrapolated across the remaining points — not the
 original nominal figure held fixed for the whole run.
 
+### Versioning, logging paths, and the installer (RASTA.Setup / RASTA.Bundle)
+
+`Directory.Build.props` at the repo root sets a single `<Version>` picked up by every project.
+`MainWindow.xaml.cs` appends it to the title bar (`R.A.S.T.A. v0.1.0`) by reading
+`Assembly.GetExecutingAssembly().GetName().Version` (the plain `AssemblyVersion`) rather than
+`AssemblyInformationalVersion` — the SDK auto-appends a `+<git-sha>` to the latter whenever building
+inside a git repo, which would make the title bar noisy.
+
+Per-user state (logs, options) must go under `%LOCALAPPDATA%\RASTA\...`
+(`Environment.SpecialFolder.LocalApplicationData`, matching `UserOptionsService`'s existing
+convention), never a path relative to the working directory. `App.xaml.cs`'s `OnStartup` constructs
+`RastaLogger` before the global exception handlers (`DispatcherUnhandledException` etc.) are wired
+up, since a startup-time failure is exactly what those handlers exist to catch — but that also means
+if `RastaLogger`'s own constructor throws, that exception has nothing to catch it and the app dies
+before any window appears, with no dialog and no log entry. This bit exactly once: the original
+relative `"Logs/rasta.log"` path worked fine from a dev `bin/Debug` folder (owned by the developer's
+own account) and only broke once actually installed — `Directory.CreateDirectory("Logs")` resolves
+against the CWD, which for an installed Start Menu shortcut is `C:\Program Files\RASTA\`, not
+writable by a standard user.
+
+`RASTA.Setup` (MSI, WiX Toolset SDK) and `RASTA.Bundle` (Burn bootstrapper, chains the .NET 10
+Desktop Runtime ahead of the MSI) build the release installer:
+
+- Pinned to **WiX 6.0.2**, not 7.x — WiX 7 requires accepting the Open Source Maintenance Fee (OSMF)
+  EULA before it'll build (`WIX7015`); revisit that pin if/when OSMF is dealt with.
+- `RASTA.Setup.wixproj` publishes `RASTA.App` (framework-dependent, `win-x64`,
+  `--self-contained false` — the Bundle supplies the runtime separately) via a target hooked to
+  `PrepareForBuild`, not `Build`/`Rebuild` — WiX's own harvest/compile step runs as one of `Build`'s
+  `DependsOnTargets`, which resolve *before* a plain `BeforeTargets="Build"` hook would fire.
+  `Package.wxs` then harvests that publish output wholesale via the wildcard `<Files Include="**" />`
+  (WiX v5+'s built-in harvesting) — no `heat.exe`, no file list to keep in sync by hand.
+- `RASTA.Bundle.wixproj` needs `<OutputType>Bundle</OutputType>` set explicitly — without it,
+  WixToolset.Sdk silently emits an MSI instead of the bootstrapper `.exe`, regardless of `Bundle.wxs`'s
+  `<Bundle>` root element. `Bundle.wxs` uses `netfx:DotNetCoreSearch` (WixToolset.Netfx.wixext) to set
+  a bundle variable from the installed `Microsoft.WindowsDesktop.App` version, and an `ExePackage`'s
+  `DetectCondition` against it decides whether to download/run the runtime installer first. The
+  download URL/SHA-512 hash/size are pinned to a specific `windowsdesktop-runtime-10.0.x-win-x64.exe`
+  build (from Microsoft's own release-metadata feed) and need bumping by hand for a newer patch;
+  `DetectCondition` only requires `>= v10.0.0`, so it won't force a reinstall over a newer patch
+  already present — it only triggers when nothing satisfying 10.0.x exists at all.
+- Building the Bundle can fail local MSI validation (`WIX0350`, requires a newer Windows Installer
+  engine than the build machine has registered) — `-p:SuppressValidation=true` works around that; try
+  a plain build first, it's been a machine-specific quirk, not an authoring issue.
+- Neither `Bundle/@Id` nor `Package/@Id` (ProductCode) is pinned, so every rebuild mints fresh GUIDs.
+  Combined with `Version` not changing between test rebuilds, Burn's related-bundle upgrade detection
+  (keyed on `UpgradeCode` + `Version` comparison) can't always tell "newer replacement" from
+  "unrelated," which can leave two Add/Remove Programs entries behind after an uninstall/reinstall
+  cycle during iteration — bump `Version` between install-testing rebuilds to avoid it. The fixed
+  `UpgradeCode` GUIDs (`RASTA.Setup`'s and `RASTA.Bundle`'s are different from each other) must never
+  change once a real release has shipped — that's what ties future upgrades to this install.
+
 ### Known incomplete / placeholder areas
 
 - `RASTA.Processing/Gridding/GridBuilder.cs` and `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`

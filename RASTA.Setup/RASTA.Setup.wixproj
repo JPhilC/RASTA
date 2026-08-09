@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <PropertyGroup>
+    <OutputName>RASTA.Setup</OutputName>
+    <Platform>x64</Platform>
+    <!-- Framework-dependent, win-x64 publish of the WPF app; the Bundle project chains the
+         .NET 10 Desktop Runtime installer separately, so this deliberately is NOT self-contained. -->
+    <AppPublishDir>$(MSBuildThisFileDirectory)..\RASTA.App\bin\$(Configuration)\net10.0-windows\win-x64\publish\</AppPublishDir>
+    <DefineConstants>RastaVersion=$(Version);PublishDir=$(AppPublishDir)</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Publish RASTA.App before harvesting its output below - there's nothing to package otherwise. -->
+  <!-- PrepareForBuild (not Build/Rebuild) - WiX's own harvest/compile step runs as one of
+       Build's DependsOnTargets, which resolve before a plain BeforeTargets="Build" hook would
+       fire, so publishing needs to happen at this earlier standard hook point instead. -->
+  <Target Name="PublishRastaApp" BeforeTargets="PrepareForBuild">
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\RASTA.App\RASTA.App.csproj&quot; -c $(Configuration) -r win-x64 --self-contained false -o &quot;$(AppPublishDir)&quot;" />
+  </Target>
+
+</Project>
