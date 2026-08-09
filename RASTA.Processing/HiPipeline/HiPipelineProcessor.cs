@@ -120,7 +120,7 @@ namespace RASTA.Processing.HiPipeline
 
         /// <summary>
         /// Returns the averaged capture spectrum only. Used for a live running average
-        /// against a baseline that was already fixed earlier (e.g. during Observe, where
+        /// against a baseline that was already fixed earlier (e.g. during Capture, where
         /// the calibration baseline doesn't change frame to frame).
         /// </summary>
         public double[] GetCaptureAverage()

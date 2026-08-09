@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RASTA (Radio Astronomy Slew • Track • Acquire) is a hobby-grade .NET 10 WPF/MVVM app for amateur
 hydrogen-line (1420 MHz / 21cm) radio astronomy: it drives an ASCOM Alpaca telescope mount and an
-RTL-SDR receiver through a four-stage workflow — **Prepare → Plan → Observe → Visualise** —
+RTL-SDR receiver through a four-stage workflow — **Prepare → Plan → Capture → Visualise** —
 to capture raw IQ data and reduce it into HI spectra. It's exploratory/experimental; large parts of
 the pipeline are still being reworked (see "Known incomplete / placeholder areas" below) — don't
 assume a component is finished or wired up just because it exists.
@@ -69,19 +69,19 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
 There's no router/framework — `NavigationService.NavigateTo<TViewModel>()` just resolves the view
 model from the root DI container and `NavigationViewModel` (bound to `MainWindow`) swaps
 `CurrentViewModel`. The four workflow stages map 1:1 to `PrepareViewModel` / `PlanViewModel` /
-`ObserveViewModel` / `VisualiseViewModel`. `NavigatePlan` is gated on `StatusBarViewModel.SdrConnected`
+`CaptureViewModel` / `VisualiseViewModel`. `NavigatePlan` is gated on `StatusBarViewModel.SdrConnected`
 only (an SDR must be enumerated before you can move past Prepare) — Plan itself doesn't need a mount,
 since `PlanType`/`CoordinateMode` is a free choice on the Plan screen, not detected from a connected
-mount. `NavigateObserve` additionally requires `StatusBarViewModel.TelescopeConnected`, since it
-drives an actual mount slew and `ObserveViewModel.LoadAvailablePlans` filters plans by the mount's
-detected `CoordinateMode` — neither means anything without a mount attached. `ObserveViewModel` no
+mount. `NavigateCapture` additionally requires `StatusBarViewModel.TelescopeConnected`, since it
+drives an actual mount slew and `CaptureViewModel.LoadAvailablePlans` filters plans by the mount's
+detected `CoordinateMode` — neither means anything without a mount attached. `CaptureViewModel` no
 longer takes its plan from `PlanViewModel.SelectedPlan` on
 navigation — it builds its own `AvailablePlans` list (`LoadAvailablePlans`, using the same
 `IPlanRepository.ListPlans(sdrDeviceId)` call `PlanViewModel.LoadSavedPlans` uses) filtered to
 whichever `PlanType` matches the connected mount's current `TelescopeState.Mode` (`PlanMatchesMountMode`
 — Equatorial/AltAz plans need the mount actually in that mode to slew correctly; Drift plans, being a
 declination-based drift scan, are offered under Equatorial). The list refreshes reactively on
-`SdrState.SelectedDevice`/`TelescopeState.Mode`/`IsConnected` changes, and `NavigateObserve` also
+`SdrState.SelectedDevice`/`TelescopeState.Mode`/`IsConnected` changes, and `NavigateCapture` also
 calls it explicitly so edits made on the Plan screen show up immediately. Because `ListPlans`
 deserializes fresh `CapturePlan` instances on every call, `LoadAvailablePlans` re-resolves the current
 selection by `FriendlyName` against the newly loaded instances rather than relying on reference
@@ -235,7 +235,7 @@ own coordinate mode, not a user toggle) into an ordered `List<TargetPoint>`. Two
 
 ### Capture and FITS conventions
 
-`ObserveViewModel` drives a `CapturePlan`/`TargetPoint` sweep against `ITelescopeMount` and
+`CaptureViewModel` drives a `CapturePlan`/`TargetPoint` sweep against `ITelescopeMount` and
 `ISdrDevice`, writing raw IQ to FITS via `FitsFileIo`. Its live spectrum display (updated as chunks
 stream in during a capture) runs on `HiStreamingAccumulator`/`HiStreamingPipeline` against the fixed
 calibration baseline, reassembling arbitrary-sized USB streaming chunks into fftSize-aligned frames
@@ -260,7 +260,7 @@ non-matching filenames (baseline files, single-file dwells) are unaffected.
 
 ### Progress reporting convention
 
-`Calibrator`, `ObserveViewModel`, and `VisualiseViewModel` all report progress the same way: real,
+`Calibrator`, `CaptureViewModel`, and `VisualiseViewModel` all report progress the same way: real,
 measured progress from actual work completed (bytes captured, chunks processed, files read/gain
 trials finished) — never a simulated/time-based animation. `VisualiseViewModel` has the canonical
 small implementation of the pattern: `BeginProgress(status)` resets `StatusBarViewModel.CaptureProgress`
@@ -272,12 +272,12 @@ new 0→1 run with its own status message — rather than one continuous bar acr
 machinery marshals `INotifyPropertyChanged` notifications to the UI thread automatically); several of
 these call sites intentionally run inside `Task.Run(...)` so the UI thread stays free to actually
 repaint between updates — a synchronous CPU-bound loop on the UI thread will never show intermediate
-progress no matter how often you set the bound property. `ObserveViewModel.StartProgressTimer` (a
+progress no matter how often you set the bound property. `CaptureViewModel.StartProgressTimer` (a
 `DispatcherTimer`-based *simulated* progress bar, since removed) is the anti-pattern to avoid: it
 estimated elapsed time against a nominal duration instead of measuring real progress, and could hit
 100%/hide itself while the real work was still running.
 
-`ObserveViewModel.EstimatedCompletionTime` applies the same philosophy to session ETA: it starts from
+`CaptureViewModel.EstimatedCompletionTime` applies the same philosophy to session ETA: it starts from
 `SweepPlanResult.EstimatedCompletionUtc` (a nominal estimate from planned dwell/slew figures, computed
 once in `SweepPlanner.BuildSweep`), then after every completed target point it's overwritten using the
 *real* average time-per-point measured so far, extrapolated across the remaining points — not the

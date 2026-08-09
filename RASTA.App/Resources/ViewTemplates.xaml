@@ -13,9 +13,9 @@
         <views:PlanView/>
     </DataTemplate>
 
-    <!-- Observe -->
-    <DataTemplate DataType="{x:Type vm:ObserveViewModel}">
-        <views:ObserveView/>
+    <!-- Capture -->
+    <DataTemplate DataType="{x:Type vm:CaptureViewModel}">
+        <views:CaptureView/>
     </DataTemplate>
 
     <!-- Visualise -->

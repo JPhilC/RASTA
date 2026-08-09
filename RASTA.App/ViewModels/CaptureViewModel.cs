@@ -17,7 +17,7 @@ using System.Windows;
 
 namespace RASTA.App.ViewModels;
 
-public partial class ObserveViewModel : ObservableObject
+public partial class CaptureViewModel : ObservableObject
 {
     private readonly ITelescopeMount _mount;
     private readonly TelescopeState _mountState;
@@ -52,7 +52,7 @@ public partial class ObserveViewModel : ObservableObject
 
     public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
 
-    // Plans offered in the Observe dropdown - populated the same way
+    // Plans offered in the Capture dropdown - populated the same way
     // PlanViewModel.SavedPlans is (IPlanRepository.ListPlans for the connected SDR
     // device), then filtered to whichever PlanType matches the mount's current
     // CoordinateMode (see LoadAvailablePlans/PlanMatchesMountMode). Selection is no
@@ -79,8 +79,28 @@ public partial class ObserveViewModel : ObservableObject
     [ObservableProperty]
     private bool isDriftCaptureRunning;
 
+    // Quick Capture - a single raw IQ grab at wherever the mount is currently pointed
+    // (positioned by hand, or by a third-party ASCOM tool, rather than by a plan's
+    // sweep). Frequency/sample rate/gain/FFT size all come from the active
+    // CalibrationProfile - the same "must be used for all subsequent observations"
+    // parameters CaptureSweepAsync draws gain/FFT size from - rather than from any
+    // CapturePlan, so Quick Capture needs only a loaded calibration, not a selected plan.
+    public bool CanQuickCapture => _device != null
+        && _calibrationService.CurrentCalibration != null
+        && _mountState.IsConnected
+        && _sdrState.IsConnected
+        && !IsBusy;
+
+    [ObservableProperty]
+    private double quickCaptureDwellSeconds = 30;
+
+    [ObservableProperty]
+    private bool isQuickCaptureRunning;
+
     [ObservableProperty]
     private bool isBusy;
+
+    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanQuickCapture));
 
     // Estimated wall-clock (local time) finish of the running sweep. Set from
     // SweepPlanResult's nominal dwell/slew estimate when the sweep starts, then
@@ -92,7 +112,7 @@ public partial class ObserveViewModel : ObservableObject
 
     public SpectrumViewModel SpectrumVm { get; private set; }
 
-    public ObserveViewModel(
+    public CaptureViewModel(
         SettingsViewModel settingsViewModel,
         UserOptionsService userOptionsService,
         ITelescopeMount mount,
@@ -179,6 +199,7 @@ public partial class ObserveViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(CanCaptureSweep));
             OnPropertyChanged(nameof(CanDriftCapture));
+            OnPropertyChanged(nameof(CanQuickCapture));
         }
 
         if (e.PropertyName is nameof(TelescopeState.IsConnected) or nameof(TelescopeState.Mode))
@@ -193,6 +214,7 @@ public partial class ObserveViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(CanCaptureSweep));
             OnPropertyChanged(nameof(CanDriftCapture));
+            OnPropertyChanged(nameof(CanQuickCapture));
         }
 
         if (e.PropertyName == nameof(SdrState.SelectedDevice))
@@ -557,6 +579,150 @@ public partial class ObserveViewModel : ObservableObject
                 }
             }
             IsBusy = false;
+        }
+    }
+
+    // -------------------------------------------------------
+    // Quick Capture - a single raw IQ file at the mount's current position, for use
+    // when the mount has been positioned by hand or by a third-party ASCOM tool
+    // instead of by a plan's sweep. Mirrors exactly what CaptureSweepAsync does for
+    // one dwell point (same gain/FFT-size/frequency/sample-rate-from-the-active-
+    // CalibrationProfile, same FitsFileMetaData shape) but skips slewing and plan/sweep
+    // building entirely, substituting the mount's live TelescopeState reading for the
+    // sweep's planned TargetPoint and QuickCaptureDwellSeconds for the plan's DwellTime.
+    // -------------------------------------------------------
+
+    [RelayCommand(CanExecute = nameof(CanQuickCapture))]
+    private async Task QuickCaptureAsync()
+    {
+        if (_calibrationService.CurrentCalibration is null)
+        {
+            MessageBox.Show("No calibration profile loaded.");
+            return;
+        }
+
+        if (!_mount.IsConnected)
+        {
+            MessageBox.Show("Mount is not connected.");
+            return;
+        }
+
+        if (_device == null)
+        {
+            MessageBox.Show("Device is not connected.");
+            return;
+        }
+
+        if (QuickCaptureDwellSeconds <= 0)
+        {
+            MessageBox.Show("Dwell period must be greater than zero.");
+            return;
+        }
+
+        DateTime startTime = DateTime.UtcNow;
+
+        // Capture wherever the mount currently is - only the coordinate pair the
+        // connected mount's Mode reports directly (RA/Dec or Az/El) is recorded; the
+        // other pair is reconstructed later from the stored site+time, exactly as
+        // every other capture already does (see FitsFileMetaData / CLAUDE.md).
+        var currentTarget = _mountState.Mode == CoordinateMode.Equatorial
+            ? TargetPoint.FromRaDec(_mountState.RightAscensionHours, _mountState.DeclinationDeg)
+            : TargetPoint.FromAzEl(_mountState.AzimuthDeg, _mountState.ElevationDeg);
+
+        using var cts = new CancellationTokenSource();
+        var ct = cts.Token;
+        try
+        {
+            IsBusy = true;
+            IsQuickCaptureRunning = true;
+
+            double gainDb = _calibrationService.CurrentCalibration.GainDb;
+            fftSize = _calibrationService.CurrentCalibration.FftSize;
+            calibrationBaselineSpectrum = _calibrationService.CurrentCalibration.BaselineSpectrum;
+
+            var dwellSeconds = QuickCaptureDwellSeconds;
+            var sampleRateHz = _calibrationService.CurrentCalibration.SampleRateHz;
+            var frequencyHz = _calibrationService.CurrentCalibration.CenterFrequencyHz;
+
+            uint sampleCount = (uint)Math.Ceiling(sampleRateHz * dwellSeconds);
+
+            SpectrumVm.Mode = SpectrumMode.HiFrequency;
+            SpectrumVm.UpdateParameters(fftSize, frequencyHz, sampleRateHz);
+
+            _liveSampleRateHz = sampleRateHz;
+            _liveCenterFreqHz = frequencyHz;
+
+            _liveAccumulator = new HiStreamingAccumulator(fftSize);
+            _liveLeftover = Array.Empty<byte>();
+            SpectrumVm.UpdateSpectrum(new double[fftSize]);
+
+            // -----------------------------
+            // Capturing
+            // -----------------------------
+            _statusBar.CaptureStatus = "Quick capture: capturing";
+
+            await _device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
+
+            _chunkWorkerCts = new CancellationTokenSource();
+            _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
+
+            BeginProgress();
+            var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct, ReportProgress);
+
+            _chunkWorkerCts.Cancel();
+            _chunkWorkerCts = null;
+            await _device.StopStreamingAsync();
+            EndProgress();
+
+            string fullPath = FitsPathBuilder.BuildSweepFilePath(_optionsService.Options.CaptureFolder, "quick", startTime, frequencyHz, currentTarget.ToString(), 1, 1);
+
+            var meta = new FitsFileMetaData
+            {
+                Origin = "RTL-SDR",
+                DataFormat = "UINT8_IQ",
+                CentFreqHz = frequencyHz,
+                SampFreqHz = sampleRateHz,
+                FftSize = fftSize,
+                GainDb = gainDb,
+                ObservationDate = DateTime.UtcNow,
+                DwellTimeSec = dwellSeconds,
+                SiteLatitudeDeg = _settings.SiteLatitudeDeg,
+                SiteLongitudeDeg = _settings.SiteLongitudeDeg,
+                SiteElevationM = _settings.SiteElevationM,
+                RaDeg = currentTarget.Mode == CoordinateMode.Equatorial ? currentTarget.RightAscensionHours * 15.0 : null,
+                DecDeg = currentTarget.Mode == CoordinateMode.Equatorial ? currentTarget.DeclinationDeg : null,
+                AzDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.AzimuthDeg : null,
+                AltDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.ElevationDeg : null
+            };
+
+            // -----------------------------
+            // Saving
+            // -----------------------------
+            _statusBar.CaptureStatus = "Quick capture: saving";
+            BeginProgress();
+
+            _fitsFileWriter.WriteRawIq(fullPath, rawIq, meta);
+
+            EndProgress();
+
+            _statusBar.CaptureStatus = "Quick capture complete";
+        }
+        catch (OperationCanceledException)
+        {
+            _statusBar.CaptureStatus = "Cancelled";
+        }
+        catch (Exception ex)
+        {
+            _statusBar.CaptureStatus = "Error";
+            MessageBox.Show(ex.Message, "Quick Capture Error");
+        }
+        finally
+        {
+            _chunkWorkerCts?.Cancel();
+            _chunkWorkerCts = null;
+            await _device.StopStreamingAsync();
+            IsBusy = false;
+            IsQuickCaptureRunning = false;
         }
     }
 

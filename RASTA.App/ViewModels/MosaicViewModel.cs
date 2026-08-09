@@ -49,7 +49,7 @@ public class MosaicHeatmapDisplay
 ///
 /// Two other visualisations were tried here and dropped: a stacked-line "waterfall" of every
 /// position's spectrum (a live scrolling waterfall belongs to an actual capture in progress -
-/// Observe, or Prepare while dwelling on the baseline - not a static multi-position
+/// Capture, or Prepare while dwelling on the baseline - not a static multi-position
 /// comparison), and a position-velocity heatmap (meaningful for a constant-Dec drift scan,
 /// but its position axis has no physical meaning for scattered spot pointings across a 2D
 /// sky area, which is the primary use case here).
@@ -118,7 +118,7 @@ public partial class MosaicViewModel : ObservableObject
 
     // ---------------------------------------------------------
     // Progress reporting - same convention as VisualiseViewModel/
-    // Calibrator/ObserveViewModel: real, measured progress, not
+    // Calibrator/CaptureViewModel: real, measured progress, not
     // a time-based guess.
     // ---------------------------------------------------------
 
