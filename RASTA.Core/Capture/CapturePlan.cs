@@ -37,6 +37,11 @@ namespace RASTA.Core.Capture
 
         public bool GoToHomeAfterCapture { get; init; } = true;
 
+        // Applies HiStreamingPipeline's opt-in narrowband-RFI despike (see
+        // HiPipelineProcessor.Despike) to CaptureViewModel's live spectrum while this
+        // plan's sweep runs - off by default, matching the pipeline's own default.
+        public bool DespikeEnabled { get; init; }
+
         // Drift-specific
         public double DriftDeclinationDeg { get; init; }
         public double DriftDurationMinutes { get; init; }

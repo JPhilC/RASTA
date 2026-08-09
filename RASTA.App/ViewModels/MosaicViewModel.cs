@@ -4,6 +4,7 @@ using RASTA.App.Helpers;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Gridding;
+using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Mosaic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -71,6 +72,15 @@ public partial class MosaicViewModel : ObservableObject
 
     [ObservableProperty]
     private double integratedWindowKmPerSec = MosaicProcessor.DefaultIntegratedWindowKmPerSec;
+
+    // Mirrored from VisualiseViewModel.DespikeEnabled/DespikeThresholdSigma (see their
+    // On...Changed partials) - deliberately no separate controls on the Mosaic tab itself,
+    // so the ones on the main Visualise view govern both.
+    [ObservableProperty]
+    private bool despikeEnabled;
+
+    [ObservableProperty]
+    private double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma;
 
     // Matches the sweep's own step size (e.g. TargetRange.StepDeg from the plan that produced
     // this session) so each rendered pixel is one real sky cell, not an arbitrary subdivision
@@ -219,7 +229,9 @@ public partial class MosaicViewModel : ObservableObject
                 {
                     _statusBar.CaptureStatus = status;
                     ReportProgress(fraction);
-                });
+                },
+                despike: DespikeEnabled,
+                despikeThresholdSigma: DespikeThresholdSigma);
 
             BuildSkyHeatmap(result);
             BuildPositionsSummary(result);

@@ -133,10 +133,31 @@
                 <TextBlock Grid.Column="4" Grid.Row="8" 
                    HorizontalAlignment="Left"
                    Text="Window" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"/>
-                <TextBox Grid.Column="6" Grid.Row="8" Width="40" 
+                <TextBox Grid.Column="6" Grid.Row="8" Width="40"
                  HorizontalAlignment="Left"
                  Text="{Binding SmoothingWindow}"
                      ToolTip="Smoothing window width, in FFT bins (odd numbers only - even values are rounded up)"/>
+
+                <CheckBox Grid.Column="8" Grid.Row="8"
+                  VerticalAlignment="Center"
+                  Content="Despike"
+                  IsChecked="{Binding DespikeEnabled}"
+                  ToolTip="Excise narrowband RFI spikes (e.g. a USB3/mount comb) before display/processing. Also drives the Mosaic tab's processing."/>
+
+                <TextBlock Grid.Column="10" Grid.Row="8"
+                   HorizontalAlignment="Left"
+                   Text="Sigma" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"/>
+                <TextBox Grid.Column="12" Grid.Row="8" Width="40"
+                 HorizontalAlignment="Left"
+                 Text="{Binding DespikeThresholdSigma}"
+                     ToolTip="How many local-noise standard deviations above the local median counts as a spike. Lower this if spikes are still visible with Despike ticked (a shorter/noisier capture may need a lower value than a long baseline dwell)."/>
+
+                <Button Grid.Column="14" Grid.Row="8"
+            Content="Export Debug CSV"
+            Command="{Binding ExportDespikeDebugCsvCommand}"
+            ToolTip="Dumps the raw-vs-despiked baseline/capture spectra from the last Generate Chart run (standalone Baseline/Capture views only) to a CSV next to the source FITS file."
+            Padding="10,4"
+            Width="160"/>
 
                 <Grid Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9">
                     <Grid.ColumnDefinitions>

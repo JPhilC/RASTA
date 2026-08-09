@@ -31,6 +31,17 @@ namespace RASTA.Processing.HiPipeline
         // baseline power == capture power should read 0 dB) can divide it back out instead of
         // duplicating the magic number.
         public const double RatioDisplayScale = 300.0;
+
+        // Default sigma threshold for HiStreamingPipeline.Despike - how many robust local
+        // standard deviations above the local median counts as narrowband RFI (see its
+        // remarks). Exposed here rather than kept private to HiStreamingPipeline so every
+        // caller across layers (MosaicProcessor, VisualiseViewModel/MosaicViewModel,
+        // CaptureViewModel/CapturePlan) shares one canonical default instead of duplicating
+        // the number - and so it can be exposed as a live, tunable UI control the same way
+        // SmoothingWindow is, since the right value depends on how heavily-averaged a given
+        // spectrum is (a shorter capture dwell has a noisier local floor than a long
+        // baseline dwell, so may need a lower threshold to catch the same spikes).
+        public const double DefaultDespikeThresholdSigma = 5.0;
     }
 
     /// <summary>
@@ -152,6 +163,8 @@ namespace RASTA.Processing.HiPipeline
             double sampleRateHz,
             double centerFreqHz,
             double lsrCorrectionKmPerSec = 0.0, // add AstronomyUtils.ComputeLsrCorrectionKmPerSec(...) here to report LSR velocity instead of raw topocentric
+            bool despike = false, // opt-in narrowband RFI excision (comb/birdie spikes) - see Despike
+            double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma, // only used when despike is true
             SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
             int smoothingWindow = 5,
             int smoothingPolyOrder = 2) // only used when smoothing == SavitzkyGolay
@@ -166,6 +179,17 @@ namespace RASTA.Processing.HiPipeline
             // 1. fftshift spectra
             baselinePower = FftShift(baselinePower);
             capturePower = FftShift(capturePower);
+
+            // 1a. Optional narrowband-RFI despike (e.g. a USB3/mount-controller comb),
+            // before the always-on DC spike excision below. Uses the two-spectrum overload
+            // (union-detected, excised identically in both) rather than despiking each
+            // spectrum independently - see its remarks for why: independent excision can
+            // remove a spike from one spectrum but not the other, turning a spike that
+            // mostly canceled out through baseline division into a new, larger artifact.
+            if (despike)
+            {
+                Despike(baselinePower, capturePower, sampleRateHz, despikeThresholdSigma);
+            }
 
             // 1b. Excise the receiver's fixed LO/DC-leakage spike (every zero-IF SDR,
             // including the RTL-SDR this app targets, has one at exactly the tuned
@@ -326,11 +350,12 @@ namespace RASTA.Processing.HiPipeline
         /// <summary>
         /// Median of a small window of bins just outside +-halfWidth of centerIndex, on
         /// both sides - a "normal" reference level that the spike itself can't bias, as
-        /// long as halfWidth generously bounds its true extent.
+        /// long as halfWidth generously bounds its true extent. refWindow defaults to the
+        /// narrow 5-bin sample RemoveDcSpike has always used; Despike passes a wider one
+        /// since it's scanning arbitrary positions rather than one known bin.
         /// </summary>
-        private static double LocalMedianExcluding(double[] data, int centerIndex, int halfWidth)
+        private static double LocalMedianExcluding(double[] data, int centerIndex, int halfWidth, int refWindow = 5)
         {
-            const int refWindow = 5;
             var values = new System.Collections.Generic.List<double>();
 
             for (int i = centerIndex - halfWidth - refWindow; i < centerIndex - halfWidth; i++)
@@ -344,6 +369,249 @@ namespace RASTA.Processing.HiPipeline
 
             values.Sort();
             return values[values.Count / 2];
+        }
+
+        // How many local-noise standard deviations above the local median counts as
+        // narrowband RFI. A fixed multiplicative ratio (as RemoveDcSpike uses for the
+        // huge, unmistakable DC/LO leakage spike) badly under-detects here: a comb spur
+        // from e.g. a USB3/mount controller often sits only a couple of dB - call it
+        // ~1.5-2x in linear power - above the local continuum, which a 4x-style ratio
+        // test never crosses. But once a baseline/capture has been averaged over many
+        // frames, the *residual* bin-to-bin noise scatter shrinks far more than that, so
+        // even a "small" few-dB spur ends up many standard deviations above the genuine
+        // local noise - a robust (outlier-resistant) sigma test catches it regardless of
+        // how modest it looks in absolute dB terms. Callers pass this in (default
+        // HiConstants.DefaultDespikeThresholdSigma) rather than it being fixed, since how
+        // heavily a given spectrum has been averaged - and therefore how tight its residual
+        // noise floor is - varies enough between e.g. a long baseline dwell and a shorter
+        // capture dwell that one fixed value doesn't always suit both.
+
+        // Upper bound on how far either side of a flagged peak the spike can grow, and how
+        // wide a reference sample to characterise "normal" - specified in Hz, not a fixed
+        // bin count, and converted to bins from the actual sampleRateHz/fftSize at each
+        // call (see SpikesBinsFromHz). Unlike RemoveDcSpike's DC/LO spike - pure single-
+        // tone window leakage, genuinely a fixed *bin* count regardless of FFT size,
+        // hence left alone - measuring a real comb spur against a 4096-bin/2.4Msps capture
+        // (see the CSV-debug workflow this was tuned against) showed skirts running wider
+        // than a bare Hann main lobe alone would produce (~12 bins vs. an expected ~4),
+        // consistent with genuine modulation bandwidth (e.g. USB3 spread-spectrum
+        // clocking) rather than leakage alone - a physically real bandwidth is fixed in
+        // Hz, so at a *larger* FFT size (narrower bins) the same feature spans *more*
+        // bins, and a fixed bin-count cap would start truncating growth again exactly
+        // like the too-tight original 4-bin cap did. Values below are that same ~12/~15
+        // bins re-expressed in Hz at the 4096-bin/2.4Msps capture they were measured
+        // against (585.94 Hz/bin: 12*585.94≈7000, 15*585.94≈8800).
+        private const double SpikeMaxHalfWidthHz = 7000.0;
+        private const double SpikeReferenceWindowHz = 8800.0;
+
+        // Floors so a very small FFT size (wide bins) doesn't collapse either window to
+        // 0-1 bins and lose all growth/reference capability - same magnitude as
+        // RemoveDcSpike's own fixed bin counts (4 and 5 respectively).
+        private const int SpikeMaxHalfWidthMinBins = 4;
+        private const int SpikeReferenceWindowMinBins = 5;
+
+        /// <summary>
+        /// Converts a target width in Hz to an equivalent bin count at the given
+        /// sampleRateHz/fftSize, floored at minBins - see SpikeMaxHalfWidthHz/
+        /// SpikeReferenceWindowHz's remarks for why these are Hz-based rather than fixed
+        /// bin counts.
+        /// </summary>
+        private static int SpikeBinsFromHz(double widthHz, double sampleRateHz, int fftSize, int minBins)
+        {
+            if (sampleRateHz <= 0 || fftSize <= 0)
+                return minBins;
+
+            double binWidthHz = sampleRateHz / fftSize;
+            int bins = (int)Math.Round(widthHz / binWidthHz);
+            return Math.Max(minBins, bins);
+        }
+
+        // Hysteresis: a single fixed threshold has to do two different jobs - decide
+        // whether a bin is a spike at all (wants to be conservative, to avoid flagging
+        // ordinary noise), and decide how far its skirt extends (wants to be permissive,
+        // since a real spike's shoulder bins are elevated but individually more modest
+        // than the peak). Using the caller's thresholdSigma for both meant a spike's own
+        // shoulder bins often fell just short of the detection bar and were left
+        // unexcised - the "flattened top, sloped sides" look. Growth instead uses
+        // whichever is lower: thresholdSigma itself (so raising the detection threshold
+        // never makes growth stricter than detection), or this fixed, more permissive cap
+        // - chosen independent of thresholdSigma so growth doesn't become reckless if a
+        // user dials thresholdSigma down for more sensitive detection.
+        private const double SpikeGrowSigmaCap = 2.5;
+
+        /// <summary>
+        /// Opt-in narrowband-RFI excision for a single spectrum (SpectrumMode-independent
+        /// "despiking") - used by the standalone baseline/capture views, which have no
+        /// counterpart spectrum to cross-check against. See the two-spectrum overload's
+        /// remarks for why Process uses that one instead: detecting and excising each
+        /// spectrum independently can leave a spike removed from one but not the other,
+        /// which turns a spike that mostly canceled out through baseline division into a
+        /// new, larger division artifact.
+        ///
+        /// sampleRateHz is required (not optional/defaulted) - see SpikeMaxHalfWidthHz's
+        /// remarks for why the growth/reference windows are Hz-based and therefore need it
+        /// to convert to bins correctly for whatever FFT size data actually is.
+        /// </summary>
+        public static double[] Despike(double[] data, double sampleRateHz, double thresholdSigma = HiConstants.DefaultDespikeThresholdSigma)
+        {
+            int n = data.Length;
+            var result = (double[])data.Clone();
+            var candidate = new bool[n];
+            MarkSpikeCandidates(data, candidate, thresholdSigma, sampleRateHz);
+            ExciseCandidateRuns(result, candidate);
+            return result;
+        }
+
+        /// <summary>
+        /// Opt-in narrowband-RFI excision for a baseline/capture pair, mutating both in
+        /// place (same calling convention as RemoveDcSpike) - used by Process.
+        ///
+        /// Candidates are flagged independently in each spectrum (their averaging depth,
+        /// and therefore residual noise floor, commonly differs - e.g. a longer baseline
+        /// dwell vs. a shorter capture dwell - so the same physical spur can clear the
+        /// sigma threshold in one but not the other), then the UNION of flagged bins is
+        /// excised identically in both. Interpolating only whichever spectrum happened to
+        /// trip the threshold - leaving the other's raw, still-spiky value in place - would
+        /// hand the division step a spike/smooth mismatch it didn't have before: dividing a
+        /// smoothed spectrum by one that still has the spike (or vice versa) turns a spike
+        /// that mostly canceled out through division already into a new, larger ratio
+        /// artifact. Applying the same excision to both keeps that pre-despike cancellation
+        /// intact wherever detection agreed, and only changes bins where it didn't - and as
+        /// a side effect, lets whichever spectrum has the cleaner detection (typically the
+        /// more heavily-averaged baseline) cover for the other's misses.
+        /// </summary>
+        public static void Despike(double[] baselinePower, double[] capturePower, double sampleRateHz, double thresholdSigma = HiConstants.DefaultDespikeThresholdSigma)
+        {
+            int n = baselinePower.Length;
+            var candidate = new bool[n];
+            MarkSpikeCandidates(baselinePower, candidate, thresholdSigma, sampleRateHz);
+            MarkSpikeCandidates(capturePower, candidate, thresholdSigma, sampleRateHz);
+
+            ExciseCandidateRuns(baselinePower, candidate);
+            ExciseCandidateRuns(capturePower, candidate);
+        }
+
+        /// <summary>
+        /// Flags (OR-in, never clears) every bin more than thresholdSigma robust standard
+        /// deviations above a local median (median absolute deviation, scaled to a
+        /// std-equivalent) computed from a window of nearby bins excluding a small guard
+        /// region around the candidate (the same LocalMedianExcluding used by
+        /// RemoveDcSpike, swept across every position instead of one fixed center bin),
+        /// then grows each flagged bin outward while adjacent bins are also elevated - same
+        /// style as RemoveDcSpike's window growth around the DC bin, generalized to run
+        /// anywhere in the array. sampleRateHz converts the Hz-based growth/reference
+        /// widths to the right bin counts for data's actual FFT size (data.Length) - see
+        /// SpikeMaxHalfWidthHz's remarks.
+        ///
+        /// This is aimed at things like a USB3/mount-controller comb: real HI emission is
+        /// always many bins wide (tens-hundreds of kHz vs ~1-2 bins for a genuine spike),
+        /// so a purely local "way above its immediate neighbourhood" test structurally
+        /// can't mistake a broad astrophysical feature for RFI. Unlike RemoveDcSpike this
+        /// is NOT baseline-verified - it runs on whichever spectrum it's given, so it's
+        /// opt-in rather than always-on.
+        /// </summary>
+        private static void MarkSpikeCandidates(double[] data, bool[] candidate, double thresholdSigma, double sampleRateHz)
+        {
+            int n = data.Length;
+            int maxHalfWidthBins = SpikeBinsFromHz(SpikeMaxHalfWidthHz, sampleRateHz, n, SpikeMaxHalfWidthMinBins);
+            int referenceWindowBins = SpikeBinsFromHz(SpikeReferenceWindowHz, sampleRateHz, n, SpikeReferenceWindowMinBins);
+
+            for (int i = 0; i < n; i++)
+            {
+                var (median, sigma) = LocalRobustStatsExcluding(data, i, maxHalfWidthBins, referenceWindowBins);
+                if (median <= 0)
+                    continue; // no usable "normal" level to compare against - leave this bin alone
+
+                double threshold = median + thresholdSigma * sigma;
+                if (data[i] <= threshold)
+                    continue;
+
+                // Grow outward using the more permissive hysteresis threshold, not the
+                // (possibly much stricter) detection one - see SpikeGrowSigmaCap's remarks.
+                double growThreshold = median + Math.Min(thresholdSigma, SpikeGrowSigmaCap) * sigma;
+
+                int lo = i, hi = i;
+                for (int offset = 0; offset <= maxHalfWidthBins; offset++)
+                {
+                    int left = i - offset;
+                    int right = i + offset;
+                    bool leftHigh = left >= 0 && data[left] > growThreshold;
+                    bool rightHigh = right < n && data[right] > growThreshold;
+
+                    if (!leftHigh && !rightHigh)
+                        break;
+
+                    if (leftHigh) lo = left;
+                    if (rightHigh) hi = right;
+                }
+
+                for (int k = lo; k <= hi; k++)
+                    candidate[k] = true;
+            }
+        }
+
+        /// <summary>
+        /// Linearly interpolates away every contiguous run of flagged bins in data, using
+        /// each run's own immediate flanking (unflagged) bins - shared by both Despike
+        /// overloads so a run flagged via the union in the two-spectrum version still
+        /// interpolates each spectrum from its own neighbours, not the other spectrum's.
+        /// </summary>
+        private static void ExciseCandidateRuns(double[] data, bool[] candidate)
+        {
+            int n = data.Length;
+            int i = 0;
+            while (i < n)
+            {
+                if (!candidate[i])
+                {
+                    i++;
+                    continue;
+                }
+
+                int lo = i;
+                while (i < n && candidate[i])
+                    i++;
+                int hi = i - 1;
+
+                InterpolateRange(data, lo, hi);
+            }
+        }
+
+        /// <summary>
+        /// Median and a robust (outlier-resistant) standard-deviation estimate - median
+        /// absolute deviation, scaled by the usual 1.4826 factor so it's comparable to a
+        /// normal std for roughly-Gaussian noise - over the same reference window
+        /// LocalMedianExcluding samples. Using MAD rather than a plain std keeps a couple
+        /// of already-elevated bins in the window (e.g. the flank of a neighbouring spike)
+        /// from inflating the estimate the way a mean/variance calculation would.
+        /// Guarantees a small positive sigma floor (proportional to the median) rather than
+        /// a literal zero, so a reference window that happens to be perfectly flat doesn't
+        /// make every subsequent bin read as "infinitely many sigmas" above it.
+        /// </summary>
+        private static (double median, double sigma) LocalRobustStatsExcluding(double[] data, int centerIndex, int halfWidth, int refWindow)
+        {
+            var values = new System.Collections.Generic.List<double>();
+
+            for (int i = centerIndex - halfWidth - refWindow; i < centerIndex - halfWidth; i++)
+                if (i >= 0) values.Add(data[i]);
+
+            for (int i = centerIndex + halfWidth + 1; i <= centerIndex + halfWidth + refWindow; i++)
+                if (i < data.Length) values.Add(data[i]);
+
+            if (values.Count == 0)
+                return (0, 0);
+
+            values.Sort();
+            double median = values[values.Count / 2];
+
+            var deviations = values.Select(v => Math.Abs(v - median)).OrderBy(v => v).ToList();
+            double mad = deviations[deviations.Count / 2];
+
+            const double MadToSigma = 1.4826;
+            const double MinRelativeSigma = 1e-6; // floor against a perfectly flat reference window
+            double sigma = Math.Max(mad * MadToSigma, median * MinRelativeSigma);
+
+            return (median, sigma);
         }
 
         /// <summary>
@@ -680,6 +948,8 @@ namespace RASTA.Processing.HiPipeline
             double sampleRateHz,
             double centerFreqHz,
             double lsrCorrectionKmPerSec = 0.0,
+            bool despike = false,
+            double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma,
             SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
             int smoothingWindow = 5,
             int smoothingPolyOrder = 2)
@@ -691,6 +961,8 @@ namespace RASTA.Processing.HiPipeline
                 sampleRateHz,
                 centerFreqHz,
                 lsrCorrectionKmPerSec,
+                despike,
+                despikeThresholdSigma,
                 smoothing,
                 smoothingWindow,
                 smoothingPolyOrder);

@@ -242,6 +242,11 @@ public partial class CaptureViewModel : ObservableObject
     private double _liveSampleRateHz;
     private double _liveCenterFreqHz;
 
+    // Sourced from ActivePlan.DespikeEnabled for a sweep (see CaptureSweepAsync); Quick
+    // Capture has no plan to read a setting from, so it stays off there (see
+    // QuickCaptureAsync).
+    private bool _liveDespikeEnabled;
+
     private void OnChunk(byte[] chunk)
     {
         // FAST: enqueue chunk for DSP worker
@@ -299,7 +304,7 @@ public partial class CaptureViewModel : ObservableObject
             return; // not enough samples yet for even one aligned frame
 
         var captureAvg = _liveAccumulator.GetCaptureAverage();
-        _livePipeline.Process(calibrationBaselineSpectrum, captureAvg, _liveSampleRateHz, _liveCenterFreqHz);
+        _livePipeline.Process(calibrationBaselineSpectrum, captureAvg, _liveSampleRateHz, _liveCenterFreqHz, despike: _liveDespikeEnabled);
 
         SpectrumVm.UpdateSpectrum(_livePipeline.HiSpectrum, _livePipeline.FrequencyHz);
     }
@@ -400,6 +405,7 @@ public partial class CaptureViewModel : ObservableObject
             int filesPerPoint = ActivePlan.FilesPerPoint;
             int targetIndex = 0;
             calibrationBaselineSpectrum = _calibrationService.CurrentCalibration.BaselineSpectrum;
+            _liveDespikeEnabled = ActivePlan.DespikeEnabled;
 
             var dwellSeconds = ActivePlan.DwellTime.TotalSeconds / filesPerPoint;
             var sampleRateHz = ActivePlan.SampleRate;
@@ -639,6 +645,9 @@ public partial class CaptureViewModel : ObservableObject
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
             fftSize = _calibrationService.CurrentCalibration.FftSize;
             calibrationBaselineSpectrum = _calibrationService.CurrentCalibration.BaselineSpectrum;
+            // No CapturePlan behind Quick Capture (see CanQuickCapture), so there's no
+            // per-plan DespikeEnabled to read - leave the live view undespiked.
+            _liveDespikeEnabled = false;
 
             var dwellSeconds = QuickCaptureDwellSeconds;
             var sampleRateHz = _calibrationService.CurrentCalibration.SampleRateHz;
