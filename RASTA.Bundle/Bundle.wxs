@@ -1,0 +1,61 @@
+<!-- Burn bootstrapper: chains the .NET 10 Desktop Runtime (x64) installer ahead of RASTA.Setup's
+     MSI, producing a single RASTA-Setup.exe. netfx:DotNetCoreSearch (WixToolset.Netfx.wixext)
+     sets the WindowsDesktopRuntime10 bundle variable to the highest installed
+     Microsoft.WindowsDesktop.App 10.x version (or leaves it unset/lower if none is present);
+     the ExePackage's DetectCondition compares against that to decide whether to download and
+     run the runtime installer before the MSI.
+
+     The ExePackagePayload below is pinned to a specific windowsdesktop-runtime build (URL/hash/
+     size all taken from Microsoft's official release-metadata feed - see
+     https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/10.0/releases.json - for
+     10.0.10 at the time this was written). Bump NetCoreVersion/DownloadUrl/Hash/Size together
+     when a newer 10.0.x patch should be chained; DetectCondition itself only requires ">= v10.0.0"
+     so it won't force a reinstall on machines that already have a newer 10.0.x than what's
+     pinned here - it only downloads when nothing satisfying 10.0.x is present at all. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
+
+  <?define NetCoreVersion = 10.0.10?>
+  <?define NetCoreDownloadUrl = https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/10.0.10/windowsdesktop-runtime-10.0.10-win-x64.exe?>
+  <?define NetCoreHash = A5502261C25BA163F35BCA7D50611C195E78B8797B16C5BBF2203FBDFFF92C0275D36838A3200C08443D2D23A2F6A867C58093D5C239A60DD798A6596DF4DC13?>
+  <?define NetCoreSize = 60053808?>
+
+  <Bundle Name="R.A.S.T.A."
+          Manufacturer="JPhilC"
+          Version="$(var.RastaVersion)"
+          UpgradeCode="BED138A3-DECE-43B8-A511-D86E1A837D48">
+
+    <BootstrapperApplication>
+      <!-- Empty LicenseUrl suppresses the license-acceptance link/checkbox entirely rather than
+           pointing it at a real page - the plain-text LICENSE file isn't RTF, which is what
+           LicenseFile requires for this theme. Point LicenseUrl at a real hosted copy of LICENSE
+           (e.g. once this repo has a GitHub remote) if you want it shown instead. -->
+      <bal:WixStandardBootstrapperApplication LicenseUrl="" Theme="hyperlinkLicense" />
+    </BootstrapperApplication>
+
+    <netfx:DotNetCoreSearch RuntimeType="desktop" Platform="x64" MajorVersion="10" Variable="WindowsDesktopRuntime10" />
+
+    <Chain>
+      <ExePackage Id="WindowsDesktopRuntime10"
+                  DisplayName=".NET Windows Desktop Runtime 10.0 (x64)"
+                  DetectCondition="WindowsDesktopRuntime10 &gt;= v10.0.0"
+                  InstallArguments="/install /quiet /norestart"
+                  UninstallArguments="/uninstall /quiet /norestart"
+                  RepairArguments="/repair /quiet /norestart"
+                  PerMachine="yes"
+                  Permanent="yes"
+                  Vital="yes"
+                  Bundle="yes"
+                  Cache="remove">
+        <ExePackagePayload Name="windowsdesktop-runtime-$(var.NetCoreVersion)-win-x64.exe"
+                            DownloadUrl="$(var.NetCoreDownloadUrl)"
+                            Hash="$(var.NetCoreHash)"
+                            Size="$(var.NetCoreSize)" />
+      </ExePackage>
+
+      <MsiPackage SourceFile="$(var.RASTA.Setup.TargetPath)" />
+    </Chain>
+
+  </Bundle>
+</Wix>

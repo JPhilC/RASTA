@@ -1,0 +1,22 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <PropertyGroup>
+    <!-- Without this, WixToolset.Sdk defaults OutputType to Package (MSI) regardless of Bundle.wxs's
+         root element, and silently emits a .msi instead of the setup.exe bootstrapper. -->
+    <OutputType>Bundle</OutputType>
+    <OutputName>RASTA-Setup</OutputName>
+    <Platform>x64</Platform>
+    <DefineConstants>RastaVersion=$(Version)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Bal.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Netfx.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Gives Bundle.wxs $(var.RASTA.Setup.TargetPath) to point the chained MsiPackage at. -->
+    <ProjectReference Include="..\RASTA.Setup\RASTA.Setup.wixproj" />
+  </ItemGroup>
+
+</Project>

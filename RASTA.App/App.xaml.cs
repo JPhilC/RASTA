@@ -37,7 +37,15 @@ namespace RASTA.App
             // before anything else runs, since a startup-time failure is
             // exactly the kind of thing this is meant to catch too.
             // ---------------------------------------------------------
-            _logger = new RastaLogger("Logs/rasta.log");
+            // Per-user LocalAppData, not a relative path - matches UserOptionsService's convention.
+            // A relative path resolves against the process's working directory, which for an
+            // installed Start Menu shortcut is Program Files - not writable by a standard user.
+            // Directory.CreateDirectory there throws before the handlers below are even wired up,
+            // so the app dies silently on startup with no window and no message box.
+            var logPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "RASTA", "Logs", "rasta.log");
+            _logger = new RastaLogger(logPath);
             DispatcherUnhandledException += OnDispatcherUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
             TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
