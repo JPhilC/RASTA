@@ -3,7 +3,9 @@ using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
+using LiveChartsCore.SkiaSharpView.Painting.Effects;
 using OpenTK.Graphics.OpenGL;
+using RASTA.Processing.HiPipeline;
 using SkiaSharp;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -38,6 +40,15 @@ namespace RASTA.App.ViewModels
         public ISeries[] Series { get; private set; }
         public Axis[] XAxes { get; private set; }
         public Axis[] YAxes { get; private set; }
+
+        // A single zero-width RectangularSection (Xi == Xj) rendered as a vertical dashed
+        // line marking the unshifted HI rest position - 1420.40575177 MHz for the frequency-
+        // axis modes (HiFrequency/TTRT/Ratio; that axis is never LSR-corrected) or 0 km/s for
+        // HiVelocity (which IS LSR-corrected, so 0 km/s means "at rest relative to the LSR" -
+        // real HI emission still shows up offset from it due to the source's own galactic
+        // kinematics, so the line stays a meaningful reference rather than always matching
+        // the peak). See VisualiseViewModel.ProcessHiCore / AstronomyUtils.ComputeLsrCorrectionKmPerSec.
+        public RectangularSection[] Sections { get; }
 
         // Backing fields
         private int _fftSize;
@@ -104,6 +115,19 @@ namespace RASTA.App.ViewModels
                     }
                 };
 
+            Sections = new RectangularSection[]
+            {
+                new RectangularSection
+                {
+                    Fill = null,
+                    Stroke = new SolidColorPaint(SKColors.Red)
+                    {
+                        StrokeThickness = 1.5f,
+                        PathEffect = new DashEffect(new float[] { 6, 4 })
+                    }
+                }
+            };
+
             BuildFrequencyAxis();   // Populates liveSpectrum and frequencies arrays
 
             xAxis = frequencies;
@@ -130,6 +154,24 @@ namespace RASTA.App.ViewModels
                     MaxLimit = double.NaN
                 }
             };
+
+            UpdateHiReferenceLine();
+        }
+
+        partial void OnModeChanged(SpectrumMode value) => UpdateHiReferenceLine();
+
+        /// <summary>
+        /// Positions the vertical dashed reference line (<see cref="Sections"/>) at the
+        /// unshifted HI rest position for the current <see cref="Mode"/>: 0 km/s for
+        /// HiVelocity (that axis is LSR-corrected, so 0 is "at rest relative to the LSR"),
+        /// or the static HI rest frequency for the frequency-axis modes (HiFrequency/TTRT/
+        /// Ratio), which are never LSR-corrected.
+        /// </summary>
+        private void UpdateHiReferenceLine()
+        {
+            double referenceX = Mode == SpectrumMode.HiVelocity ? 0.0 : HiConstants.HiFreqHz;
+            Sections[0].Xi = referenceX;
+            Sections[0].Xj = referenceX;
         }
 
         private void ApplyAxisMode()
