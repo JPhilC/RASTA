@@ -533,11 +533,11 @@ public partial class PrepareViewModel : ViewModelBase
         finally
         {
             // Return the mount to its home position before finishing up, the same way
-            // ObserveViewModel.CaptureSweepAsync does at the end of a sweep - the cold-sky
+            // CaptureViewModel.CaptureSweepAsync does at the end of a sweep - the cold-sky
             // capture leaves the mount pointed away from home, and there's no reason to
             // leave it there, whether calibration succeeded, failed, or was cancelled after
             // a slew already happened. Tracking is switched off first, mirroring
-            // ObserveViewModel's ordering - this mount setup has already been seen to refuse
+            // CaptureViewModel's ordering - this mount setup has already been seen to refuse
             // a slew while tracking is active (see the "SlewToAltAz is not allowed when
             // tracking is True" Alpaca error in the logs).
             try
@@ -571,7 +571,7 @@ public partial class PrepareViewModel : ViewModelBase
 
     /// <summary>
     /// Polls the mount's IsSlewing flag every 500ms until it clears, with a 30s timeout -
-    /// same pattern ObserveViewModel.CaptureSweepAsync uses to wait out a slew. Returns false
+    /// same pattern CaptureViewModel.CaptureSweepAsync uses to wait out a slew. Returns false
     /// (after showing a warning) if the slew times out, true once it completes normally.
     /// </summary>
     private async Task<bool> WaitForSlewCompleteAsync(CancellationToken ct)

@@ -13,7 +13,7 @@ namespace RASTA.App.ViewModels
         {
             Prepare,
             Plan,
-            Observe,
+            Capture,
             Visualise,
             Options
         }
@@ -33,10 +33,10 @@ namespace RASTA.App.ViewModels
         // on the Plan screen itself, not detected from a connected mount.
         public bool CanNavigatePlan => StatusBarViewModel.SdrConnected;
 
-        // Observe drives an actual mount slew (and ObserveViewModel.LoadAvailablePlans
+        // Capture drives an actual mount slew (and CaptureViewModel.LoadAvailablePlans
         // filters plans by the mount's detected CoordinateMode), so it needs both an SDR
         // and a connected mount, not just the SDR.
-        public bool CanNavigateObserve => StatusBarViewModel.SdrConnected && StatusBarViewModel.TelescopeConnected;
+        public bool CanNavigateCapture => StatusBarViewModel.SdrConnected && StatusBarViewModel.TelescopeConnected;
 
         [ObservableProperty]
         private object? currentViewModel;
@@ -54,12 +54,12 @@ namespace RASTA.App.ViewModels
                     args.PropertyName == nameof(StatusBarViewModel.TelescopeConnected))
                 {
                     OnPropertyChanged(nameof(CanNavigatePlan));
-                    OnPropertyChanged(nameof(CanNavigateObserve));
+                    OnPropertyChanged(nameof(CanNavigateCapture));
                     // Update command state on UI thread
                     UiThread.SafeInvoke(() =>
                     {
                         NavigatePlanCommand.NotifyCanExecuteChanged();
-                        NavigateObserveCommand.NotifyCanExecuteChanged();
+                        NavigateCaptureCommand.NotifyCanExecuteChanged();
                     });
                 }
             };
@@ -86,17 +86,17 @@ namespace RASTA.App.ViewModels
             UpdateView();
         }
 
-        [RelayCommand(CanExecute = nameof(CanNavigateObserve))]
-        private void NavigateObserve()
+        [RelayCommand(CanExecute = nameof(CanNavigateCapture))]
+        private void NavigateCapture()
         {
-            CurrentSection = NavigationSection.Observe;
+            CurrentSection = NavigationSection.Capture;
 
-            // Refresh the plan dropdown each time Observe is opened, in case plans were
-            // added/edited/deleted on the Plan screen since ObserveViewModel was created
+            // Refresh the plan dropdown each time Capture is opened, in case plans were
+            // added/edited/deleted on the Plan screen since CaptureViewModel was created
             // (it's effectively a singleton for the app's lifetime - see CLAUDE.md).
-            // Selection itself now lives entirely in ObserveViewModel, not pushed in from
+            // Selection itself now lives entirely in CaptureViewModel, not pushed in from
             // PlanViewModel.SelectedPlan.
-            _nav.NavigateTo<ObserveViewModel>(vm =>
+            _nav.NavigateTo<CaptureViewModel>(vm =>
             {
                 vm.LoadAvailablePlans();
             });

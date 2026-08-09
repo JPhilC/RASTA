@@ -138,7 +138,7 @@ namespace RASTA.App
             services.AddScoped<SettingsViewModel>();
             services.AddScoped<PrepareViewModel>();
             services.AddScoped<PlanViewModel>();
-            services.AddScoped<ObserveViewModel>();
+            services.AddScoped<CaptureViewModel>();
             services.AddScoped<MosaicViewModel>();
             services.AddScoped<VisualiseViewModel>();
             services.AddScoped<UserOptionsViewModel>();

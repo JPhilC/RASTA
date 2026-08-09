@@ -16,7 +16,7 @@ namespace RASTA.Processing.Planning
         /// per-point dwell time plus the slew/settle overhead computed while ordering the
         /// sweep (see BuildSweep). This is a planning-time estimate from nominal dwell/slew
         /// figures only - callers actually executing the sweep should refine it against real
-        /// measured per-point timing as points complete (see ObserveViewModel.CaptureSweepAsync,
+        /// measured per-point timing as points complete (see CaptureViewModel.CaptureSweepAsync,
         /// which does exactly that). Null when the plan failed to build.
         /// </summary>
         public DateTime? EstimatedCompletionUtc { get; }

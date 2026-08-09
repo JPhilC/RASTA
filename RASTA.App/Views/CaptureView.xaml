@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="RASTA.App.Views.ObserveView"
+﻿<UserControl x:Class="RASTA.App.Views.CaptureView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -8,6 +8,7 @@
 
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
@@ -26,17 +27,27 @@
             <Button Content="Begin Sweep" Width="100" Height="30"
                     Command="{Binding CaptureSweepCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding CanCaptureSweep, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Cancel Sweep" Width="100" Height="30" 
+            <Button Content="Cancel Sweep" Width="100" Height="30"
                     Command="{Binding CancelSweepCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding IsSweepCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Begin Drift" Width="100" Height="30" 
+            <Button Content="Begin Drift" Width="100" Height="30"
                     Command="{Binding CaptureDriftCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding CanDriftCapture, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Cancel Drift" Width="100" Height="30" 
+            <Button Content="Cancel Drift" Width="100" Height="30"
                     Command="{Binding CancelDriftCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding IsDriftCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
         </StackPanel>
-        <views:SpectrumView Grid.Row="1" Margin="0,10,0,0" 
+        <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,8,0,0">
+            <TextBlock Text="Dwell Period (s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+            <TextBox Text="{Binding QuickCaptureDwellSeconds, Mode=TwoWay}"
+                     Width="60" HorizontalAlignment="Left" Margin="0,0,10,0"
+                     IsEnabled="{Binding IsBusy, Converter={StaticResource BooleanInverterConverter}}"/>
+            <Button Content="Quick Capture" Width="110" Height="30"
+                    Command="{Binding QuickCaptureCommand}" HorizontalAlignment="Left"
+                    IsEnabled="{Binding CanQuickCapture}"
+                    ToolTip="Capture raw IQ at the mount's current position - useful when the mount was positioned by hand or by a third-party tool rather than by a plan."/>
+        </StackPanel>
+        <views:SpectrumView Grid.Row="2" Margin="0,10,0,0"
                             DataContext="{Binding SpectrumVm}"/>
     </Grid>
 </UserControl>

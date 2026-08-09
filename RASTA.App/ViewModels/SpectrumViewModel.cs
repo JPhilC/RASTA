@@ -221,7 +221,7 @@ namespace RASTA.App.ViewModels
 
 
         // ---------------------------------------------------------
-        // PUBLIC API — called by ObserveViewModel
+        // PUBLIC API — called by CaptureViewModel
         // ---------------------------------------------------------
         public void UpdateParameters(int fftSize, double centerFreqHz, double sampleRateHz)
         {

@@ -11,7 +11,7 @@ namespace RASTA.Core.Capture
 
     /// <summary>
     /// A fully-defined capture plan produced by the PlanViewModel
-    /// and consumed by ObserveViewModel / CaptureRunner.
+    /// and consumed by CaptureViewModel / CaptureRunner.
     /// </summary>
     public class CapturePlan
     {

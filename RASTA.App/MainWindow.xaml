@@ -109,14 +109,14 @@
                 </Button.Style>
             </Button>
 
-            <Button Content="Observe"
+            <Button Content="Capture"
                     Margin="5"
                     Padding="10"
-                    Command="{Binding NavigateObserveCommand}">
+                    Command="{Binding NavigateCaptureCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource NavButtonBaseStyle}">
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding CurrentSection}" Value="Observe">
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="Capture">
                                 <Setter Property="Background" Value="#444"/>
                                 <Setter Property="FontWeight" Value="Bold"/>
                                 <Setter Property="Foreground" Value="#4FC3F7"/>

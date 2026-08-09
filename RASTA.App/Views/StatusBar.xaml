@@ -89,7 +89,7 @@
                     Margin="10,0"/>
 
             <!-- ========================= -->
-            <!--  Observing Section        -->
+            <!--  Capturing Section        -->
             <!-- ========================= -->
             <StackPanel Grid.Column="4"
                         Orientation="Horizontal"

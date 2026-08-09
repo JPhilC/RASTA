@@ -37,8 +37,8 @@ namespace RASTA.App.Services
         public void NavigateToPlan() =>
             NavigateTo<PlanViewModel>();
 
-        public void NavigateToObserve() =>
-            NavigateTo<ObserveViewModel>();
+        public void NavigateToCapture() =>
+            NavigateTo<CaptureViewModel>();
 
         public void NavigateToVisualise() =>
             NavigateTo<VisualiseViewModel>();

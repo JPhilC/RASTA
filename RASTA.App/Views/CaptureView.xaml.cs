@@ -16,11 +16,11 @@ using System.Windows.Shapes;
 namespace RASTA.App.Views
 {
     /// <summary>
-    /// Interaction logic for ObserveView.xaml
+    /// Interaction logic for CaptureView.xaml
     /// </summary>
-    public partial class ObserveView : UserControl
+    public partial class CaptureView : UserControl
     {
-        public ObserveView()
+        public CaptureView()
         {
             InitializeComponent();
         }

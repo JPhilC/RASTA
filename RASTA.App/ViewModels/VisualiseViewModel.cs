@@ -106,7 +106,7 @@ public partial class VisualiseViewModel : ObservableObject
     // ---------------------------------------------------------
     // Progress reporting - real, measured progress (chunks
     // processed / total chunks), same pattern as Calibrator and
-    // ObserveViewModel, not a time-based guess.
+    // CaptureViewModel, not a time-based guess.
     // ---------------------------------------------------------
 
     private void BeginProgress(string status)
@@ -164,7 +164,7 @@ public partial class VisualiseViewModel : ObservableObject
     }
 
     /// <summary>
-    /// If the given capture file's name matches the ObserveViewModel-generated
+    /// If the given capture file's name matches the CaptureViewModel-generated
     /// "..._{index}of{total}.fits" pattern (multiple files captured at the same dwell
     /// point - see FitsPathBuilder.BuildSweepFilePath), returns every sibling file, in
     /// order, that actually exists alongside it in the same folder. Otherwise returns
