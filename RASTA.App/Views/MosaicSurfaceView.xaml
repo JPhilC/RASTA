@@ -21,6 +21,7 @@
                 </ModelVisual3D.Content>
             </ModelVisual3D>
             <ModelVisual3D x:Name="SurfaceVisual"/>
+            <ModelVisual3D x:Name="AxisVisual"/>
         </h:HelixViewport3D>
     </Grid>
 </UserControl>

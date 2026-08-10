@@ -22,6 +22,7 @@ namespace RASTA.Processing.Mosaic
         double? AltDeg,
         double[] HiSpectrum,
         double LineStrengthDb,
+        double PeakVelocityKmPerSec,
         IReadOnlyList<string> SourceFiles);
 
     /// <summary>
@@ -157,7 +158,7 @@ namespace RASTA.Processing.Mosaic
                 frequencyAxis ??= pipeline.FrequencyHz;
                 velocityAxis ??= pipeline.VelocityKmPerSec;
 
-                double lineStrengthDb = ComputeLineStrengthDb(
+                var (lineStrengthDb, peakVelocityKmPerSec) = FindLinePeak(
                     pipeline.VelocityKmPerSec, pipeline.RatioSpectrum, integratedWindowKmPerSec);
 
                 CoordinateMode mode = captureMeta.RaDeg.HasValue && captureMeta.DecDeg.HasValue
@@ -175,6 +176,7 @@ namespace RASTA.Processing.Mosaic
                     captureMeta.AltDeg,
                     pipeline.HiSpectrum,
                     lineStrengthDb,
+                    peakVelocityKmPerSec,
                     files));
 
                 progressCallback?.Invoke(status, (double)(g + 1) / groups.Count);
@@ -188,10 +190,12 @@ namespace RASTA.Processing.Mosaic
 
         /// <summary>
         /// Finds the strongest RatioSpectrum channel within +-windowKmPerSec of 0 (the
-        /// LSR-corrected line center) and reports it as dB *relative to the cold-sky baseline*
-        /// - "how much brighter is the sky here than the cold-sky reference", not "how much
-        /// brighter than this same pointing's own local continuum". This is deliberately
-        /// single-differenced: RatioSpectrum (capturePower/baselinePower x
+        /// LSR-corrected line center) and reports both its strength (dB, *relative to the
+        /// cold-sky baseline* - "how much brighter is the sky here than the cold-sky reference",
+        /// not "how much brighter than this same pointing's own local continuum") and its
+        /// velocity (km/s, signed - positive/toward vs negative/away from the LSR, per the
+        /// radio-convention velocity axis HiStreamingPipeline already produces). The dB figure
+        /// is deliberately single-differenced: RatioSpectrum (capturePower/baselinePower x
         /// HiConstants.RatioDisplayScale) already carries the only division against a
         /// reference this metric applies - unlike the earlier local-continuum-referenced
         /// version (which additionally divided out a per-position linear fit from
@@ -199,12 +203,12 @@ namespace RASTA.Processing.Mosaic
         /// at all reads close to 0 dB here rather than a fraction of a dB. That also means this
         /// map isn't HI-line-only - broad continuum brightness differences across the sky (e.g.
         /// toward the Galactic plane) show up too, same as the raw calibrated power a receiver
-        /// would show relative to a cold-sky zero point. Returns NaN if no channel falls in the
-        /// window, or if the peak ratio comes out non-positive (shouldn't happen with real
-        /// data, but the log guard stays regardless) - callers should skip NaN positions rather
-        /// than treat them as "0 dB".
+        /// would show relative to a cold-sky zero point. Both values come back NaN if no channel
+        /// falls in the window, or if the peak ratio comes out non-positive (shouldn't happen
+        /// with real data, but the log guard stays regardless) - callers should skip NaN
+        /// positions rather than treat them as "0 dB"/"0 km/s".
         /// </summary>
-        private static double ComputeLineStrengthDb(
+        private static (double lineStrengthDb, double peakVelocityKmPerSec) FindLinePeak(
             double[] velocityKmPerSec, double[] ratioSpectrum, double windowKmPerSec)
         {
             int peakIndex = -1;
@@ -218,9 +222,10 @@ namespace RASTA.Processing.Mosaic
                 }
             }
             if (peakIndex < 0 || peakRatio <= 0)
-                return double.NaN;
+                return (double.NaN, double.NaN);
 
-            return 10.0 * Math.Log10(peakRatio / HiConstants.RatioDisplayScale);
+            double lineStrengthDb = 10.0 * Math.Log10(peakRatio / HiConstants.RatioDisplayScale);
+            return (lineStrengthDb, velocityKmPerSec[peakIndex]);
         }
 
         private static void ForEachChunk(byte[] iq, int bytesPerChunk, Action<byte[]> processChunk)

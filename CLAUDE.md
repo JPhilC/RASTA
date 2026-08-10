@@ -339,27 +339,129 @@ non-matching filenames (baseline files, single-file dwells) are unaffected.
 `MosaicViewModel` (a tab in `VisualiseView`) points at a session folder containing one baseline and
 several multi-file dwell-point captures across different pointings, and turns them into a sky-mosaic.
 `MosaicProcessor` runs each position's capture through the same `HiStreamingPipeline`
-`VisualiseViewModel.ProcessHiCore` uses for a single file, then `ComputeLineStrengthDb` reduces each
-position's spectrum to one number: the strongest `RatioSpectrum` channel within a configurable window
-of the LSR-corrected line center (0 km/s), reported in dB *relative to the cold-sky baseline itself*
-(`10*log10(peakRatio / HiConstants.RatioDisplayScale)`) — deliberately single-differenced against the
-baseline rather than each position's own local continuum, so a position with no HI signal at all reads
-close to 0 dB rather than a fraction of a dB, and broad continuum brightness differences across the sky
-(e.g. toward the Galactic plane) show up too, not just narrow HI-line strength. `GridBuilder.BuildGrid`
-bins these onto a uniform RA/Dec-or-Az/El grid covering the *full* sky at a fixed cell size (not just
-the captured area's own bounding box — the intent is one full-sky canvas that fills in across many
+`VisualiseViewModel.ProcessHiCore` uses for a single file, then `FindLinePeak` reduces each position's
+spectrum to two numbers from the same search: the strongest `RatioSpectrum` channel within a
+configurable window of the LSR-corrected line center (0 km/s), reported as `LineStrengthDb` (dB
+*relative to the cold-sky baseline itself*, `10*log10(peakRatio / HiConstants.RatioDisplayScale)` —
+deliberately single-differenced against the baseline rather than each position's own local continuum,
+so a position with no HI signal at all reads close to 0 dB rather than a fraction of a dB, and broad
+continuum brightness differences across the sky (e.g. toward the Galactic plane) show up too, not just
+narrow HI-line strength) and `PeakVelocityKmPerSec` (that channel's own velocity — signed,
+toward/away from the LSR). Both come back `NaN` together when no channel falls in the window.
+`GridBuilder.BuildGrid` bins whichever of a `MosaicPosition`'s fields its `valueSelector` picks (default
+`LineStrengthDb`) onto a uniform RA/Dec-or-Az/El grid covering the *full* sky at a fixed cell size (not
+just the captured area's own bounding box — the intent is one full-sky canvas that fills in across many
 sessions over time, not a differently-scaled image every run); cells no position landed in stay `NaN`
-and should be skipped, not treated as 0 dB. The grid renders as a 2D heatmap via
-`RASTA.App/Helpers/HeatmapImageBuilder` (a hand-rolled `BitmapSource` — LiveChartsCore's `HeatSeries`
-produced a blank chart against real session data) — `Build` for one flat colour per measured cell (the
-default, since each cell is a real independent measurement) or `BuildBlended` for a bilinear-
-interpolated, continuous-looking gradient (`MosaicViewModel.UseSmoothBlend`, re-renders the
-already-cached grid instantly rather than reprocessing the session) — and as a 3D height-field surface
-(`MosaicSurfaceView`, built on `HelixToolkit.Wpf`) from that same grid.
+and should be skipped, not treated as 0. `MosaicViewModel.BuildGrids` bins both metrics into
+`_lastStrengthGrid`/`_lastVelocityGrid` every time a session is processed, and `MosaicSurfaceMetric`
+(`Strength`/`Velocity`, radio-button toggle in `MosaicView.xaml`) picks which one `RenderSurface` feeds
+the 3D tab, independently of the 2D heatmap — which always shows `LineStrengthDb`, since a
+position-velocity map only means "toward/away from LSR" and doesn't read as a brightness scale the way
+dB does. The grid renders as a 2D heatmap via `RASTA.App/Helpers/HeatmapImageBuilder` (a hand-rolled
+`BitmapSource` — LiveChartsCore's `HeatSeries` produced a blank chart against real session data) —
+`Build` for one flat colour per measured cell (the default, since each cell is a real independent
+measurement) or `BuildBlended` for a bilinear-interpolated, continuous-looking gradient
+(`MosaicViewModel.UseSmoothBlend`, re-renders the already-cached grid instantly rather than reprocessing
+the session) — and as a 3D height-field surface (`MosaicSurfaceView`, built on `HelixToolkit.Wpf`) from
+whichever grid `SurfaceMetric` selects. `UseSmoothBlend` also drives the 3D surface's own smoothing
+(`MosaicSurfaceView.Smooth`) — one control smooths both representations together.
 
 This supersedes the old `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`/`SpectrumImageBuilder.cs`
 placeholders (removed entirely), which consumed the old `ObservationRecord.AveragedSpectrum.Max()` shape
 and were never wired to any View/ViewModel.
+
+#### 3D surface mesh: getting HelixToolkit to actually render on this machine
+
+`MosaicSurfaceView`'s mesh is built by hand from plain WPF 3D types (`Point3DCollection`/
+`Int32Collection`), not `HelixToolkit.Geometry.MeshBuilder` (works in `System.Numerics.Vector3` in this
+Helix version, its own conversion step for no real benefit here). Getting from "nothing renders" to a
+working surface took several rounds, each worth knowing about since they're generic WPF-3D traps, not
+Mosaic-specific:
+
+- **Every quad gets drawn, even where a corner is `NaN`.** The mesh originally skipped any quad
+  touching a no-data corner — reasonable-sounding, but on a sparse mosaic (a handful of scattered
+  positions on the full-sky grid, or a single-row/column sweep, where no two adjacent grid cells in
+  *both* axes ever both have data) that produced literally zero triangles: a mesh with real `Positions`
+  but nothing visible, so the viewport showed only its fixed corner overlays (coordinate triad, view
+  cube) with an empty main scene — which also makes mouse-wheel zoom look broken, since there's nothing
+  to zoom into. Every quad now draws, with NaN corners defaulting to zero height (and a neutral 0.5
+  texture coordinate) — matching what issue #13 asked for directly ("positions without data default to
+  zero").
+- **`MeshGeometry3D.Normals` needs setting explicitly.** WPF's automatic normal generation for a mesh
+  that only sets `Positions`/`TriangleIndices` turned out unreliable on this specific machine's WPF 3D
+  render tier — HelixToolkit's own `MeshBuilder`-based visuals always compute normals explicitly, which
+  is why a `GridLinesVisual3D`/`SphereVisual3D` diagnostic added mid-investigation rendered fine while
+  the hand-built mesh stayed invisible. Fixed by averaging face normals into an explicit
+  `Vector3DCollection` (smooth per-vertex shading, matching a continuous height-field).
+- **The real fix: raster `ImageBrush` materials don't render as 3D materials here, full stop.** The
+  height→colour gradient was originally an `ImageBrush` wrapping a `BitmapSource` from
+  `HeatmapImageBuilder.BuildLegendStrip` — swapping in a plain `Brushes.Orange` `SolidColorBrush`
+  (with the exact same mesh/normals) rendered immediately, proving the geometry was never the problem.
+  Neither a 1px- nor 2px-tall bitmap fixed it, so it isn't specifically an extreme-aspect-ratio/mipmap
+  issue — it's that *any* raster-backed `ImageBrush` used as a 3D `DiffuseMaterial` silently fails to
+  render on this machine's WPF 3D tier, while *vector* brushes (`LinearGradientBrush`,
+  `SolidColorBrush`) render fine. `BuildGradientBrush` now builds the same diverging blue-gray-red ramp
+  (`HeatmapImageBuilder.DivergingStops`) as a `LinearGradientBrush` instead. This also ruled out
+  HelixToolkit's own `TextVisual3D`/`BillboardTextVisual3D` for axis labels (both render text via
+  `RenderTargetBitmap` → `ImageBrush` internally — the same failing pattern) in favour of
+  `HelixToolkit.Wpf.TextCreator.CreateTextLabelModel3D`, which renders its `DiffuseMaterial` via a
+  `VisualBrush` wrapping a live `TextBlock` — vector-brush family, proven to render here.
+- **`ZoomExtents(0)`** is called every rebuild so the camera reframes on new data; `IsVisibleChanged` +
+  a `Dispatcher.InvokeAsync(..., DispatcherPriority.Loaded)` re-triggers the whole rebuild once the "3D
+  Surface" tab is actually shown, since a `HelixViewport3D` inside a never-selected `TabItem` has no
+  layout to frame a camera against yet.
+
+`MosaicSurfaceView.Smooth` (bound to `UseSmoothBlend`) bilinearly subdivides the grid (`
+UpsampleBilinear`, `SmoothSubdivisionFactor` = 4×) before meshing — the same NaN-dropping/renormalizing
+technique `HeatmapImageBuilder.BuildBlended` uses for the 2D heatmap's own smoothing, applied to the
+mesh's geometry instead of pixel colour. Without it, a genuinely sparse mosaic reads as sharp "pointy"
+spikes wherever an isolated measured cell sits surrounded by the zero-height NaN fallback described
+above; subdividing tapers each real measurement smoothly toward that fallback instead. Real cell centers
+always land exactly on the subdivided grid, so smoothing never moves an actual measurement.
+
+The mesh material is deliberately translucent (`TranslucentGradientBrush`, alpha baked into each
+gradient stop since the brush is `Frozen`), because the reference axis grid/labels below sit at `Y=0` —
+the plot's own zero reference (a real, physically meaningful plane in Velocity mode: 0 km/s, the
+LSR-corrected line center), not pinned below the data's own minimum — which for data straddling zero
+routinely sits *through* rather than under the surface. An opaque material would hide whatever part of
+the grid/labels falls behind it from the current view angle.
+
+#### Axis ticks and gridlines (Sky Mosaic 2D + 3D Surface)
+
+`RASTA.App/Helpers/AxisTicks.ComputeNiceTicks` (Heckbert's "nice numbers for graph labels") is shared
+by both views, so tick values read naturally (whole/5/10-step RA hours or Dec/Az/El degrees) instead of
+raw grid-cell-center fractions like "13.333h". `RASTA.App/Helpers/AxisGridLine`/`AxisTick` are the two
+small shared record types — deliberately `Helpers`, not `MosaicViewModel`, so `MosaicSurfaceView` (a
+View) can consume tick data without depending on a ViewModel type, consistent with its other bound
+properties (`IntensityGrid`/`XValues`/`YValues`) all being plain primitives.
+
+On the 2D heatmap, `MosaicViewModel.BuildPixelAxisOverlay` computes tick pixel positions once (using
+`AxisXCenters`/`AxisYCenters`' own cell spacing to recover the plotted range's true outer edges, not
+just the cell-center range) into `MosaicHeatmapDisplay.GridLines`/`XTickLabels`/`YTickLabels`, all in
+the same fixed pixel-coordinate space as `PixelWidth`/`PixelHeight` — so `MosaicView.xaml`'s overlay
+`ItemsControl`s can position everything with simple one-to-one bindings, no runtime
+`ActualWidth`/`ActualHeight` dependency. One genuine WPF trap surfaced building this: **`Canvas.Left`/
+`Canvas.Top`/`Canvas.Right` set inside an `ItemsControl`'s `DataTemplate` silently do nothing** — those
+attached properties only affect *direct* children of a `Canvas`, and an `ItemsControl`'s actual direct
+children (when `Canvas` is the `ItemsPanel`) are the auto-generated item containers
+(`ContentPresenter`), not the element inside the `DataTemplate`. Every tick label collapsed to the
+canvas's own (0,0) origin until the position was moved onto an `ItemContainerStyle` targeting
+`ContentPresenter` instead. The gridlines (`Line` elements) never had this problem, since `Line`
+positions itself via its own `X1`/`Y1`/`X2`/`Y2` coordinates rather than `Canvas.Left`/`Top`.
+
+On the 3D surface, `MosaicSurfaceView.BuildAxes` maps `XTicks`/`YTicks`' real RA/Dec(/Az/El) values into
+the mesh's own normalized model space via the same `NormX`/`NormZ` closures the mesh uses, so a
+gridline/label always lines up with the data beside it regardless of the session's real coordinate
+range. Gridlines are one `LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed —
+proven-safe per the section above) rather than HelixToolkit's `GridLinesVisual3D`, since
+`GridLinesVisual3D`'s own `Center`/`MinorDistance` parameterization has no easy way to force gridlines
+onto already-computed nice-tick positions. Both X and Y tick labels share one fixed
+`textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) — matching HelixToolkit's own `SurfacePlotVisual3D`
+reference example's convention of one consistent direction pair for every axis, rather than a different
+one per axis (which is what originally produced upside-down labels). The label lies flat on the floor
+plane rather than billboarding to face the camera (this text technique has no such behaviour), so it
+reads best close to a top-down view — `HelixViewport3D`'s `ViewCube` "Top" corner gets there in one
+click, called out directly in `MosaicView.xaml`'s UI.
 
 ### Progress reporting convention
 
