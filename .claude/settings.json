@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -NoProfile -Command ' *)",
+      "Bash(git switch *)",
+      "Bash(dotnet tool *)",
+      "Bash(where wix *)",
+      "Bash(dotnet --list-sdks)",
+      "WebFetch(domain:docs.firegiant.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:wixtoolset.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(gh api *)",
+      "Bash(curl -s \"https://api.github.com/search/code?q=DotNetCoreSearch+repo:wixtoolset/wix\" -H \"Accept: application/vnd.github+json\")",
+      "Bash(curl -s \"https://api.github.com/repos/wixtoolset/wix/git/trees/main?recursive=1\" -H \"Accept: application/vnd.github+json\" -o /tmp_tree.json)",
+      "Bash(wc -c /tmp_tree.json)",
+      "Bash(grep -io '\"path\":\"[^\"]*netfx[^\"]*\"' /tmp_tree.json)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -sIL \"https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/10.0.10/windowsdesktop-runtime-10.0.10-win-x64.exe\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/wixtoolset/wix/main/src/wix/WixToolset.Core.Burn/Bundles/ProcessMsiPackageCommand.cs\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/wixtoolset/wix/main/src/wix/WixToolset.Core/Compiler_Bundle.cs\")",
+      "Bash(git mv *)",
+      "Bash(python3)",
+      "Bash(/c/Python314/python -c \"print\\('hello'\\)\")",
+      "Bash(/c/Python314/python \"C:\\\\Users\\\\PHILCR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Source-Repos-JPhilC-RASTA\\\\084b5be8-a6d6-4780-aeb5-35e5748666cb\\\\scratchpad\\\\analyze_spikes.py\")"
+    ]
+  }
+}
