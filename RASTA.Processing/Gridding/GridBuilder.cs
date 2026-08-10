@@ -45,9 +45,17 @@ namespace RASTA.Processing.Gridding
         /// much sky a small cluster of nearby positions actually covers. Cells no position
         /// landed in stay NaN (see MosaicGridResult.IntensityGrid), so the rendered map reads
         /// as "sky covered so far", growing as more sessions are processed.
+        ///
+        /// <paramref name="valueSelector"/> picks which MosaicPosition metric to bin -
+        /// LineStrengthDb for the sky-mosaic heatmap/height-field, or PeakVelocityKmPerSec for
+        /// the 3D surface's velocity mode; defaults to LineStrengthDb. Whichever metric is
+        /// chosen, a NaN reading (no usable line peak - see MosaicProcessor.FindLinePeak) is
+        /// skipped the same way, rather than poisoning its cell's average for other positions.
         /// </summary>
-        public MosaicGridResult BuildGrid(IEnumerable<MosaicPosition> positions, double cellSizeDeg)
+        public MosaicGridResult BuildGrid(
+            IEnumerable<MosaicPosition> positions, double cellSizeDeg, Func<MosaicPosition, double>? valueSelector = null)
         {
+            valueSelector ??= p => p.LineStrengthDb;
             var list = positions.ToList();
             if (list.Count == 0)
                 throw new InvalidOperationException("No positions provided.");
@@ -90,10 +98,11 @@ namespace RASTA.Processing.Gridding
 
             foreach (var p in list)
             {
-                // A position with no usable line peak (see MosaicProcessor.ComputeLineStrengthDb)
-                // reports NaN - skip it rather than letting it poison the whole cell's average
-                // for every other position that lands there.
-                if (double.IsNaN(p.LineStrengthDb))
+                // A position with no usable line peak (see MosaicProcessor.FindLinePeak) reports
+                // NaN for whichever metric valueSelector picks - skip it rather than letting it
+                // poison the whole cell's average for every other position that lands there.
+                double value = valueSelector(p);
+                if (double.IsNaN(value))
                     continue;
 
                 double x, y;
@@ -111,7 +120,7 @@ namespace RASTA.Processing.Gridding
                 int gx = Math.Clamp((int)Math.Floor((x - minX) / cellSizeX), 0, gridWidth - 1);
                 int gy = Math.Clamp((int)Math.Floor((y - minY) / cellSizeY), 0, gridHeight - 1);
 
-                intensityGrid[gx, gy] += p.LineStrengthDb;
+                intensityGrid[gx, gy] += value;
                 countGrid[gx, gy]++;
             }
 

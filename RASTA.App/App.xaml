@@ -21,6 +21,7 @@
             <converters:PlanTypeToVisibilityConverter x:Key="PlanTypeToVisibilityConverter"/>
             <converters:BooleanInverterConverter x:Key="BooleanInverterConverter"/>
             <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
+            <converters:EnumToBooleanConverter x:Key="EnumToBooleanConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

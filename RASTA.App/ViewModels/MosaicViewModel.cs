@@ -16,21 +16,42 @@ namespace RASTA.App.ViewModels;
 /// One row for the Positions summary DataGrid - a read-only projection of MosaicPosition,
 /// not the full HiSpectrum (which the DataGrid has no use for).
 /// </summary>
-public record MosaicPositionSummary(string Label, string Coordinates, double LineStrengthDb, int FileCount);
+public record MosaicPositionSummary(
+    string Label, string Coordinates, double LineStrengthDb, double PeakVelocityKmPerSec, int FileCount);
+
+/// <summary>
+/// Which MosaicPosition metric the "3D Surface" tab renders as height/colour - see
+/// MosaicViewModel.RenderSurface. The "Sky Mosaic" 2D heatmap always shows LineStrengthDb
+/// regardless of this toggle (a position-velocity map only means "toward/away from LSR", which
+/// doesn't read as a colour-brightness map the way dB does).
+/// </summary>
+public enum MosaicSurfaceMetric
+{
+    Strength,
+    Velocity
+}
 
 /// <summary>
 /// One rendered heatmap panel's worth of display state - always replaced as a whole new
 /// instance on rebuild (rather than mutated in place) so a single property-changed
 /// notification on the containing MosaicViewModel property refreshes every nested binding.
+/// PixelWidth/PixelHeight and the tick/gridline collections are all in that same fixed pixel
+/// space - see RenderSkyHeatmap and MosaicView.xaml's axis overlay, which sizes the Image and
+/// its overlaid ItemsControls identically so a tick's Position lines up exactly with the data.
 /// </summary>
 public class MosaicHeatmapDisplay
 {
     public BitmapSource? Image { get; init; }
+    public double PixelWidth { get; init; }
+    public double PixelHeight { get; init; }
     public string XAxisLabel { get; init; } = string.Empty;
     public string YAxisLabel { get; init; } = string.Empty;
     public string LegendMinText { get; init; } = string.Empty;
     public string LegendMaxText { get; init; } = string.Empty;
     public BitmapSource? LegendImage { get; init; }
+    public IReadOnlyList<AxisGridLine> GridLines { get; init; } = Array.Empty<AxisGridLine>();
+    public IReadOnlyList<AxisTick> XTickLabels { get; init; } = Array.Empty<AxisTick>();
+    public IReadOnlyList<AxisTick> YTickLabels { get; init; } = Array.Empty<AxisTick>();
 }
 
 /// <summary>
@@ -38,15 +59,20 @@ public class MosaicHeatmapDisplay
 /// dwell-point capture groups across positions), runs every position through the same
 /// HiStreamingPipeline VisualiseViewModel.ProcessHiCore uses for a single file (via
 /// MosaicProcessor), and renders the combined result as a sky-mosaic heatmap (RA/Dec x peak
-/// power relative to the cold-sky baseline, in dB - see MosaicProcessor.ComputeLineStrengthDb)
-/// and a 3D surface (see MosaicSurfaceView) built from that same grid. The heatmap renders via
-/// HeatmapImageBuilder (a hand-rolled BitmapSource) rather than LiveChartsCore's HeatSeries,
+/// power relative to the cold-sky baseline, in dB - see MosaicProcessor.FindLinePeak) and a
+/// 3D surface (see MosaicSurfaceView) built from a grid of the same shape. The heatmap renders
+/// via HeatmapImageBuilder (a hand-rolled BitmapSource) rather than LiveChartsCore's HeatSeries,
 /// which produced a blank chart against real, well-spread session data - see
 /// HeatmapImageBuilder's remarks. UseSmoothBlend switches HeatmapImageBuilder.Build (one flat
 /// colour per measured cell, the default - each cell is a real independent measurement) for
 /// HeatmapImageBuilder.BuildBlended (bilinear-interpolated between neighbouring cell centers,
-/// for a continuous-looking gradient); both read the same cached grid, so toggling it re-renders
-/// instantly without reprocessing the session.
+/// for a continuous-looking gradient) on the 2D heatmap, and drives MosaicSurfaceView's own
+/// bilinear grid subdivision on the 3D surface (see MosaicSurfaceView.Smooth) - one control,
+/// both representations smooth together; all read already-cached grids, so toggling it
+/// re-renders instantly without reprocessing the session. SurfaceMetric independently picks
+/// which MosaicPosition field the 3D surface's height/colour represents - LineStrengthDb or
+/// PeakVelocityKmPerSec (see MosaicSurfaceMetric) - while the 2D heatmap always shows
+/// LineStrengthDb.
 ///
 /// Two other visualisations were tried here and dropped: a stacked-line "waterfall" of every
 /// position's spectrum (a live scrolling waterfall belongs to an actual capture in progress -
@@ -92,22 +118,32 @@ public partial class MosaicViewModel : ObservableObject
     private string statusSummary = string.Empty;
 
     // Off by default - HeatmapImageBuilder.Build (one flat colour per measured cell) stays the
-    // default rendering, unchanged. Toggling this on re-renders the already-cached grid via
-    // HeatmapImageBuilder.BuildBlended instead of reprocessing the session.
+    // default rendering, unchanged for the 2D heatmap. Also governs the 3D surface's own
+    // bilinear subdivision (see MosaicSurfaceView.Smooth) so one control smooths both
+    // representations consistently. Toggling this re-renders the already-cached grid(s)
+    // instead of reprocessing the session.
     [ObservableProperty]
     private bool useSmoothBlend;
 
-    // The grid behind the currently-displayed heatmap/surface, kept so toggling UseSmoothBlend
-    // can re-render immediately instead of re-running MosaicProcessor against the FITS files.
-    private GridBuilder.MosaicGridResult? _lastGrid;
+    // Which MosaicPosition metric the 3D surface currently renders - see MosaicSurfaceMetric.
+    [ObservableProperty]
+    private MosaicSurfaceMetric surfaceMetric = MosaicSurfaceMetric.Strength;
+
+    // The grids behind the currently-displayed heatmap/surface, kept so toggling
+    // UseSmoothBlend/SurfaceMetric can re-render immediately instead of re-running
+    // MosaicProcessor against the FITS files. Both are built together in BuildGrids since
+    // they're cheap re-binnings of the same already-processed MosaicResult.
+    private GridBuilder.MosaicGridResult? _lastStrengthGrid;
+    private GridBuilder.MosaicGridResult? _lastVelocityGrid;
 
     public bool BaselineAvailable => BaselineFile is not null;
 
     [ObservableProperty]
     private MosaicHeatmapDisplay skyHeatmap = new();
 
-    // Feeds MosaicSurfaceView's HelixToolkit mesh - the same RA/Dec x LineStrengthDb grid as
-    // the sky heatmap above, just consumed as a height field instead of a flat colour map.
+    // Feeds MosaicSurfaceView's HelixToolkit mesh - whichever of _lastStrengthGrid/
+    // _lastVelocityGrid SurfaceMetric currently selects (see RenderSurface), consumed as a
+    // height field instead of a flat colour map.
     [ObservableProperty]
     private double[,]? surfaceIntensityGrid;
 
@@ -116,6 +152,21 @@ public partial class MosaicViewModel : ObservableObject
 
     [ObservableProperty]
     private double[]? surfaceYValues; // Dec or El degrees
+
+    [ObservableProperty]
+    private string surfaceLegendMinText = string.Empty;
+
+    [ObservableProperty]
+    private string surfaceLegendMaxText = string.Empty;
+
+    // Real-valued (not pixel) axis ticks for MosaicSurfaceView's own floor grid/labels - see
+    // RenderSurface. Position is an RA/Az value for XTicks, Dec/El for YTicks; MosaicSurfaceView
+    // maps these into its normalized model space with the same NormX/NormZ it uses for the mesh.
+    [ObservableProperty]
+    private IReadOnlyList<AxisTick> surfaceXTicks = Array.Empty<AxisTick>();
+
+    [ObservableProperty]
+    private IReadOnlyList<AxisTick> surfaceYTicks = Array.Empty<AxisTick>();
 
     public ObservableCollection<MosaicPositionSummary> Positions { get; } = new();
 
@@ -207,9 +258,14 @@ public partial class MosaicViewModel : ObservableObject
 
     partial void OnUseSmoothBlendChanged(bool value)
     {
-        if (_lastGrid is not null)
-            RenderSkyHeatmap(_lastGrid);
+        // The 3D surface's own subdivision smoothing is driven by MosaicSurfaceView's Smooth
+        // binding directly (see MosaicView.xaml), so it re-renders on its own from this same
+        // property change - only the 2D heatmap needs an explicit re-render call here.
+        if (_lastStrengthGrid is not null)
+            RenderSkyHeatmap(_lastStrengthGrid);
     }
+
+    partial void OnSurfaceMetricChanged(MosaicSurfaceMetric value) => RenderSurface();
 
     [RelayCommand]
     private async Task GenerateMosaicAsync()
@@ -233,7 +289,7 @@ public partial class MosaicViewModel : ObservableObject
                 despike: DespikeEnabled,
                 despikeThresholdSigma: DespikeThresholdSigma);
 
-            BuildSkyHeatmap(result);
+            BuildGrids(result);
             BuildPositionsSummary(result);
 
             StatusSummary = $"{result.Positions.Count} position(s) processed.";
@@ -245,18 +301,25 @@ public partial class MosaicViewModel : ObservableObject
         }
     }
 
-    private void BuildSkyHeatmap(MosaicResult result)
+    /// <summary>
+    /// Bins the just-processed session into both grids MosaicSurfaceMetric can select between -
+    /// cheap re-binnings of the same MosaicResult, so both are always kept in sync with each
+    /// other and ready for an instant SurfaceMetric/UseSmoothBlend toggle without reprocessing.
+    /// </summary>
+    private void BuildGrids(MosaicResult result)
     {
-        var grid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg);
-        _lastGrid = grid;
-        RenderSkyHeatmap(grid);
+        _lastStrengthGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.LineStrengthDb);
+        _lastVelocityGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.PeakVelocityKmPerSec);
+        RenderSkyHeatmap(_lastStrengthGrid);
+        RenderSurface();
     }
 
     /// <summary>
-    /// Re-renders the heatmap/legend/3D-surface grid from an already-built
-    /// GridBuilder.MosaicGridResult - split out from BuildSkyHeatmap so toggling
-    /// UseSmoothBlend can call this directly against _lastGrid instead of re-running
-    /// MosaicProcessor against the session's FITS files.
+    /// Re-renders the 2D heatmap/legend from an already-built GridBuilder.MosaicGridResult -
+    /// split out from BuildGrids so toggling UseSmoothBlend can call this directly against
+    /// _lastStrengthGrid instead of re-running MosaicProcessor against the session's FITS files.
+    /// Always LineStrengthDb - see MosaicSurfaceMetric's remarks on why the 2D map doesn't
+    /// follow the 3D surface's metric toggle.
     /// </summary>
     private void RenderSkyHeatmap(GridBuilder.MosaicGridResult grid)
     {
@@ -264,27 +327,109 @@ public partial class MosaicViewModel : ObservableObject
         var (min, max) = FindRange(grid.IntensityGrid);
         var (pixelWidth, pixelHeight) = SizeImageForGrid(grid.IntensityGrid);
 
+        var (gridLines, xLabels, yLabels) = BuildPixelAxisOverlay(grid, altAz, pixelWidth, pixelHeight);
+
         SkyHeatmap = new MosaicHeatmapDisplay
         {
             Image = UseSmoothBlend
                 ? HeatmapImageBuilder.BuildBlended(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true)
                 : HeatmapImageBuilder.Build(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true),
-            XAxisLabel = altAz
-                ? $"Azimuth: {grid.AxisXCenters[0]:F1}° → {grid.AxisXCenters[^1]:F1}°"
-                : $"RA: {grid.AxisXCenters[0]:F1}h → {grid.AxisXCenters[^1]:F1}h",
-            YAxisLabel = altAz
-                ? $"Elevation: {grid.AxisYCenters[0]:F1}° → {grid.AxisYCenters[^1]:F1}°"
-                : $"Dec: {grid.AxisYCenters[0]:F1}° → {grid.AxisYCenters[^1]:F1}°",
+            PixelWidth = pixelWidth,
+            PixelHeight = pixelHeight,
+            XAxisLabel = altAz ? "Azimuth" : "RA",
+            YAxisLabel = altAz ? "Elevation" : "Dec",
             LegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} dB",
             LegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} dB",
-            LegendImage = HeatmapImageBuilder.BuildLegendStrip(200)
+            LegendImage = HeatmapImageBuilder.BuildLegendStrip(200),
+            GridLines = gridLines,
+            XTickLabels = xLabels,
+            YTickLabels = yLabels
         };
+    }
 
-        // The 3D surface renders this exact grid as a height field - same positions, same
-        // LineStrengthDb values, just RA/Dec on the plane and dB as height instead of colour.
+    /// <summary>
+    /// Computes "nice" axis ticks (see AxisTicks.ComputeNiceTicks) over the grid's full plotted
+    /// extent (cell 0's outer edge to the last cell's outer edge - half a cell wider each side
+    /// than the cell-center range the old XAxisLabel/YAxisLabel range text used) and maps each
+    /// to a pixel position in the same coordinate space as the heatmap Image, so
+    /// MosaicView.xaml's overlay ItemsControls can position Lines/TextBlocks with plain
+    /// one-to-one bindings - no runtime ActualWidth/ActualHeight dependency, since pixelWidth/
+    /// pixelHeight are already fixed at build time. Y uses the heatmap's own flipY=true
+    /// convention (Dec/Alt increases upward, i.e. toward pixel row 0).
+    /// </summary>
+    private static (List<AxisGridLine> gridLines, List<AxisTick> xLabels, List<AxisTick> yLabels) BuildPixelAxisOverlay(
+        GridBuilder.MosaicGridResult grid, bool altAz, int pixelWidth, int pixelHeight)
+    {
+        var gridLines = new List<AxisGridLine>();
+        var xLabels = new List<AxisTick>();
+        var yLabels = new List<AxisTick>();
+
+        double cellSizeX = grid.AxisXCenters.Length > 1 ? grid.AxisXCenters[1] - grid.AxisXCenters[0] : 1;
+        double cellSizeY = grid.AxisYCenters.Length > 1 ? grid.AxisYCenters[1] - grid.AxisYCenters[0] : 1;
+        double minX = grid.AxisXCenters[0] - cellSizeX / 2;
+        double maxX = grid.AxisXCenters[^1] + cellSizeX / 2;
+        double minY = grid.AxisYCenters[0] - cellSizeY / 2;
+        double maxY = grid.AxisYCenters[^1] + cellSizeY / 2;
+        double xRange = Math.Max(maxX - minX, 1e-9);
+        double yRange = Math.Max(maxY - minY, 1e-9);
+
+        foreach (double tick in AxisTicks.ComputeNiceTicks(minX, maxX))
+        {
+            double px = (tick - minX) / xRange * pixelWidth;
+            gridLines.Add(new AxisGridLine(px, 0, px, pixelHeight));
+            xLabels.Add(new AxisTick(FormatAxisValue(tick, isXAxis: true, altAz), px));
+        }
+
+        foreach (double tick in AxisTicks.ComputeNiceTicks(minY, maxY))
+        {
+            double py = pixelHeight - (tick - minY) / yRange * pixelHeight;
+            gridLines.Add(new AxisGridLine(0, py, pixelWidth, py));
+            yLabels.Add(new AxisTick(FormatAxisValue(tick, isXAxis: false, altAz), py - 6));
+        }
+
+        return (gridLines, xLabels, yLabels);
+    }
+
+    /// <summary>RA in hours, Dec signed degrees, Az/El unsigned degrees.</summary>
+    private static string FormatAxisValue(double value, bool isXAxis, bool altAz)
+    {
+        if (altAz)
+            return $"{value:F0}°";
+        return isXAxis ? $"{value:F1}h" : $"{value.ToString("+0;-0;0")}°";
+    }
+
+    /// <summary>
+    /// Feeds MosaicSurfaceView from whichever of _lastStrengthGrid/_lastVelocityGrid
+    /// SurfaceMetric currently selects - split out so both the metric toggle and a fresh
+    /// BuildGrids can reach it without duplicating the grid-picking logic.
+    /// </summary>
+    private void RenderSurface()
+    {
+        var grid = SurfaceMetric == MosaicSurfaceMetric.Velocity ? _lastVelocityGrid : _lastStrengthGrid;
+        if (grid is null)
+            return;
+
+        bool altAz = grid.Mode == CoordinateMode.AltAz;
+        var (min, max) = FindRange(grid.IntensityGrid);
+        string unit = SurfaceMetric == MosaicSurfaceMetric.Velocity ? "km/s" : "dB";
+
         SurfaceIntensityGrid = grid.IntensityGrid;
         SurfaceXValues = grid.AxisXCenters;
         SurfaceYValues = grid.AxisYCenters;
+        SurfaceLegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} {unit}";
+        SurfaceLegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} {unit}";
+
+        double cellSizeX = grid.AxisXCenters.Length > 1 ? grid.AxisXCenters[1] - grid.AxisXCenters[0] : 1;
+        double cellSizeY = grid.AxisYCenters.Length > 1 ? grid.AxisYCenters[1] - grid.AxisYCenters[0] : 1;
+        double minX = grid.AxisXCenters[0] - cellSizeX / 2;
+        double maxX = grid.AxisXCenters[^1] + cellSizeX / 2;
+        double minY = grid.AxisYCenters[0] - cellSizeY / 2;
+        double maxY = grid.AxisYCenters[^1] + cellSizeY / 2;
+
+        SurfaceXTicks = AxisTicks.ComputeNiceTicks(minX, maxX)
+            .Select(v => new AxisTick(FormatAxisValue(v, isXAxis: true, altAz), v)).ToList();
+        SurfaceYTicks = AxisTicks.ComputeNiceTicks(minY, maxY)
+            .Select(v => new AxisTick(FormatAxisValue(v, isXAxis: false, altAz), v)).ToList();
     }
 
     private void BuildPositionsSummary(MosaicResult result)
@@ -298,7 +443,8 @@ public partial class MosaicViewModel : ObservableObject
                 CoordinateMode.AltAz => $"Az {p.AzDeg:F1}°  El {p.AltDeg:F1}°",
                 _ => "n/a"
             };
-            Positions.Add(new MosaicPositionSummary(p.Label, coords, p.LineStrengthDb, p.SourceFiles.Count));
+            Positions.Add(new MosaicPositionSummary(
+                p.Label, coords, p.LineStrengthDb, p.PeakVelocityKmPerSec, p.SourceFiles.Count));
         }
     }
 

@@ -28,8 +28,6 @@
             <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="10"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="10"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -83,11 +81,6 @@
 
         <!-- Results -->
         <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="9">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="3*"/>
-                <RowDefinition Height="5"/>
-                <RowDefinition Height="2*"/>
-            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="5"/>
@@ -103,11 +96,96 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0"
-                                BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Center">
-                                <Image Source="{Binding SkyHeatmap.Image}" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"
-                                   MaxWidth="960" MaxHeight="520"/>
-                        </Border>
+                        <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                      HorizontalAlignment="Center" VerticalAlignment="Top"
+                                      MaxWidth="1000" MaxHeight="560">
+                            <!-- Axis-label column/row sized in Auto so they hug the plot's own
+                                 PixelWidth/PixelHeight - the plot cell (Row 0/Col 1) fixes both
+                                 via explicit Width/Height, and the label strips (Row 1/Col 0)
+                                 mirror that through Grid's own shared row-height/column-width,
+                                 so every tick's pixel Position lines up with the plot beneath it
+                                 without any runtime ActualWidth/ActualHeight bindings. -->
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Dec/Elevation tick labels -->
+                                <Canvas Grid.Row="0" Grid.Column="0" Width="34"
+                                        Height="{Binding SkyHeatmap.PixelHeight}">
+                                    <ItemsControl ItemsSource="{Binding SkyHeatmap.YTickLabels}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <!-- Canvas.Left/Top/Right only take effect on a DIRECT
+                                             child of a Canvas - the ItemsPanel Canvas's actual
+                                             direct children are the auto-generated item
+                                             containers (ContentPresenter), not the TextBlock
+                                             inside the DataTemplate, so the position has to be
+                                             set here via ItemContainerStyle, not on the
+                                             TextBlock itself (which silently no-ops, collapsing
+                                             every label to the Canvas's own (0,0) origin). -->
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="ContentPresenter">
+                                                <Setter Property="Canvas.Right" Value="4"/>
+                                                <Setter Property="Canvas.Top" Value="{Binding Position}"/>
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Label}" FontSize="10"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Canvas>
+
+                                <!-- Heatmap plot + faint gridlines, both fixed to the same pixel size -->
+                                <Border Grid.Row="0" Grid.Column="1" BorderBrush="Gray" BorderThickness="1">
+                                    <Grid Width="{Binding SkyHeatmap.PixelWidth}" Height="{Binding SkyHeatmap.PixelHeight}">
+                                        <Image Source="{Binding SkyHeatmap.Image}" Stretch="Fill"
+                                               RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                                        <ItemsControl ItemsSource="{Binding SkyHeatmap.GridLines}" IsHitTestVisible="False">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                          Stroke="#40808080" StrokeThickness="1"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Grid>
+                                </Border>
+
+                                <!-- RA/Azimuth tick labels -->
+                                <Canvas Grid.Row="1" Grid.Column="1" Width="{Binding SkyHeatmap.PixelWidth}" Height="18">
+                                    <ItemsControl ItemsSource="{Binding SkyHeatmap.XTickLabels}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <!-- See the Dec/Elevation Canvas above for why this has
+                                             to be an ItemContainerStyle, not Canvas.Left on the
+                                             TextBlock itself. -->
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="ContentPresenter">
+                                                <Setter Property="Canvas.Left" Value="{Binding Position}"/>
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Label}" FontSize="10" Margin="2,2,0,0"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Canvas>
+                            </Grid>
+                        </ScrollViewer>
 
                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
                             <TextBlock Text="{Binding SkyHeatmap.YAxisLabel}" Margin="0,0,15,0"/>
@@ -126,9 +204,40 @@
                     </Grid>
                 </TabItem>
                 <TabItem Header="3D Surface">
-                    <views:MosaicSurfaceView IntensityGrid="{Binding SurfaceIntensityGrid}"
-                                              XValues="{Binding SurfaceXValues}"
-                                              YValues="{Binding SurfaceYValues}"/>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <views:MosaicSurfaceView Grid.Row="0"
+                                                  IntensityGrid="{Binding SurfaceIntensityGrid}"
+                                                  XValues="{Binding SurfaceXValues}"
+                                                  YValues="{Binding SurfaceYValues}"
+                                                  Smooth="{Binding UseSmoothBlend}"
+                                                  XTicks="{Binding SurfaceXTicks}"
+                                                  YTicks="{Binding SurfaceYTicks}"/>
+
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
+                            <TextBlock Text="Height:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                            <RadioButton Content="Strength (dB)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
+                                         IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Strength}"/>
+                            <RadioButton Content="Velocity (km/s)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
+                                         IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Velocity}"/>
+                            <CheckBox Content="Smooth blend" IsChecked="{Binding UseSmoothBlend}"
+                                      VerticalAlignment="Center" Margin="25,0,0,0"
+                                      ToolTip="Bilinear-subdivide the grid before meshing, instead of one flat facet per measured cell - shares the Sky Mosaic tab's own smoothing toggle"/>
+                            <TextBlock Text="(axis labels read best from the ViewCube's &quot;Top&quot; view)"
+                                       FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,6">
+                            <TextBlock Text="{Binding SurfaceLegendMinText}" VerticalAlignment="Center"/>
+                            <TextBlock Text=" → " VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding SurfaceLegendMaxText}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </TabItem>
             </TabControl>
 
@@ -138,6 +247,7 @@
                     <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="*"/>
                     <DataGridTextColumn Header="Coordinates" Binding="{Binding Coordinates}" Width="2*"/>
                     <DataGridTextColumn Header="Line Strength (dB)" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="*"/>
+                    <DataGridTextColumn Header="Velocity (km/s)" Binding="{Binding PeakVelocityKmPerSec, StringFormat=F1}" Width="*"/>
                     <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="Auto"/>
                 </DataGrid.Columns>
             </DataGrid>
