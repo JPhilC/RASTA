@@ -131,6 +131,38 @@ sets the Y-axis from the 1st/99th percentile of the plotted spectrum plus a marg
 `Min()`/`Max()`, so a handful of outlier bins like this can no longer squash the genuine spectral shape
 into a flat line — a display-only fix that never touches the underlying data.
 
+`HiStreamingPipeline` also exposes an **opt-in** narrowband-RFI despike (`Despike` — a single-spectrum
+overload and a baseline+capture-pair overload used by `Process` via its `despike`/
+`despikeThresholdSigma` parameters), aimed at things like a USB3/mount-controller comb spur — a
+different problem from the receiver's own DC/LO spike (`RemoveDcSpike`, above, stays always-on and
+separate). Unlike `RemoveDcSpike`'s baseline-only trust, this runs on whichever spectrum it's given
+and is opt-in for exactly that reason. Detection is a robust (MAD-based) local sigma test swept across
+every bin (`MarkSpikeCandidates`/`LocalRobustStatsExcluding`) rather than a fixed dB-ratio threshold —
+a real spur is often only a couple of dB above the local continuum, but once a spectrum is heavily
+averaged the residual noise floor shrinks enough that even a small spur reads as many sigmas out.
+Detection uses a stricter threshold (`despikeThresholdSigma`, default
+`HiConstants.DefaultDespikeThresholdSigma` = 5) than the growth/hysteresis pass that widens each flagged
+bin outward (capped at the more permissive `SpikeGrowSigmaCap` = 2.5), so a spike's shoulder bins —
+individually more modest than its peak — still get excised instead of leaving a "flattened top, sloped
+sides" artifact; the growth/reference window widths are specified in Hz and converted to bins from the
+actual `sampleRateHz`/FFT size, since the underlying feature (measured wider than a bare Hann main lobe
+alone would produce, consistent with real modulation bandwidth) is physically fixed in Hz, not bin
+count. The pair overload flags each spectrum independently (their averaging depth — and therefore noise
+floor — commonly differs) but excises the *union* of flagged bins identically in both, since
+interpolating only one would hand the baseline-division step a spike/smooth mismatch it didn't have
+before. Exposed as `VisualiseViewModel.DespikeEnabled`/`DespikeThresholdSigma` (mirrored into
+`MosaicViewModel` so Mosaic processing follows the same toggle), `VisualiseViewModel.
+ExportDespikeDebugCsvCommand` (a raw-vs-despiked CSV dump written next to the source FITS file), and
+`CapturePlan.DespikeEnabled` (applies it to `CaptureViewModel`'s *live* spectrum while a sweep runs, off
+by default like the pipeline itself).
+
+`SpectrumViewModel` also renders a fixed vertical dashed reference line (`Sections`, a zero-width
+`RectangularSection`) at the unshifted HI rest position — 0 km/s for `HiVelocity` (that axis is
+LSR-corrected, so 0 means "at rest relative to the LSR"; real emission still typically shows up offset
+from it due to the source's own galactic kinematics) or the static HI rest frequency
+(`HiConstants.HiFreqHz`) for the frequency-axis modes (`HiFrequency`/`TTRT`/`Ratio`, never
+LSR-corrected) — repositioned on every `Mode` change (`OnModeChanged` → `UpdateHiReferenceLine`).
+
 `HiPipeline/SkaoPipelineProcessor.cs` is a separate, fixed-256-bin port of the SKAO TTRT reference
 pipeline, kept for cross-checking against `HiStreamingPipeline`'s FFT-size-agnostic version.
 `VisualiseViewModel` exposes it plus three other modes as `SpectrumMode`: `HiFrequency`, `HiVelocity`,
@@ -192,24 +224,56 @@ smoothing pass) - was promoted to `RASTA.Processing/Dsp/SavitzkyGolay.cs` rather
 ### Calibration flow
 
 `PrepareViewModel` → `CalibrationService` (loads a saved `CalibrationProfile` via
-`CalibrationRepository`, or triggers a new run and persists the result) → `Calibrator.RunFullCalibrationAsync`,
-run against a terminator on the SAWbird H1+ LNA input. Two jobs, in order:
+`CalibrationRepository`, or triggers a new run and persists the result) → `Calibrator`, split into two
+phases so `PrepareViewModel` (App layer) can drive UI/mount steps between them without `Calibrator`
+(Processing layer — no UI/hardware deps beyond `ISdrDevice`, see the layering rule above) needing to
+depend on `IUserPromptService` or slew the mount itself:
 
-1. **Gain sweep** — for each SDR-supported gain, capture raw IQ, hard-reject any gain where raw
-   I/Q bytes show real ADC saturation (`ComputeSaturationFraction` — a fraction-of-samples-at-the-
-   rail check on the raw bytes, not a spectral-domain proxy; threshold `SaturationFractionThreshold`
-   = 0.05%), then score survivors on a full-buffer-averaged power spectrum's flatness/spur-count/slope
-   (each metric min-max normalized across candidates before weighting, so the weights are
-   meaningful). A short settle period (`GainSettleTimeSec`) is discarded at the start of each trial
-   so a gain-switching transient doesn't bias that gain's averaged spectrum.
-2. **Baseline capture** — a *separately configurable* dwell (`BaselineDwellSeconds` in
-   `SettingsViewModel`/`PrepareViewModel`, decoupled from the per-gain sweep dwell — the sweep only
-   needs a couple of seconds per gain now that it averages the whole buffer, but the baseline is
-   reused for the rest of the session and deserves much better averaging) raw IQ capture at the
-   chosen gain, written to FITS as-is, and also reduced to an averaged linear-power baseline via
-   `HiStreamingAccumulator` + `ComputeSkAoPower` (matching exactly how the observation capture side
-   will later be averaged, so the two are directly comparable when `HiStreamingPipeline.Process`
-   divides one by the other).
+1. **Gain sweep** (`Calibrator.RunGainSweepAsync`) — for each SDR-supported gain, capture raw IQ
+   against a terminator on the SAWbird H1+ LNA input, hard-reject any gain where raw I/Q bytes show
+   real ADC saturation (`ComputeSaturationFraction` — a fraction-of-samples-at-the-rail check on the
+   raw bytes, not a spectral-domain proxy; threshold `SaturationFractionThreshold` = 0.05%), then
+   score survivors on a full-buffer-averaged power spectrum's flatness/spur-count/slope (each metric
+   min-max normalized across candidates before weighting, so the weights are meaningful). A short
+   settle period (`GainSettleTimeSec`) is discarded at the start of each trial so a gain-switching
+   transient doesn't bias that gain's averaged spectrum.
+2. **Cold-sky baseline capture** (`Calibrator.CaptureColdSkyBaselineAsync`) — a *separately
+   configurable* dwell (`BaselineDwellSeconds` in `SettingsViewModel`/`PrepareViewModel`, decoupled
+   from the per-gain sweep dwell) raw IQ capture at the chosen gain, written to FITS with full
+   site+pointing metadata (see "Capture and FITS conventions" below), and also reduced to an averaged
+   linear-power baseline via `HiStreamingAccumulator` + `ComputeSkAoPower` (matching exactly how the
+   observation capture side will later be averaged, so the two are directly comparable when
+   `HiStreamingPipeline.Process` divides one by the other).
+
+Between the two phases, `PrepareViewModel.RunCalibrationAsync` drives what replaced a plain
+terminator-baseline capture: prompt to reconnect the antenna, then compute 4 candidate "cold sky"
+positions via `ColdSkyLocator.FindCandidates` (a static, pure algorithm in
+`RASTA.Processing/Calibration/` — scans an Az/El grid above the horizon limit, converts each point to
+Galactic l/b via `AstronomyUtils.EquatorialToGalactic`, keeps only points clear of the HI-rich Galactic
+plane at the coldest `|b|` threshold that still yields enough candidates, then greedily picks `count`
+maximizing minimum azimuth separation — spread widely so there's a decent chance one is conveniently
+unobstructed from wherever the mount sits). These show in `ColdSkySelectionWindow` (a modal `Window`,
+not a `MessageBox` — the one other place this app needed a genuinely custom dialog); the mount then
+slews there (`SlewToRaDecAsync`/`SlewToAzAltAsync`, chosen from the connected mount's live `_mount.Mode`,
+not a plan). `RunCalibrationAsync` then loops: ask the user to confirm the *actual, physically
+slewed-to* position is unobstructed (e.g. no building/tree in the way); "No" excludes that azimuth
+(`ColdSkyLocator`'s `excludeAzimuthsDeg`, a ~20° exclusion radius since a real obstruction blocks a
+range of azimuths, not one exact bearing) and returns to the picker rather than capturing against
+whatever's in the way. The picker itself also offers **Recalculate** (asks for a fresh set, excluding
+whatever's currently shown, without closing the dialog) and **Cancel Calibration** (aborts the whole
+run), so the user can escape the loop and reposition the mount by hand if nothing offered works. All of
+this exists because a terminator baseline leaves a spurious edge hump in `HiSpectrum` — baselining
+against real, line-free sky fixes it, chosen automatically rather than by hand.
+
+Running a **new** calibration requires the mount to be connected (`PrepareViewModel.CanRunCalibration`),
+since the cold-sky step needs to slew; reusing a saved `CalibrationProfile` doesn't. `CalibrationProfile`
+carries the chosen baseline's `Baseline*` pointing (Az/Alt, RA/Dec, Galactic latitude) so the
+reuse-prompt can show where a saved profile's baseline actually pointed. `RunCalibrationAsync`'s
+`finally` returns the mount home (tracking off first, then `FindHomeAsync` — mirroring
+`CaptureViewModel.CaptureSweepAsync`'s end-of-sweep handling, and needed because this mount specifically
+refuses a slew while tracking is active) regardless of how the run ended; the status bar only reads
+"Calibration complete." once the mount is confirmed home after an actual success, leaving a prior
+"Cancelled."/"Failed." status alone otherwise.
 
 ### Sweep planning
 
@@ -250,6 +314,18 @@ capture folder as `{freqMHz}MHz/{yyyy-MM-dd}/{prefix}_....fits`; multi-file dwel
 (`CapturePlan.FilesPerPoint > 1`) get an `_{index}of{total}.fits` suffix via
 `FitsPathBuilder.BuildSweepFilePath`.
 
+`CaptureViewModel.QuickCaptureAsync` is a single-shot alternative to the sweep: it captures one raw
+IQ file at wherever the mount is *currently* pointed, for when the mount was positioned by hand or by
+a third-party ASCOM tool rather than by a `CapturePlan` sweep. It mirrors what `CaptureSweepAsync`
+does for one dwell point — same `FitsFileMetaData` shape, same `FitsPathBuilder.BuildSweepFilePath`
+naming (prefix `"quick"`, always `1of1`), same RA/Dec-vs-Az/Alt convention keyed off
+`TelescopeState.Mode` (built via `TargetPoint.FromRaDec`/`FromAzEl` from the mount's live polled
+position rather than a planned `TargetPoint`) — but skips slewing and plan/sweep building entirely.
+Its capture parameters (center frequency, sample rate, gain, FFT size) come from the active
+`CalibrationProfile`, not from a `CapturePlan`, so `CanQuickCapture` requires only a loaded
+calibration plus a connected mount/SDR — no plan needs to be selected. Dwell period is its own
+`QuickCaptureDwellSeconds` (default 30s), independent of any plan's `DwellTime`.
+
 `VisualiseViewModel` auto-combines these multi-file dwell points: selecting *any one* file matching
 `..._{n}of{total}.fits` (`ResolveRelatedCaptureFiles`/`ReadCombinedCaptureRawIq`) pulls in every
 sibling that exists alongside it, validates FFT size/sample rate/center frequency agree, and
@@ -257,6 +333,33 @@ concatenates their raw IQ — each file's contribution is first trimmed to a who
 native FFT frames, so a chunk extracted later never straddles the boundary between two physically
 discontinuous captures. `CombinedFileCount` (shown in the view) reports how many files went in;
 non-matching filenames (baseline files, single-file dwells) are unaffected.
+
+### Mosaic sky-map view
+
+`MosaicViewModel` (a tab in `VisualiseView`) points at a session folder containing one baseline and
+several multi-file dwell-point captures across different pointings, and turns them into a sky-mosaic.
+`MosaicProcessor` runs each position's capture through the same `HiStreamingPipeline`
+`VisualiseViewModel.ProcessHiCore` uses for a single file, then `ComputeLineStrengthDb` reduces each
+position's spectrum to one number: the strongest `RatioSpectrum` channel within a configurable window
+of the LSR-corrected line center (0 km/s), reported in dB *relative to the cold-sky baseline itself*
+(`10*log10(peakRatio / HiConstants.RatioDisplayScale)`) — deliberately single-differenced against the
+baseline rather than each position's own local continuum, so a position with no HI signal at all reads
+close to 0 dB rather than a fraction of a dB, and broad continuum brightness differences across the sky
+(e.g. toward the Galactic plane) show up too, not just narrow HI-line strength. `GridBuilder.BuildGrid`
+bins these onto a uniform RA/Dec-or-Az/El grid covering the *full* sky at a fixed cell size (not just
+the captured area's own bounding box — the intent is one full-sky canvas that fills in across many
+sessions over time, not a differently-scaled image every run); cells no position landed in stay `NaN`
+and should be skipped, not treated as 0 dB. The grid renders as a 2D heatmap via
+`RASTA.App/Helpers/HeatmapImageBuilder` (a hand-rolled `BitmapSource` — LiveChartsCore's `HeatSeries`
+produced a blank chart against real session data) — `Build` for one flat colour per measured cell (the
+default, since each cell is a real independent measurement) or `BuildBlended` for a bilinear-
+interpolated, continuous-looking gradient (`MosaicViewModel.UseSmoothBlend`, re-renders the
+already-cached grid instantly rather than reprocessing the session) — and as a 3D height-field surface
+(`MosaicSurfaceView`, built on `HelixToolkit.Wpf`) from that same grid.
+
+This supersedes the old `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`/`SpectrumImageBuilder.cs`
+placeholders (removed entirely), which consumed the old `ObservationRecord.AveragedSpectrum.Max()` shape
+and were never wired to any View/ViewModel.
 
 ### Progress reporting convention
 
@@ -282,6 +385,36 @@ estimated elapsed time against a nominal duration instead of measuring real prog
 once in `SweepPlanner.BuildSweep`), then after every completed target point it's overwritten using the
 *real* average time-per-point measured so far, extrapolated across the remaining points — not the
 original nominal figure held fixed for the whole run.
+
+### App-wide exception handling, graceful shutdown, and SDR device staleness
+
+`App.xaml.cs`'s `OnStartup` wires up three global handlers before anything else runs —
+`DispatcherUnhandledException` (UI thread; logs via `RastaLogger` and shows a `MessageBox`, then sets
+`e.Handled = true` so the app keeps running), `AppDomain.CurrentDomain.UnhandledException` (any other
+thread — can't stop the process terminating by that point, but at least logs and best-effort tells the
+user before it goes), and `TaskScheduler.UnobservedTaskException` (a faulted fire-and-forget `Task`
+nobody awaited). None of this existed before; any unhandled exception anywhere used to take the whole
+process down silently with no log entry and no message. `App.OnExit` complements this on the way out:
+it stops `TelescopeService`'s mount-polling `Task.Run` loop and disposes
+`UsbWatcherService`/`SdrDeviceService` before shutdown finishes — neither used to be stopped on close,
+and left running, either could still flip `SdrState`/`TelescopeState.IsConnected` from a background
+thread after `Application.Current` had already gone null, which crashed
+`NavigationViewModel`/`PrepareViewModel`'s direct `Application.Current.Dispatcher.Invoke(...)` calls
+with a `NullReferenceException`. `RASTA.App/Helpers/UiThread.SafeInvoke` is the matching defense-in-
+depth fix at every one of those call sites (checks `Application.Current`/`Dispatcher.HasShutdownStarted`
+first and no-ops instead of throwing), in case a similar race turns up somewhere else.
+
+`SdrDeviceService.EnumerateDevicesAsync` also stopped unconditionally disposing and reopening the
+persistent SDR device on every hot-plug event: `UsbWatcherService`'s debounce `Timer` reacts to *any*
+`WM_DEVICECHANGE` system-wide, not just the RTL-SDR's own, so this used to fire (tearing the device down
+and rebuilding it) for completely unrelated USB activity — harmless while a calibration run was quick,
+but a real risk once one can run for minutes (see "Calibration flow" above): if it raced with an
+in-progress capture, the forced reopen could fail and get misreported as the SDR having been unplugged.
+It now skips the dispose/reopen when the already-open device (matched by serial, stable across
+re-enumeration unlike `Index`) is still present in the freshly enumerated list.
+`PrepareViewModel.RunCalibrationAsync` also re-fetches the device from `SdrDeviceService` immediately
+before each SDR-touching step rather than holding one reference captured at the start of the run, so a
+device that does get swapped mid-flow is picked up rather than used stale.
 
 ### Versioning, logging paths, and the installer (RASTA.Setup / RASTA.Bundle)
 
@@ -336,16 +469,6 @@ Desktop Runtime ahead of the MSI) build the release installer:
 
 ### Known incomplete / placeholder areas
 
-- `RASTA.Processing/Gridding/GridBuilder.cs` and `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`
-  are early placeholders for combining many single-pointing observations into a sky-mosaic (RA/Dec
-  intensity map). They are registered in DI but **not called from any View/ViewModel** — dead code
-  for now — and they still consume the old `ObservationRecord.AveragedSpectrum.Max()` shape rather
-  than `HiStreamingPipeline`'s baseline-divided, continuum-subtracted `HiSpectrum`. Expect these to
-  be reworked (not extended as-is) as the foundation for a planned multi-position mosaic/heatmap
-  view: point at a folder containing a baseline and several multi-file position captures, run each
-  position through `HiStreamingPipeline` the way `VisualiseViewModel.ProcessHiCore` does for one
-  file, then grid/plot the results. `RASTA.Processing/VisualisationData/SpectrumImageBuilder.cs` is
-  the same story — registered in DI, no caller.
 - The **Process** workflow stage (`ProcessViewModel`/`ProcessView`) has been removed outright rather
   than reworked — it operated on the old `ObservationRecord`/`SpectrumMath` shape with no caller ever
   supplying it data, and everything it nominally did already happens directly in Visualise. Its one
