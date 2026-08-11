@@ -61,7 +61,7 @@ public partial class CaptureViewModel : ObservableObject
 
     public bool CanCaptureSweep => _activePlan != null
         && _device != null
-        && _calibrationService.CurrentCalibration != null
+        && _calibrationService.IsCalibrationAvailable
         && _mountState.IsConnected
         && _sdrState.IsConnected
         && _activePlan.PlanType != PlanType.Drift;
@@ -72,7 +72,7 @@ public partial class CaptureViewModel : ObservableObject
 
     public bool CanDriftCapture => _activePlan != null
         && _device != null
-        && _calibrationService.CurrentCalibration != null
+        && _calibrationService.IsCalibrationAvailable
         && _sdrState.IsConnected
         && _activePlan.PlanType == PlanType.Drift;
 
@@ -86,7 +86,7 @@ public partial class CaptureViewModel : ObservableObject
     // parameters CaptureSweepAsync draws gain/FFT size from - rather than from any
     // CapturePlan, so Quick Capture needs only a loaded calibration, not a selected plan.
     public bool CanQuickCapture => _device != null
-        && _calibrationService.CurrentCalibration != null
+        && _calibrationService.IsCalibrationAvailable
         && _mountState.IsConnected
         && _sdrState.IsConnected
         && !IsBusy;

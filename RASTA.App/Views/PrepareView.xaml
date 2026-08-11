@@ -123,15 +123,15 @@
 
             <TextBlock Grid.Row="1" Grid.Column="0"
                 Text="Calibration Frequency (Hz)"/>
-            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
+            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1"
                                         FrequencyHz="{Binding CalibrationFrequencyHz,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
                          Width="120" HorizontalAlignment="Left" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
-            
+
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Sample Rate (Hz)"/>
-            <controls:FrequencyEntryBox Grid.Row="2" Grid.Column="1" 
+            <controls:FrequencyEntryBox Grid.Row="2" Grid.Column="1"
                                         FrequencyHz="{Binding SampleRateHz,
                                         UpdateSourceTrigger=PropertyChanged,
                                         ValidatesOnDataErrors=True}"
@@ -159,23 +159,38 @@
                                         ValidatesOnDataErrors=True}"
                          Width="50" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
-            <!-- Calibrate Button -->
-            <Button Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Content="Calibrate"
-                    Width="200" Margin="5,20,0,5"
-                    Height="40"
-                    Command="{Binding RunCalibrationCommand}"
-                    Visibility="{Binding IsCalibrationRunning, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
 
-            <!-- Cancel Calibrate Button -->
+            <!-- Three independent calibration steps - see PrepareViewModel for why -->
+            <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
+                        Orientation="Horizontal" Margin="5,20,0,5"
+                        Visibility="{Binding IsCalibrationRunning, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+
+                <!-- 1. Load Last Calibration -->
+                <Button Content="Load Last Calibration"
+                        Width="180" Height="40" Margin="0,0,10,0"
+                        Command="{Binding LoadLastCalibrationCommand}"/>
+
+                <!-- 2. Calibrate Device Gain -->
+                <Button Content="Calibrate Device Gain"
+                        Width="180" Height="40" Margin="0,0,10,0"
+                        Command="{Binding CalibrateGainCommand}"/>
+
+                <!-- 3. Capture Baseline -->
+                <Button Content="Capture Baseline"
+                        Width="180" Height="40"
+                        Command="{Binding CaptureBaselineCommand}"/>
+            </StackPanel>
+
+            <!-- Cancel Button - shown in place of the three above while any of them runs -->
             <Button Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Content="Cancel"
                     Width="200" Margin="5,20,0,5"
                     Height="40"
                     Command="{Binding CancelCalibrationCommand}"
                     Visibility="{Binding IsCalibrationRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
-            <!-- Hint when a new calibration can't be run because the mount isn't connected -->
+            <!-- Hint when Capture Baseline can't be run because the mount isn't connected -->
             <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
-                       Text="Connect the telescope to run a new calibration (a cold-sky baseline capture needs it to slew)."
+                       Text="Connect the telescope to capture a baseline (it needs to slew to a cold-sky position)."
                        Foreground="Gray" Margin="5,5,0,0" TextWrapping="Wrap"
                        Visibility="{Binding IsConnectedMount, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
 

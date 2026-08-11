@@ -223,57 +223,68 @@ smoothing pass) - was promoted to `RASTA.Processing/Dsp/SavitzkyGolay.cs` rather
 
 ### Calibration flow
 
-`PrepareViewModel` → `CalibrationService` (loads a saved `CalibrationProfile` via
-`CalibrationRepository`, or triggers a new run and persists the result) → `Calibrator`, split into two
-phases so `PrepareViewModel` (App layer) can drive UI/mount steps between them without `Calibrator`
-(Processing layer — no UI/hardware deps beyond `ISdrDevice`, see the layering rule above) needing to
-depend on `IUserPromptService` or slew the mount itself:
+`PrepareViewModel` exposes calibration as **three independent, button-triggered steps** on
+`PrepareView` rather than one monolithic run, so an interrupted session (app closed, SDR unplugged,
+etc.) can be resumed at whichever step it got to instead of starting over:
 
-1. **Gain sweep** (`Calibrator.RunGainSweepAsync`) — for each SDR-supported gain, capture raw IQ
-   against a terminator on the SAWbird H1+ LNA input, hard-reject any gain where raw I/Q bytes show
-   real ADC saturation (`ComputeSaturationFraction` — a fraction-of-samples-at-the-rail check on the
-   raw bytes, not a spectral-domain proxy; threshold `SaturationFractionThreshold` = 0.05%), then
-   score survivors on a full-buffer-averaged power spectrum's flatness/spur-count/slope (each metric
-   min-max normalized across candidates before weighting, so the weights are meaningful). A short
-   settle period (`GainSettleTimeSec`) is discarded at the start of each trial so a gain-switching
-   transient doesn't bias that gain's averaged spectrum.
-2. **Cold-sky baseline capture** (`Calibrator.CaptureColdSkyBaselineAsync`) — a *separately
-   configurable* dwell (`BaselineDwellSeconds` in `SettingsViewModel`/`PrepareViewModel`, decoupled
-   from the per-gain sweep dwell) raw IQ capture at the chosen gain, written to FITS with full
-   site+pointing metadata (see "Capture and FITS conventions" below), and also reduced to an averaged
-   linear-power baseline via `HiStreamingAccumulator` + `ComputeSkAoPower` (matching exactly how the
-   observation capture side will later be averaged, so the two are directly comparable when
-   `HiStreamingPipeline.Process` divides one by the other).
+1. **Load Last Calibration** (`LoadLastCalibrationCommand`) — loads whatever `CalibrationProfile`
+   `CalibrationRepository` has on disk via `CalibrationService.TryLoadSavedCalibrationAsync`, gain-only
+   or complete, and sets it as `Calibration`. Always available (`CanLoadLastCalibration`, gated only on
+   nothing else currently running) since it touches no hardware.
+2. **Calibrate Device Gain** (`CalibrateGainCommand`, gated on `IsConnectedSdr` — no mount needed) —
+   runs `Calibrator.RunGainSweepAsync`: for each SDR-supported gain, capture raw IQ against a terminator
+   on the SAWbird H1+ LNA input, hard-reject any gain where raw I/Q bytes show real ADC saturation
+   (`ComputeSaturationFraction` — a fraction-of-samples-at-the-rail check on the raw bytes, not a
+   spectral-domain proxy; threshold `SaturationFractionThreshold` = 0.05%), then score survivors on a
+   full-buffer-averaged power spectrum's flatness/spur-count/slope (each metric min-max normalized
+   across candidates before weighting, so the weights are meaningful). A short settle period
+   (`GainSettleTimeSec`) is discarded at the start of each trial so a gain-switching transient doesn't
+   bias that gain's averaged spectrum. The chosen gain is immediately wrapped into a *gain-only*
+   `CalibrationProfile` (`CalibrationService.SaveGainOnlyCalibrationAsync` — empty `BaselineSpectrum`)
+   and persisted to disk right away, so this step alone survives an app restart and Load Last
+   Calibration can pick it back up ready for step 3.
+3. **Capture Baseline** (`CaptureBaselineCommand`, gated on `Calibration != null` — a profile must
+   already be started or loaded — **and** the mount connected, since it needs to slew) — prompts to
+   reconnect the antenna, then computes 4 candidate "cold sky" positions via `ColdSkyLocator.FindCandidates`
+   (a static, pure algorithm in `RASTA.Processing/Calibration/` — scans an Az/El grid above the horizon
+   limit, converts each point to Galactic l/b via `AstronomyUtils.EquatorialToGalactic`, keeps only
+   points clear of the HI-rich Galactic plane at the coldest `|b|` threshold that still yields enough
+   candidates, then greedily picks `count` maximizing minimum azimuth separation — spread widely so
+   there's a decent chance one is conveniently unobstructed from wherever the mount sits). These show
+   in `ColdSkySelectionWindow` (a modal `Window`, not a `MessageBox` — the one other place this app
+   needed a genuinely custom dialog); the mount then slews there (`SlewToRaDecAsync`/`SlewToAzAltAsync`,
+   chosen from the connected mount's live `_mount.Mode`, not a plan). `CaptureBaselineAsync` then loops:
+   ask the user to confirm the *actual, physically slewed-to* position is unobstructed (e.g. no
+   building/tree in the way); "No" excludes that azimuth (`ColdSkyLocator`'s `excludeAzimuthsDeg`, a
+   ~20° exclusion radius since a real obstruction blocks a range of azimuths, not one exact bearing) and
+   returns to the picker rather than capturing against whatever's in the way. The picker itself also
+   offers **Recalculate** (asks for a fresh set, excluding whatever's currently shown, without closing
+   the dialog) and **Cancel Calibration** (aborts the whole step), so the user can escape the loop and
+   reposition the mount by hand if nothing offered works. Once a position is confirmed,
+   `Calibrator.CaptureColdSkyBaselineAsync` runs a *separately configurable* dwell
+   (`BaselineDwellSeconds` in `SettingsViewModel`/`PrepareViewModel`, decoupled from the gain sweep's own
+   dwell) raw IQ capture at the gain/frequency/sample-rate/FFT-size already recorded on `Calibration`,
+   written to FITS with full site+pointing metadata (see "Capture and FITS conventions" below), and
+   also reduced to an averaged linear-power baseline via `HiStreamingAccumulator` + `ComputeSkAoPower`
+   (matching exactly how the observation capture side will later be averaged, so the two are directly
+   comparable when `HiStreamingPipeline.Process` divides one by the other) — producing the completed
+   profile, persisted over the gain-only one. All of this exists because a terminator baseline leaves a
+   spurious edge hump in `HiSpectrum` — baselining against real, line-free sky fixes it, chosen
+   automatically rather than by hand.
 
-Between the two phases, `PrepareViewModel.RunCalibrationAsync` drives what replaced a plain
-terminator-baseline capture: prompt to reconnect the antenna, then compute 4 candidate "cold sky"
-positions via `ColdSkyLocator.FindCandidates` (a static, pure algorithm in
-`RASTA.Processing/Calibration/` — scans an Az/El grid above the horizon limit, converts each point to
-Galactic l/b via `AstronomyUtils.EquatorialToGalactic`, keeps only points clear of the HI-rich Galactic
-plane at the coldest `|b|` threshold that still yields enough candidates, then greedily picks `count`
-maximizing minimum azimuth separation — spread widely so there's a decent chance one is conveniently
-unobstructed from wherever the mount sits). These show in `ColdSkySelectionWindow` (a modal `Window`,
-not a `MessageBox` — the one other place this app needed a genuinely custom dialog); the mount then
-slews there (`SlewToRaDecAsync`/`SlewToAzAltAsync`, chosen from the connected mount's live `_mount.Mode`,
-not a plan). `RunCalibrationAsync` then loops: ask the user to confirm the *actual, physically
-slewed-to* position is unobstructed (e.g. no building/tree in the way); "No" excludes that azimuth
-(`ColdSkyLocator`'s `excludeAzimuthsDeg`, a ~20° exclusion radius since a real obstruction blocks a
-range of azimuths, not one exact bearing) and returns to the picker rather than capturing against
-whatever's in the way. The picker itself also offers **Recalculate** (asks for a fresh set, excluding
-whatever's currently shown, without closing the dialog) and **Cancel Calibration** (aborts the whole
-run), so the user can escape the loop and reposition the mount by hand if nothing offered works. All of
-this exists because a terminator baseline leaves a spurious edge hump in `HiSpectrum` — baselining
-against real, line-free sky fixes it, chosen automatically rather than by hand.
-
-Running a **new** calibration requires the mount to be connected (`PrepareViewModel.CanRunCalibration`),
-since the cold-sky step needs to slew; reusing a saved `CalibrationProfile` doesn't. `CalibrationProfile`
-carries the chosen baseline's `Baseline*` pointing (Az/Alt, RA/Dec, Galactic latitude) so the
-reuse-prompt can show where a saved profile's baseline actually pointed. `RunCalibrationAsync`'s
-`finally` returns the mount home (tracking off first, then `FindHomeAsync` — mirroring
-`CaptureViewModel.CaptureSweepAsync`'s end-of-sweep handling, and needed because this mount specifically
-refuses a slew while tracking is active) regardless of how the run ended; the status bar only reads
-"Calibration complete." once the mount is confirmed home after an actual success, leaving a prior
-"Cancelled."/"Failed." status alone otherwise.
+`PrepareViewModel.IsCalibrated` is derived straight from `Calibration` (`Calibration.BaselineSpectrum.Length
+> 0`) rather than tracked as a separate flag, so it can't drift out of sync with what's actually loaded;
+`CalibrationService.IsCalibrationAvailable` mirrors the same rule and is what `CaptureViewModel`'s
+`CanCaptureSweep`/`CanDriftCapture`/`CanQuickCapture` gate on, so a gain-only profile (no baseline yet)
+can't be picked up for an actual capture. `CalibrationProfile` carries the chosen baseline's `Baseline*`
+pointing (Az/Alt, RA/Dec, Galactic latitude) so a reload can show where a saved profile's baseline
+actually pointed. `CaptureBaselineAsync`'s `finally` returns the mount home (tracking off first, then
+`FindHomeAsync` — mirroring `CaptureViewModel.CaptureSweepAsync`'s end-of-sweep handling, and needed
+because this mount specifically refuses a slew while tracking is active) regardless of how the step
+ended; the status bar only reads "Baseline capture complete." once the mount is confirmed home after an
+actual success, leaving a prior "Cancelled."/"Failed." status alone otherwise. `CaptureViewModel` (see
+"Capture and FITS conventions" below) already reads `CalibrationService.CurrentCalibration.BaselineSpectrum`
+directly for its live spectrum rather than re-reading any FITS file, for both a sweep and Quick Capture.
 
 ### Sweep planning
 
@@ -514,9 +525,9 @@ but a real risk once one can run for minutes (see "Calibration flow" above): if 
 in-progress capture, the forced reopen could fail and get misreported as the SDR having been unplugged.
 It now skips the dispose/reopen when the already-open device (matched by serial, stable across
 re-enumeration unlike `Index`) is still present in the freshly enumerated list.
-`PrepareViewModel.RunCalibrationAsync` also re-fetches the device from `SdrDeviceService` immediately
-before each SDR-touching step rather than holding one reference captured at the start of the run, so a
-device that does get swapped mid-flow is picked up rather than used stale.
+`PrepareViewModel.CalibrateGainAsync`/`CaptureBaselineAsync` also re-fetch the device from
+`SdrDeviceService` immediately before each SDR-touching step rather than holding one reference captured
+at the start of the run, so a device that does get swapped mid-flow is picked up rather than used stale.
 
 ### Versioning, logging paths, and the installer (RASTA.Setup / RASTA.Bundle)
 

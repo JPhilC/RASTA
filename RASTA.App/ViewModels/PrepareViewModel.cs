@@ -32,11 +32,32 @@ public partial class PrepareViewModel : ViewModelBase
     [ObservableProperty]
     private bool isCalibrationRunning;
 
+    // Any of the three calibration steps set this while running, so the other two -
+    // and Cancel - stay disabled for the duration rather than allowing overlapping runs.
+    partial void OnIsCalibrationRunningChanged(bool value)
+    {
+        UiThread.SafeInvoke(() =>
+        {
+            LoadLastCalibrationCommand.NotifyCanExecuteChanged();
+            CalibrateGainCommand.NotifyCanExecuteChanged();
+            CaptureBaselineCommand.NotifyCanExecuteChanged();
+        });
+    }
+
     [ObservableProperty]
     private CalibrationProfile? calibration;
 
-    [ObservableProperty]
-    private bool isCalibrated;
+    // True once Calibration has an actual cold-sky baseline captured, not just a gain
+    // selection - i.e. the three-step flow (Load Last Calibration / Calibrate Device
+    // Gain / Capture Baseline) below has fully completed. Derived from Calibration
+    // itself rather than tracked separately, so it can never drift out of sync with it.
+    public bool IsCalibrated => Calibration is not null && Calibration.BaselineSpectrum.Length > 0;
+
+    partial void OnCalibrationChanged(CalibrationProfile? value)
+    {
+        OnPropertyChanged(nameof(IsCalibrated));
+        UiThread.SafeInvoke(() => CaptureBaselineCommand.NotifyCanExecuteChanged());
+    }
 
     [ObservableProperty]
     private double progressValue;
@@ -181,7 +202,9 @@ public partial class PrepareViewModel : ViewModelBase
     {
         UiThread.SafeInvoke(() =>
         {
-            RunCalibrationCommand.NotifyCanExecuteChanged();
+            LoadLastCalibrationCommand.NotifyCanExecuteChanged();
+            CalibrateGainCommand.NotifyCanExecuteChanged();
+            CaptureBaselineCommand.NotifyCanExecuteChanged();
         });
     }
 
@@ -194,10 +217,10 @@ public partial class PrepareViewModel : ViewModelBase
         if (e.PropertyName == nameof(SdrState.IsConnected))
         {
             OnPropertyChanged(nameof(IsConnectedSdr));
-            OnPropertyChanged(nameof(CanRunCalibration));
+            OnPropertyChanged(nameof(CanCalibrateGain));
             UiThread.SafeInvoke(() =>
             {
-                RunCalibrationCommand.NotifyCanExecuteChanged();
+                CalibrateGainCommand.NotifyCanExecuteChanged();
             });
         }
     }
@@ -220,10 +243,10 @@ public partial class PrepareViewModel : ViewModelBase
 
             case nameof(SettingsViewModel.IsConnected):
                 OnPropertyChanged(nameof(IsConnectedMount));
-                OnPropertyChanged(nameof(CanRunCalibration));
+                OnPropertyChanged(nameof(CanCaptureBaseline));
                 UiThread.SafeInvoke(() =>
                 {
-                    RunCalibrationCommand.NotifyCanExecuteChanged();
+                    CaptureBaselineCommand.NotifyCanExecuteChanged();
                 });
                 break;
         }
@@ -306,17 +329,59 @@ public partial class PrepareViewModel : ViewModelBase
     }
 
     // -----------------------------
-    // Gain-sweep calibration
+    // Calibration - split into three independent steps so a session can be resumed
+    // after an interruption without redoing whichever step already completed:
+    //   1. Load Last Calibration - restores a saved profile (gain, and baseline if
+    //      one was captured) from disk.
+    //   2. Calibrate Device Gain - runs the gain sweep against a terminator and
+    //      saves a gain-only profile (empty BaselineSpectrum) immediately, so this
+    //      step alone survives an app restart.
+    //   3. Capture Baseline - needs a profile already started/loaded (for its gain/
+    //      frequency/sample-rate/FFT size) and the mount connected (it slews to a
+    //      cold-sky position); captures the baseline and updates the profile on disk.
     // -----------------------------
 
     private CancellationTokenSource? _calibrationCts;
 
+    // -----------------------------
+    // 1. Load Last Calibration
+    // -----------------------------
 
-    public bool CanRunCalibration =>
-        IsConnectedSdr && IsConnectedMount && !HasErrors;
+    public bool CanLoadLastCalibration => !IsCalibrationRunning;
 
-    [RelayCommand(CanExecute = nameof(CanRunCalibration))]
-    private async Task RunCalibrationAsync()
+    [RelayCommand(CanExecute = nameof(CanLoadLastCalibration))]
+    private async Task LoadLastCalibrationAsync()
+    {
+        var existing = await _calibrationService.TryLoadSavedCalibrationAsync();
+
+        if (existing is null)
+        {
+            await _userPromptService.AskOkAsync("No saved calibration was found.", "Load Last Calibration");
+            return;
+        }
+
+        bool hasBaseline = existing.BaselineSpectrum.Length > 0;
+        Calibration = existing;
+
+        _statusBar.CalibratedGain = hasBaseline
+            ? $"Gain = {existing.GainDb:F1} dB"
+            : $"Gain = {existing.GainDb:F1} dB (no baseline)";
+        _statusBar.CaptureStatus = hasBaseline
+            ? $"Loaded saved calibration (Gain = {existing.GainDb:F1} dB)."
+            : $"Loaded saved calibration (Gain = {existing.GainDb:F1} dB) - capture a baseline to finish.";
+
+        _logger.Info($"Loaded saved calibration (gain {existing.GainDb:F1} dB, " +
+                     $"baseline {(hasBaseline ? "present" : "missing")}).");
+    }
+
+    // -----------------------------
+    // 2. Calibrate Device Gain
+    // -----------------------------
+
+    public bool CanCalibrateGain => IsConnectedSdr && !IsCalibrationRunning && !HasErrors;
+
+    [RelayCommand(CanExecute = nameof(CanCalibrateGain))]
+    private async Task CalibrateGainAsync()
     {
         ISdrDevice? device = _sdrDeviceService.GetDevice();
         if (!_sdrState.IsConnected || device is null)
@@ -325,60 +390,12 @@ public partial class PrepareViewModel : ViewModelBase
             return;
         }
 
-        if (!_settings.IsConnected)
-        {
-            // Defensive - CanRunCalibration already gates the button on this, but the
-            // command could still be invoked directly (e.g. the mount dropping the
-            // connection between the button becoming enabled and the click landing).
-            _statusBar.CaptureStatus = "Telescope must be connected to run a new calibration.";
-            return;
-        }
+        await _userPromptService.AskOkAsync(
+            "Press OK when ready to start gain calibration (i.e. after fitting a terminator to the LNA input).",
+            "Calibrate Device Gain");
 
-        // ---------------------------------------------------------
-        // 1. Check for previously saved calibration
-        // ---------------------------------------------------------
-        var existing = await _calibrationService.TryLoadSavedCalibrationAsync();
-
-        if (existing != null)
-        {
-            string pointingInfo = existing.BaselineAzimuthDeg.HasValue
-                ? $"Baseline pointing: Az {existing.BaselineAzimuthDeg:F1}°, Alt {existing.BaselineElevationDeg:F1}° " +
-                  $"(Galactic b = {existing.BaselineGalacticLatitudeDeg:F1}°).\n\n"
-                : string.Empty;
-
-            bool reuse = await _userPromptService.AskYesNoAsync(
-                $"A previous calibration exists (Gain = {existing.GainDb:F1} dB).\n\n" +
-                $"Calibration was performed at {existing.CenterFrequencyHz / 1e6:F3} MHz,\n" +
-                $"Sample Rate = {existing.SampleRateHz / 1e6:F3} MHz,\n" +
-                $"FFT Size = {existing.FftSize}, " +
-                $"On {existing.TimestampUtc.ToLocalTime():g}.\n\n" +
-                pointingInfo +
-                $"Do you want to reuse it instead of running a new calibration?",
-                "Reuse Calibration");
-
-            if (reuse)
-            {
-                Calibration = existing;
-                IsCalibrated = true;
-                _statusBar.CaptureStatus = $"Reusing Gain = {existing.GainDb:F1} dB";
-                _statusBar.CalibratedGain = $"Gain = {existing.GainDb:F1} dB";
-                _logger.Info("Reused saved calibration.");
-                return;
-            }
-            else
-            {
-                await _userPromptService.AskOkAsync(
-                    "Press OK when ready to start a new calibration (i.e. after fitting terminator).",
-                    "Calibration");
-            }
-        }
-
-        // ---------------------------------------------------------
-        // 2. Run a new calibration
-        // ---------------------------------------------------------
-        _statusBar.CaptureStatus = "Starting calibration…";
+        _statusBar.CaptureStatus = "Starting gain calibration…";
         ProgressValue = 0.0;
-        IsCalibrated = false;
         IsCalibrationRunning = true;
         _statusBar.IsCaptureInProgress = true;
 
@@ -386,7 +403,6 @@ public partial class PrepareViewModel : ViewModelBase
         double sampleRateHz = SampleRateHz;
         int fftSize = FftSize;
         TimeSpan dwell = TimeSpan.FromSeconds(GainDwellSeconds);
-        TimeSpan baselineDwell = TimeSpan.FromSeconds(BaselineDwellSeconds);
 
         _calibrationCts = new CancellationTokenSource();
 
@@ -394,13 +410,12 @@ public partial class PrepareViewModel : ViewModelBase
         {
             var ct = _calibrationCts.Token;
 
-            // ---- 2a. Gain sweep (still against the terminator) ----
-            // Re-fetch rather than reuse the reference captured before the reuse-vs-new
-            // prompt above: SdrDeviceService can still swap in a freshly-recreated device
-            // instance behind the scenes (e.g. after a spurious USB re-enumeration event -
-            // see SdrDeviceService.EnumerateDevicesAsync), and the old reference would then
-            // be a stale, already-disposed object that fails deep inside RtlSdrDevice with a
-            // confusing "SDR device not initialized" rather than a clear message here.
+            // Re-fetch rather than reuse the reference captured above: SdrDeviceService
+            // can still swap in a freshly-recreated device instance behind the scenes
+            // (e.g. after a spurious USB re-enumeration event - see
+            // SdrDeviceService.EnumerateDevicesAsync), and the old reference would then
+            // be a stale, already-disposed object that fails deep inside RtlSdrDevice
+            // with a confusing "SDR device not initialized" rather than a clear message.
             device = _sdrDeviceService.GetDevice()
                 ?? throw new InvalidOperationException("SDR device is no longer available - check the USB connection and try again.");
 
@@ -417,13 +432,91 @@ public partial class PrepareViewModel : ViewModelBase
                 },
                 ct);
 
-            _statusBar.CaptureStatus = $"Gain selected: {gainDb:F1} dB";
-            _logger.Info($"Gain sweep complete. Selected gain {gainDb:F1} dB.");
+            // Persisted immediately (empty BaselineSpectrum) so this step alone survives
+            // an interrupted session - see the class-level comment above.
+            Calibration = await _calibrationService.SaveGainOnlyCalibrationAsync(
+                gainDb, frequencyHz, sampleRateHz, fftSize, device.DeviceId);
 
-            // ---- 2b. Reconnect antenna, then pick a cold-sky position ----
+            _statusBar.CaptureStatus = $"Gain selected: {gainDb:F1} dB. Capture a baseline to finish calibration.";
+            _statusBar.CalibratedGain = $"Gain = {gainDb:F1} dB (no baseline)";
+            _logger.Info($"Gain sweep complete. Selected gain {gainDb:F1} dB.");
+        }
+        catch (OperationCanceledException)
+        {
+            _statusBar.CaptureStatus = "Cancelled.";
+            _logger.Info("Gain calibration cancelled by user.");
+        }
+        catch (Exception ex)
+        {
+            _statusBar.CaptureStatus = "Failed.";
+            _logger.Error($"Gain calibration failed: {ex.Message}");
+        }
+        finally
+        {
+            _calibrationCts?.Dispose();
+            _calibrationCts = null;
+            IsCalibrationRunning = false;
+            _statusBar.IsCaptureInProgress = false;
+        }
+    }
+
+    // -----------------------------
+    // 3. Capture Baseline
+    // -----------------------------
+
+    public bool CanCaptureBaseline => Calibration != null && IsConnectedMount && !IsCalibrationRunning;
+
+    [RelayCommand(CanExecute = nameof(CanCaptureBaseline))]
+    private async Task CaptureBaselineAsync()
+    {
+        if (Calibration is null)
+        {
+            // Defensive - CanCaptureBaseline already gates the button on this.
+            _statusBar.CaptureStatus = "Calibrate device gain (or load a saved calibration) first.";
+            return;
+        }
+
+        if (!_settings.IsConnected)
+        {
+            // Defensive - CanCaptureBaseline already gates the button on this, but the
+            // command could still be invoked directly (e.g. the mount dropping the
+            // connection between the button becoming enabled and the click landing).
+            _statusBar.CaptureStatus = "Telescope must be connected to capture a baseline.";
+            return;
+        }
+
+        ISdrDevice? device = _sdrDeviceService.GetDevice();
+        if (!_sdrState.IsConnected || device is null)
+        {
+            _statusBar.CaptureStatus = "No SDR device selected.";
+            return;
+        }
+
+        // Gain/frequency/sample-rate/FFT size come from the profile started by
+        // Calibrate Device Gain (or a loaded one) - a baseline must be built with
+        // exactly the settings the gain was chosen for.
+        double frequencyHz = Calibration.CenterFrequencyHz;
+        double sampleRateHz = Calibration.SampleRateHz;
+        int fftSize = Calibration.FftSize;
+        double gainDb = Calibration.GainDb;
+        TimeSpan baselineDwell = TimeSpan.FromSeconds(BaselineDwellSeconds);
+
+        _statusBar.CaptureStatus = "Starting baseline capture…";
+        ProgressValue = 0.0;
+        IsCalibrationRunning = true;
+        _statusBar.IsCaptureInProgress = true;
+
+        _calibrationCts = new CancellationTokenSource();
+        bool baselineCaptured = false;
+
+        try
+        {
+            var ct = _calibrationCts.Token;
+
+            // ---- Reconnect antenna, then pick a cold-sky position ----
             await _userPromptService.AskOkAsync(
                 "Press OK after you have reconnected your antenna for the cold-sky baseline capture.",
-                "Calibration");
+                "Capture Baseline");
 
             // Azimuths already offered/rejected in this attempt - grows every time
             // Recalculate is clicked (all currently-shown positions) or a slewed-to position
@@ -454,12 +547,11 @@ public partial class PrepareViewModel : ViewModelBase
                 if (chosen is null)
                 {
                     _statusBar.CaptureStatus = "Cancelled.";
-                    _logger.Info("Calibration cancelled - no cold-sky position chosen.");
-                    _statusBar.CalibratedGain = "Uncalibrated";
+                    _logger.Info("Baseline capture cancelled - no cold-sky position chosen.");
                     return;
                 }
 
-                // ---- 2c. Slew to the chosen position ----
+                // ---- Slew to the chosen position ----
                 _statusBar.CaptureStatus = "Slewing to cold-sky position…";
                 if (_mount.Mode == CoordinateMode.Equatorial)
                 {
@@ -487,7 +579,7 @@ public partial class PrepareViewModel : ViewModelBase
                 candidates = GenerateCandidates();
             }
 
-            // ---- 2d. Capture the cold-sky baseline ----
+            // ---- Capture the cold-sky baseline ----
             // Re-fetch again - the confirm-position loop above can run for several minutes
             // (picker, slew, confirmation prompt, possibly repeated), which is exactly the
             // kind of window a stale device reference would go unnoticed in otherwise.
@@ -512,31 +604,29 @@ public partial class PrepareViewModel : ViewModelBase
                 },
                 ct);
 
-            IsCalibrated = true;
+            baselineCaptured = true;
             _statusBar.CaptureStatus = $"Done. Gain = {Calibration.GainDb:F1} dB";
             _statusBar.CalibratedGain = $"Gain = {Calibration.GainDb:F1} dB";
-            _logger.Info($"Calibration complete. Selected gain {Calibration.GainDb:F1} dB, " +
+            _logger.Info($"Baseline capture complete. Gain {Calibration.GainDb:F1} dB, " +
                          $"cold-sky Az {chosen.AzimuthDeg:F1}°/Alt {chosen.ElevationDeg:F1}°.");
         }
         catch (OperationCanceledException)
         {
             _statusBar.CaptureStatus = "Cancelled.";
-            _logger.Info("Calibration cancelled by user.");
-            _statusBar.CalibratedGain = $"Uncalibrated";
+            _logger.Info("Baseline capture cancelled by user.");
         }
         catch (Exception ex)
         {
             _statusBar.CaptureStatus = "Failed.";
-            _logger.Error($"Calibration failed: {ex.Message}");
-            _statusBar.CalibratedGain = $"Uncalibrated";
+            _logger.Error($"Baseline capture failed: {ex.Message}");
         }
         finally
         {
             // Return the mount to its home position before finishing up, the same way
             // CaptureViewModel.CaptureSweepAsync does at the end of a sweep - the cold-sky
             // capture leaves the mount pointed away from home, and there's no reason to
-            // leave it there, whether calibration succeeded, failed, or was cancelled after
-            // a slew already happened. Tracking is switched off first, mirroring
+            // leave it there, whether the capture succeeded, failed, or was cancelled
+            // after a slew already happened. Tracking is switched off first, mirroring
             // CaptureViewModel's ordering - this mount setup has already been seen to refuse
             // a slew while tracking is active (see the "SlewToAltAz is not allowed when
             // tracking is True" Alpaca error in the logs).
@@ -553,13 +643,13 @@ public partial class PrepareViewModel : ViewModelBase
 
                     // Only claim success once the mount is actually home - leave a prior
                     // "Cancelled."/"Failed." status alone rather than papering over it.
-                    if (IsCalibrated)
-                        _statusBar.CaptureStatus = "Calibration complete.";
+                    if (baselineCaptured)
+                        _statusBar.CaptureStatus = "Baseline capture complete.";
                 }
             }
             catch (Exception ex)
             {
-                _logger.Warn($"Failed to return telescope to home position after calibration: {ex.Message}");
+                _logger.Warn($"Failed to return telescope to home position after baseline capture: {ex.Message}");
             }
 
             _calibrationCts?.Dispose();
@@ -591,10 +681,9 @@ public partial class PrepareViewModel : ViewModelBase
         {
             // ct was not cancelled - this was our timeout firing.
             await _userPromptService.AskOkAsync(
-                "Slew timed out after 30 seconds. Calibration will be abandoned.",
+                "Slew timed out after 30 seconds. Baseline capture will be abandoned.",
                 "Warning");
             _statusBar.CaptureStatus = "Slew timed out.";
-            _statusBar.CalibratedGain = "Uncalibrated";
             return false;
         }
     }
@@ -605,7 +694,14 @@ public partial class PrepareViewModel : ViewModelBase
         _calibrationCts?.Cancel();
         _statusBar.CaptureStatus = "Cancelled";
         _statusBar.IsCaptureInProgress = false;
-        _statusBar.CalibratedGain = $"Uncalibrated";
+
+        // Reflect whatever's actually still loaded/started - cancelling Capture Baseline
+        // shouldn't discard a gain already selected (or a previously saved calibration).
+        _statusBar.CalibratedGain = Calibration is null
+            ? "Uncalibrated"
+            : Calibration.BaselineSpectrum.Length > 0
+                ? $"Gain = {Calibration.GainDb:F1} dB"
+                : $"Gain = {Calibration.GainDb:F1} dB (no baseline)";
     }
 
 }
