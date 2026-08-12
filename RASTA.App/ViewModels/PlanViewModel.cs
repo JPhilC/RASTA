@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.App.Helpers;
 using RASTA.App.ViewModels;
 using RASTA.Core.Capture;
 using RASTA.Core.Planning;
@@ -97,10 +98,14 @@ namespace RASTA.App.ViewModels
         {
             if (e.PropertyName == nameof(SdrState.SelectedDevice))
             {
-                App.Current.Dispatcher.Invoke(() =>
-                {
-                    LoadSavedPlans();
-                });
+                // SdrDeviceService.EnumerateDevicesAsync runs inside its own Task.Run, so
+                // this can fire on a background thread (e.g. on SDR reconnect). LoadSavedPlans
+                // mutates SavedPlans, an ObservableCollection bound to the UI, which must
+                // happen on the dispatcher thread. UiThread.SafeInvoke (rather than a raw
+                // App.Current.Dispatcher.Invoke) also tolerates the app-shutdown window where
+                // Application.Current can go null before this event source has fully stopped -
+                // see CaptureViewModel.LoadAvailablePlans/RASTA.App.Helpers.UiThread.
+                UiThread.SafeInvoke(LoadSavedPlans);
             }
         }
 

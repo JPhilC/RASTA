@@ -14,6 +14,11 @@ public interface ITelescopeMount
     Task ConnectAsync();
     Task DisconnectAsync();
 
+    // Marks the mount locally disconnected without any live I/O - used when a caller
+    // has already learned (e.g. a live poll throwing) that the link is down, so a
+    // graceful DisconnectAsync() round-trip would just hang or fail again.
+    void MarkDisconnected();
+
     // Site management
     Task SetSiteLatitudeAsync(double latitudeDeg);
     Task SetSiteLongitudeAsync(double longitudeDeg);

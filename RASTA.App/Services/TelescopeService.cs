@@ -13,6 +13,17 @@ namespace RASTA.App.Services
 
         public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
 
+        /// <summary>
+        /// Raised when a live poll call throws - the only signal available that the mount
+        /// has actually gone away (network drop, mount powered off, Alpaca server gone);
+        /// unlike the SDR side, ITelescopeMount.IsConnected is just a cached flag set on
+        /// ConnectAsync/DisconnectAsync, never re-derived from a live check, so this event
+        /// is what App.xaml.cs's mount-disconnect recovery hooks into. Fires on this poll
+        /// loop's own background thread - subscribers must marshal onto the UI thread
+        /// themselves (see UiThread.SafeInvoke).
+        /// </summary>
+        public event Action<Exception>? ConnectionLost;
+
         public TelescopeService(
             ITelescopeMount mount,
             TelescopeState state,
@@ -109,7 +120,15 @@ namespace RASTA.App.Services
                     }
                     catch (Exception ex)
                     {
+                        // A live mount call failing is the only way this app can tell the
+                        // mount has actually gone away (see ConnectionLost above) - stop
+                        // polling rather than retrying forever against a dead link, and let
+                        // subscribers (App.xaml.cs) do the same tidy-up a user clicking
+                        // Disconnect would trigger.
                         _statusBar.TelescopeStatus = $"Error: {ex.Message}";
+                        _cts.Cancel();
+                        ConnectionLost?.Invoke(ex);
+                        break;
                     }
 
                     await Task.Delay(500); // 2 Hz update

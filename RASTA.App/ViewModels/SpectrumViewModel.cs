@@ -5,6 +5,7 @@ using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using LiveChartsCore.SkiaSharpView.Painting.Effects;
 using OpenTK.Graphics.OpenGL;
+using RASTA.App.Helpers;
 using RASTA.Processing.HiPipeline;
 using SkiaSharp;
 using System.Collections.ObjectModel;
@@ -263,20 +264,28 @@ namespace RASTA.App.ViewModels
             else
                 xAxis = frequencies;
 
-            App.Current.Dispatcher.Invoke(() =>
+            // Called from CaptureViewModel.ChunkWorker's background Task.Run loop during
+            // any live sweep/Quick Capture, so everything touching the UI-bound chart
+            // (points, plus ApplyAxisMode/ApplyRobustYAxisRange below, which mutate the
+            // LiveChartsCore Axis objects bound to SpectrumView) must be marshaled onto the
+            // UI thread. UiThread.SafeInvoke (rather than a raw App.Current.Dispatcher.
+            // Invoke) also tolerates the app-shutdown window where Application.Current can
+            // go null before ChunkWorker has fully stopped - see CaptureViewModel.
+            // LoadAvailablePlans/RASTA.App.Helpers.UiThread.
+            UiThread.SafeInvoke(() =>
             {
                 for (int i = 0; i < FftSize; i++)
                 {
                     points[i].X = xAxis[i];
                     points[i].Y = liveSpectrum[i];
                 }
+
+                // Apply axis mode (labels, limits, units)
+                ApplyAxisMode();
+
+                // Auto-scale Y-axis
+                ApplyRobustYAxisRange(liveSpectrum);
             });
-
-            // Apply axis mode (labels, limits, units)
-            ApplyAxisMode();
-
-            // Auto-scale Y-axis
-            ApplyRobustYAxisRange(liveSpectrum);
         }
 
         public void UpdateSpectrum(double[] newSpectrum)
@@ -289,15 +298,18 @@ namespace RASTA.App.ViewModels
             lastUpdateTime = DateTime.Now;
 
             liveSpectrum = newSpectrum;
-            App.Current.Dispatcher.Invoke(() =>
+
+            // See the other UpdateSpectrum overload above for why this needs UiThread.
+            // SafeInvoke rather than a raw Dispatcher.Invoke.
+            UiThread.SafeInvoke(() =>
             {
                 for (int i = 0; i < FftSize; i++)
                 {
                     points[i].Y = liveSpectrum[i];
                 }
-            });
 
-            ApplyRobustYAxisRange(liveSpectrum);
+                ApplyRobustYAxisRange(liveSpectrum);
+            });
         }
 
         /// <summary>

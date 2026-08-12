@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using RASTA.App.Helpers;
 using RASTA.App.Services;
 using RASTA.App.ViewModels;
 using RASTA.Core.Processing;
@@ -150,6 +151,10 @@ namespace RASTA.App
             // ---------------------------------------------------------
             Services = services.BuildServiceProvider();
 
+            // See OnTelescopeConnectionLost below - the mount side's equivalent of
+            // SdrDeviceService's hot-plug handling.
+            Services.GetRequiredService<TelescopeService>().ConnectionLost += OnTelescopeConnectionLost;
+
             base.OnStartup(e);
         }
 
@@ -178,6 +183,46 @@ namespace RASTA.App
             }
 
             base.OnExit(e);
+        }
+
+        /// <summary>
+        /// Fires when TelescopeService's poll loop learns the mount is unreachable (a live
+        /// ASCOM Alpaca call throwing - network drop, mount powered off, Alpaca server gone).
+        /// This is the mount side's equivalent of SdrDeviceService's hot-plug handling, but
+        /// unlike the SDR side there's no automatic reconnect attempt: once a live poll has
+        /// failed there's no way to know what physical state the mount was actually left in
+        /// (mid-slew? tracking? parked?), so reconnecting is left as a deliberate, informed
+        /// action for the user rather than something done silently on their behalf.
+        /// Fires on TelescopeService's own background polling thread, so everything here is
+        /// marshaled onto the UI thread via UiThread.SafeInvoke. Tidies up exactly as if the
+        /// user had clicked Disconnect: cancels any capture that might be running (so its
+        /// in-flight FITS file is never written - see CaptureViewModel.CancelAnyRunningCapture),
+        /// resets connection state without any further live mount I/O (the link is already
+        /// known down - see SettingsViewModel.ForceDisconnectTelescope), and returns to
+        /// Prepare, since Plan/Capture both require a connected mount to mean anything. The
+        /// MessageBox goes up last, after the view has already switched back to Prepare, so
+        /// it doesn't sit in front of whatever view the user was actually on when the mount
+        /// dropped - dismissing it lands them straight on the Prepare screen it's explaining.
+        /// </summary>
+        private void OnTelescopeConnectionLost(Exception ex)
+        {
+            _logger?.Warn($"Telescope connection lost: {ex.Message}");
+
+            UiThread.SafeInvoke(() =>
+            {
+                Services.GetRequiredService<CaptureViewModel>().CancelAnyRunningCapture();
+                Services.GetRequiredService<SettingsViewModel>().ForceDisconnectTelescope();
+                Services.GetRequiredService<TelescopeService>().Stop();
+                Services.GetRequiredService<NavigationViewModel>().NavigatePrepareCommand.Execute(null);
+
+                MessageBox.Show(
+                    $"The connection to the telescope mount was lost:\n\n{ex.Message}\n\n" +
+                    "Any running capture has been cancelled and the mount has been disconnected. " +
+                    "Please check the mount/Alpaca connection and reconnect from here when ready.",
+                    "Telescope Connection Lost",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            });
         }
 
         // ---------------------------------------------------------

@@ -9,9 +9,17 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="5"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="5"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" Grid.Row="0">
             <TextBlock Text="Plan" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
             <ComboBox ItemsSource="{Binding AvailablePlans}"
@@ -22,32 +30,45 @@
             <TextBlock Text="Est. Completion" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"
                        Visibility="{Binding EstimatedCompletionTime, Converter={StaticResource NullToVisibilityConverter}}"/>
             <TextBox Text="{Binding EstimatedCompletionTime, Mode=OneWay, StringFormat='{}{0:ddd HH:mm:ss}'}"
-                     Width="140" HorizontalAlignment="Left" IsReadOnly="True" Margin="0,0,5,0"
+                     Width="140" HorizontalAlignment="Left" VerticalContentAlignment="Center" IsReadOnly="True" Margin="0,0,5,0"
                      Visibility="{Binding EstimatedCompletionTime, Converter={StaticResource NullToVisibilityConverter}}"/>
-            <Button Content="Begin Sweep" Width="100" Height="30"
-                    Command="{Binding CaptureSweepCommand}" HorizontalAlignment="Right"
-                    Visibility="{Binding CanCaptureSweep, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Cancel Sweep" Width="100" Height="30"
-                    Command="{Binding CancelSweepCommand}" HorizontalAlignment="Right"
-                    Visibility="{Binding IsSweepCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Begin Drift" Width="100" Height="30"
+        </StackPanel>
+        <Button Grid.Row="0" Grid.Column="2"
+                HorizontalAlignment="Left"
+                Content="Begin Sweep" Width="130" Height="30"
+                Command="{Binding CaptureSweepCommand}"
+                Visibility="{Binding CanCaptureSweep, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+        <Button Grid.Row="0" Grid.Column="2"
+                Content="Cancel Sweep" Width="130" Height="30"
+                HorizontalAlignment="Left"
+                Command="{Binding CancelSweepCommand}" 
+                Visibility="{Binding IsSweepCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+        <Button Grid.Row="0" Grid.Column="2"
+                Content="Begin Drift" Width="130" Height="30"
                     Command="{Binding CaptureDriftCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding CanDriftCapture, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <Button Content="Cancel Drift" Width="100" Height="30"
+        <Button Grid.Row="0" Grid.Column="2"
+                Content="Cancel Drift" Width="130" Height="30"
                     Command="{Binding CancelDriftCommand}" HorizontalAlignment="Right"
                     Visibility="{Binding IsDriftCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,8,0,0">
+
+        <StackPanel Orientation="Horizontal" Grid.Row="2" >
             <TextBlock Text="Dwell Period (s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
             <TextBox Text="{Binding QuickCaptureDwellSeconds, Mode=TwoWay}"
-                     Width="60" HorizontalAlignment="Left" Margin="0,0,10,0"
+                     Width="60" HorizontalAlignment="Left" VerticalContentAlignment="Center"
                      IsEnabled="{Binding IsBusy, Converter={StaticResource BooleanInverterConverter}}"/>
-            <Button Content="Quick Capture" Width="110" Height="30"
+        </StackPanel>
+        <Button Grid.Row="2" Grid.Column="2"
+                    Content="Quick Capture" Width="130" Height="30"
                     Command="{Binding QuickCaptureCommand}" HorizontalAlignment="Left"
                     IsEnabled="{Binding CanQuickCapture}"
                     ToolTip="Capture raw IQ at the mount's current position - useful when the mount was positioned by hand or by a third-party tool rather than by a plan."/>
-        </StackPanel>
-        <views:SpectrumView Grid.Row="2" Margin="0,10,0,0"
+        <Button  Grid.Row="2" Grid.Column="2" 
+                    Content="Cancel Quick Capture" Width="130" Height="30" Margin="5,0,0,0"
+                    Command="{Binding CancelQuickCaptureCommand}" HorizontalAlignment="Left"
+                    Visibility="{Binding IsQuickCaptureRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+        <views:SpectrumView Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,10,0,0"
                             DataContext="{Binding SpectrumVm}"/>
     </Grid>
 </UserControl>

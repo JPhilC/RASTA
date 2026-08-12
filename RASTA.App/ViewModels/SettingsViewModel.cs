@@ -317,6 +317,24 @@ namespace RASTA.App.ViewModels
             }
         }
 
+        /// <summary>
+        /// Resets local connection state to disconnected without any live mount I/O -
+        /// used when TelescopeService's poll loop has already learned the mount is
+        /// unreachable (see TelescopeService.ConnectionLost / App.xaml.cs). Deliberately
+        /// skips DisconnectTelescopeAsync's "ask to park"/live DisconnectAsync() round-trip:
+        /// the link is already known down at this point, so either would just hang or fail
+        /// again, and there's no way to know what physical state the mount was actually
+        /// left in - reconnecting from here is left as a deliberate, informed action for
+        /// the user rather than something attempted automatically.
+        /// </summary>
+        public void ForceDisconnectTelescope()
+        {
+            _mount.MarkDisconnected();
+            IsConnected = false;
+            _state.IsConnected = false;
+            _state.IsParking = false;
+        }
+
         // ---------------------------------------
         // Calibration Settings (session-specific)
         // ---------------------------------------

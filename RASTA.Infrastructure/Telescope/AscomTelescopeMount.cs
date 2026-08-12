@@ -71,6 +71,11 @@ public class AscomTelescopeMount : ITelescopeMount
         IsConnected = false;
     }
 
+    public void MarkDisconnected()
+    {
+        IsConnected = false;
+    }
+
     public Task SetSiteLatitudeAsync(double latitudeDeg)
     {
         SiteLatitudeDeg = latitudeDeg;

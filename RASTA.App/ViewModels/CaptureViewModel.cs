@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.App.Helpers;
 using RASTA.App.Services;
 using RASTA.Core.Capture;
 using RASTA.Core.Processing;
@@ -33,6 +34,7 @@ public partial class CaptureViewModel : ObservableObject
     private readonly UserOptionsService _optionsService;
     private readonly IPlanRepository _planRepository;
     private CancellationTokenSource? _sweepCts;
+    private CancellationTokenSource? _quickCaptureCts;
 
     private CapturePlan? _activePlan;
 
@@ -64,9 +66,11 @@ public partial class CaptureViewModel : ObservableObject
         && _calibrationService.IsCalibrationAvailable
         && _mountState.IsConnected
         && _sdrState.IsConnected
-        && _activePlan.PlanType != PlanType.Drift;
+        && _activePlan.PlanType != PlanType.Drift
+        && !IsBusy;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelSweepCommand))]
     private bool isSweepCaptureRunning;
 
 
@@ -95,12 +99,17 @@ public partial class CaptureViewModel : ObservableObject
     private double quickCaptureDwellSeconds = 30;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelQuickCaptureCommand))]
     private bool isQuickCaptureRunning;
 
     [ObservableProperty]
     private bool isBusy;
 
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanQuickCapture));
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanQuickCapture));
+        OnPropertyChanged(nameof(CanCaptureSweep));
+    }
 
     // Estimated wall-clock (local time) finish of the running sweep. Set from
     // SweepPlanResult's nominal dwell/slew estimate when the sweep starts, then
@@ -164,19 +173,33 @@ public partial class CaptureViewModel : ObservableObject
     /// </summary>
     public void LoadAvailablePlans()
     {
-        string sdrDeviceId = _sdrState.SelectedDevice?.DeviceId ?? "UNKNOWN";
-        string? previouslySelectedName = ActivePlan?.FriendlyName;
-
-        AvailablePlans.Clear();
-        foreach (var plan in _planRepository.ListPlans(sdrDeviceId))
+        // MountState_PropertyChanged/SdrState_PropertyChanged can invoke this from a
+        // background thread - TelescopeService's poll loop and
+        // SdrDeviceService.EnumerateDevicesAsync (e.g. on SDR reconnect after a sleep/
+        // unplug) both run inside their own Task.Run and mutate TelescopeState/SdrState
+        // from there, which raises these PropertyChanged events synchronously on that
+        // same thread. Unlike a plain property notification (which WPF's binding
+        // machinery marshals to the UI thread automatically), AvailablePlans.Clear()/
+        // Add() below are ObservableCollection mutations bound directly to the UI and
+        // must happen on the dispatcher thread itself, or WPF throws. UiThread.
+        // SafeInvoke is a no-op if called from the UI thread already (constructor/
+        // NavigationViewModel call it directly), so this is safe from any caller.
+        UiThread.SafeInvoke(() =>
         {
-            if (PlanMatchesMountMode(plan))
-                AvailablePlans.Add(plan);
-        }
+            string sdrDeviceId = _sdrState.SelectedDevice?.DeviceId ?? "UNKNOWN";
+            string? previouslySelectedName = ActivePlan?.FriendlyName;
 
-        ActivePlan = previouslySelectedName != null
-            ? AvailablePlans.FirstOrDefault(p => p.FriendlyName == previouslySelectedName)
-            : null;
+            AvailablePlans.Clear();
+            foreach (var plan in _planRepository.ListPlans(sdrDeviceId))
+            {
+                if (PlanMatchesMountMode(plan))
+                    AvailablePlans.Add(plan);
+            }
+
+            ActivePlan = previouslySelectedName != null
+                ? AvailablePlans.FirstOrDefault(p => p.FriendlyName == previouslySelectedName)
+                : null;
+        });
     }
 
     /// <summary>
@@ -399,6 +422,7 @@ public partial class CaptureViewModel : ObservableObject
         try
         {
             IsBusy = true;
+            IsSweepCaptureRunning = true;
 
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
             fftSize = _calibrationService.CurrentCalibration.FftSize;
@@ -462,8 +486,19 @@ public partial class CaptureViewModel : ObservableObject
                         await Task.Delay(500, timeoutCts.Token);
                     }
                 }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                catch (OperationCanceledException)
                 {
+                    // A real user cancellation (ct itself) should propagate up to the
+                    // outer catch (OperationCanceledException) below rather than being
+                    // swallowed here. Deliberately not an exception filter
+                    // (`when (!ct.IsCancellationRequested)`) - a filtered catch on one
+                    // throw in this async method's compiled state machine can cause the
+                    // debugger to mis-flag an unrelated, genuinely-handled throw
+                    // elsewhere in the same method (e.g. ct.ThrowIfCancellationRequested()
+                    // below) as user-unhandled during first-chance dispatch.
+                    if (ct.IsCancellationRequested)
+                        throw;
+
                     // ct was not cancelled — this was our timeout firing
                     MessageBox.Show("Slew timed out after 30 seconds. Capture will be abandoned.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
@@ -573,19 +608,62 @@ public partial class CaptureViewModel : ObservableObject
             _chunkWorkerCts = null;
             await _device.StopStreamingAsync();
 
-            if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
+            // Best-effort only: if the mount itself is what triggered this cancellation
+            // (see CancelAnyRunningCapture / TelescopeService.ConnectionLost), these live
+            // mount calls will throw too. Swallowing that here matters - an exception
+            // escaping a finally block skips whatever's left in it, which would otherwise
+            // leave IsSweepCaptureRunning/IsBusy stuck true and the Cancel Sweep button
+            // stuck visible even after the sweep has genuinely stopped.
+            try
             {
-                await _mount.SetTrackingAsync(false);
-            }
-            if (ActivePlan.GoToHomeAfterCapture)
-            {
-                if (await _mount.GetCanFindHomeAsync())
+                if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
                 {
-                    await _mount.FindHomeAsync();
+                    await _mount.SetTrackingAsync(false);
+                }
+                if (ActivePlan.GoToHomeAfterCapture)
+                {
+                    if (await _mount.GetCanFindHomeAsync())
+                    {
+                        await _mount.FindHomeAsync();
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: post-sweep mount cleanup failed: {ex.Message}");
+            }
+
+            _sweepCts?.Dispose();
+            _sweepCts = null;
+            IsSweepCaptureRunning = false;
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Cancels whichever capture (sweep or Quick Capture) is currently running, if any.
+    /// Used by both the user's own Cancel Sweep/Cancel Quick Capture buttons' underlying
+    /// tokens and by App.xaml.cs's mount-disconnect recovery path (TelescopeService.
+    /// ConnectionLost), which needs any in-flight capture aborted - and its FITS write
+    /// skipped, same as a manual cancel - before the mount is reset out from under it.
+    /// Cancelling an already-idle/null token is a harmless no-op.
+    /// </summary>
+    public void CancelAnyRunningCapture()
+    {
+        _sweepCts?.Cancel();
+        _quickCaptureCts?.Cancel();
+    }
+
+    // Cancels a running sweep (Begin Sweep). The capture loop's own
+    // ct.ThrowIfCancellationRequested()/CaptureRawIqFromStreamAsync unwind before
+    // reaching FitsFileIo.WriteRawIq for whichever file was in flight, so the
+    // in-progress capture's FITS file is never written to disk - only prior,
+    // already-completed files in the sweep remain.
+    [RelayCommand(CanExecute = nameof(IsSweepCaptureRunning))]
+    private void CancelSweep()
+    {
+        _sweepCts?.Cancel();
+        _statusBar.CaptureStatus = "Cancelling...";
     }
 
     // -------------------------------------------------------
@@ -635,8 +713,8 @@ public partial class CaptureViewModel : ObservableObject
             ? TargetPoint.FromRaDec(_mountState.RightAscensionHours, _mountState.DeclinationDeg)
             : TargetPoint.FromAzEl(_mountState.AzimuthDeg, _mountState.ElevationDeg);
 
-        using var cts = new CancellationTokenSource();
-        var ct = cts.Token;
+        _quickCaptureCts = new CancellationTokenSource();
+        var ct = _quickCaptureCts.Token;
         try
         {
             IsBusy = true;
@@ -730,9 +808,21 @@ public partial class CaptureViewModel : ObservableObject
             _chunkWorkerCts?.Cancel();
             _chunkWorkerCts = null;
             await _device.StopStreamingAsync();
+            _quickCaptureCts?.Dispose();
+            _quickCaptureCts = null;
             IsBusy = false;
             IsQuickCaptureRunning = false;
         }
+    }
+
+    // Cancels a running Quick Capture. As with CancelSweep, cancellation unwinds
+    // CaptureRawIqFromStreamAsync before FitsFileIo.WriteRawIq is ever reached, so
+    // nothing is written to disk for the aborted capture.
+    [RelayCommand(CanExecute = nameof(IsQuickCaptureRunning))]
+    private void CancelQuickCapture()
+    {
+        _quickCaptureCts?.Cancel();
+        _statusBar.CaptureStatus = "Cancelling quick capture...";
     }
 
     private void BeginProgress()
