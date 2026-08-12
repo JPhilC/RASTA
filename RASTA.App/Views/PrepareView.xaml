@@ -15,6 +15,13 @@
 
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="30"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
@@ -22,22 +29,25 @@
         <!-- ========================= -->
         <!--  TELESCOPE CONNECTION     -->
         <!-- ========================= -->
-        <StackPanel Grid.Column="0" Grid.Row="0">
-            <TextBlock Text="Telescope"
+        <TextBlock Grid.Column="0" Grid.Row="0"
+                    Text="Telescope"
                        FontSize="24"
-                       FontWeight="Bold"
-                       Margin="0 0 0 20"/>
+                       FontWeight="Bold"/>
+        
+        <StackPanel Grid.Column="0" Grid.Row="2">
 
             <Button Content="Connect"
-                    Width="200"
+                    Width="180"
                     Height="40"
+                    HorizontalAlignment="Left"
                     Command="{Binding ConnectTelescopeCommand}"
                     Visibility="{Binding IsConnectedMount,
                                          Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
 
             <Button Content="Disconnect"
-                    Width="200"
+                    Width="180"
                     Height="40"
+                    HorizontalAlignment="Left"
                     Command="{Binding DisconnectTelescopeCommand}"
                     Visibility="{Binding IsConnectedMount,
                                          Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -46,11 +56,13 @@
         <!-- ========================= -->
         <!--  SITE LOCATION SETTINGS   -->
         <!-- ========================= -->
-        <Grid Grid.Column="1" Grid.Row="0"
-              Visibility="{Binding IsConnectedMount,
-                                   Converter={StaticResource BooleanToVisibilityConverter},
-                                   ConverterParameter={x:Static wpf:Visibility.Collapsed}}">
+        <TextBlock Grid.Column="1" Grid.Row="0"
+                       Text="Mount Details"
+                       FontSize="24"
+                       FontWeight="Bold"
+                       Margin="0 0 0 20"/>
 
+        <Grid Grid.Column="1" Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -65,11 +77,6 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <TextBlock Grid.Column="0" Grid.Row="0" Grid.ColumnSpan="2"
-                       Text="Mount Details"
-                       FontSize="24"
-                       FontWeight="Bold"
-                       Margin="0 0 0 20"/>
 
             <TextBlock Grid.Column="0" Grid.Row="1" Text="Latitude (deg)"/>
             <TextBox Grid.Column="1" Grid.Row="1" Width="100"
@@ -98,7 +105,63 @@
         <!-- ========================= -->
         <!--  CALIBRATION PANEL        -->
         <!-- ========================= -->
-        <Grid Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="2">
+        <TextBlock Grid.Column="0" Grid.Row="4"
+                Text="Calibration"
+                       FontSize="24"
+                       FontWeight="Bold"/>
+
+        <TextBlock Grid.Column="1" Grid.Row="4"
+        Text="Calibration Settings"
+               FontSize="24"
+               FontWeight="Bold"/>
+
+        <TextBlock Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="6"
+                    Text="Connect the telescope to capture a baseline (it needs to slew to a cold-sky position)."
+                       Foreground="Gray" Margin="5,5,0,0" TextWrapping="Wrap"
+                       Visibility="{Binding IsConnectedMount, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
+
+        <!-- Three independent calibration steps - see PrepareViewModel for why -->
+        <StackPanel Grid.Column="0" Grid.Row="8" 
+                        Orientation="Vertical">
+
+            <!-- 1. Load Last Calibration -->
+
+            <Button Content="Load Last Calibration"
+                        Width="180" Height="40" Margin="0,10,0,0"
+                    HorizontalAlignment="Left"
+                        Command="{Binding LoadLastCalibrationCommand}"/>
+
+            <!-- 2. Calibrate Device Gain -->
+            <Button Content="Calibrate Device Gain"
+                        Width="180" Height="40" Margin="0,10,0,0"
+                    HorizontalAlignment="Left"
+                        Command="{Binding CalibrateGainCommand}"/>
+
+            <!-- 3. Capture Baseline -->
+            <Button Content="Capture Baseline"
+                        Width="180" Height="40"  Margin="0,10,0,0"
+                        HorizontalAlignment="Left"
+                        Command="{Binding CaptureBaselineCommand}"/>
+        </StackPanel>
+
+        <!-- Cancel Button - shown in place of the three above while any of them runs -->
+        <Button Grid.Row="8" Grid.Column="0" Content="Cancel"
+                    Width="180" 
+                    Height="40"
+                    Margin="0,10,0,0"
+                    HorizontalAlignment="Left"
+                    Command="{Binding CancelCalibrationCommand}"
+                    Visibility="{Binding IsCalibrationRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+        <!-- Hint when Capture Baseline can't be run because the mount isn't connected -->
+
+
+        <Grid Grid.Column="1" Grid.Row="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -106,21 +169,10 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                Text="Calibration"
-                       FontSize="24"
-                       FontWeight="Bold"
-                       Margin="0 0 0 20"/>
-
-            <!-- Calibration Settings -->
-
+            <!-- ========================= -->
+            <!--  CALIBRATION SETTINGS   -->
+            <!-- ========================= -->
             <TextBlock Grid.Row="1" Grid.Column="0"
                 Text="Calibration Frequency (Hz)"/>
             <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1"
@@ -160,41 +212,11 @@
                          Width="50" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
 
-            <!-- Three independent calibration steps - see PrepareViewModel for why -->
-            <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
-                        Orientation="Horizontal" Margin="5,20,0,5"
-                        Visibility="{Binding IsCalibrationRunning, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
-
-                <!-- 1. Load Last Calibration -->
-                <Button Content="Load Last Calibration"
-                        Width="180" Height="40" Margin="0,0,10,0"
-                        Command="{Binding LoadLastCalibrationCommand}"/>
-
-                <!-- 2. Calibrate Device Gain -->
-                <Button Content="Calibrate Device Gain"
-                        Width="180" Height="40" Margin="0,0,10,0"
-                        Command="{Binding CalibrateGainCommand}"/>
-
-                <!-- 3. Capture Baseline -->
-                <Button Content="Capture Baseline"
-                        Width="180" Height="40"
-                        Command="{Binding CaptureBaselineCommand}"/>
-            </StackPanel>
-
-            <!-- Cancel Button - shown in place of the three above while any of them runs -->
-            <Button Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Content="Cancel"
-                    Width="200" Margin="5,20,0,5"
-                    Height="40"
-                    Command="{Binding CancelCalibrationCommand}"
-                    Visibility="{Binding IsCalibrationRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-
-            <!-- Hint when Capture Baseline can't be run because the mount isn't connected -->
-            <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
-                       Text="Connect the telescope to capture a baseline (it needs to slew to a cold-sky position)."
-                       Foreground="Gray" Margin="5,5,0,0" TextWrapping="Wrap"
-                       Visibility="{Binding IsConnectedMount, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
-
         </Grid>
+
+
+
+
 
     </Grid>
 </UserControl>
