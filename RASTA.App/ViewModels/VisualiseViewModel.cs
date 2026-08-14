@@ -116,6 +116,37 @@ public partial class VisualiseViewModel : ObservableObject
     [ObservableProperty]
     private int smoothingWindow = 21;
 
+    // Own progress/busy state for GenerateChartAsync, deliberately separate from
+    // StatusBarViewModel.CaptureProgress/IsCaptureInProgress - those are also driven by
+    // CaptureViewModel (and Mosaic/Prepare), so a chart generated here while a capture
+    // sweep is running elsewhere used to fight the same shared bar for ownership. Drives
+    // the Cancel button that replaces "Generate Chart" while a chart is being generated
+    // (see VisualiseView.xaml) - the button itself doubles as the progress indicator via
+    // GenerationProgress, rather than a separate bar next to it.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(GenerateChartCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelGenerateChartCommand))]
+    private bool isGenerating;
+
+    [ObservableProperty]
+    private double generationProgress;
+
+    // Status text for the same flow - kept off StatusBarViewModel.CaptureStatus for the
+    // same reason as GenerationProgress above: CaptureViewModel/MosaicViewModel/
+    // PrepareViewModel write that same shared string, so a chart generated here while a
+    // capture is running elsewhere used to stomp on (and be stomped on by) its status
+    // text too. Surfaced as the Cancel button's own ToolTip (see VisualiseView.xaml)
+    // rather than dropped, so the phase ("Processing baseline…" etc) is still visible.
+    [ObservableProperty]
+    private string generationStatus = string.Empty;
+
+    // Only one GenerateChartAsync run at a time is ever in flight (GenerateChartCommand's
+    // CanExecute enforces that), so a single field - rather than threading a
+    // CancellationToken through every Process*/ForEachChunk call - is enough to let
+    // ForEachChunk observe a cancellation request from CancelGenerateChart.
+    private CancellationTokenSource? _generateCts;
+    private CancellationToken _generateCt;
+
     public SpectrumViewModel SpectrumVm { get; private set; }
 
     // Backs the "Mosaic" tab - the folder-wide, multi-position counterpart to this
@@ -139,30 +170,32 @@ public partial class VisualiseViewModel : ObservableObject
     // ---------------------------------------------------------
     // Progress reporting - real, measured progress (chunks
     // processed / total chunks), same pattern as Calibrator and
-    // CaptureViewModel, not a time-based guess.
+    // CaptureViewModel, not a time-based guess. Reported on this
+    // view model's own GenerationProgress/GenerationStatus (see
+    // fields above), not StatusBarViewModel's shared bar/text.
     // ---------------------------------------------------------
 
     private void BeginProgress(string status)
     {
-        _statusBar.CaptureStatus = status;
-        _statusBar.CaptureProgress = 0;
-        _statusBar.IsCaptureInProgress = true;
+        GenerationStatus = status;
+        GenerationProgress = 0;
     }
 
     private void ReportProgress(double fraction)
     {
-        _statusBar.CaptureProgress = Math.Clamp(fraction, 0.0, 1.0);
+        GenerationProgress = Math.Clamp(fraction, 0.0, 1.0);
     }
 
     private void EndProgress()
     {
-        _statusBar.IsCaptureInProgress = false;
-        _statusBar.CaptureProgress = 0;
+        GenerationProgress = 0;
     }
 
     /// <summary>
     /// Iterates fixed-size chunks of raw IQ, invoking processChunk on each and reporting
-    /// real, measured progress (chunks processed / total chunks) as it goes.
+    /// real, measured progress (chunks processed / total chunks) as it goes. Checks
+    /// _generateCt each iteration so CancelGenerateChart can unwind the loop promptly
+    /// rather than only between whole-file phases.
     /// </summary>
     private void ForEachChunk(byte[] iq, int bytesPerChunk, Action<byte[]> processChunk)
     {
@@ -171,6 +204,8 @@ public partial class VisualiseViewModel : ObservableObject
 
         for (int offset = 0; offset + bytesPerChunk <= iq.Length; offset += bytesPerChunk)
         {
+            _generateCt.ThrowIfCancellationRequested();
+
             var chunk = new byte[bytesPerChunk];
             Buffer.BlockCopy(iq, offset, chunk, 0, bytesPerChunk);
 
@@ -235,7 +270,7 @@ public partial class VisualiseViewModel : ObservableObject
     /// CombinedFileCount so the UI shows how many files went into the result. The
     /// actual read/validate/trim/concatenate work lives in FitsFileIo.ReadCombinedRawIq
     /// (shared with MosaicViewModel's whole-folder flow) - this just resolves which
-    /// files belong together and bridges its progress callback to the status bar.
+    /// files belong together and bridges its progress callback to GenerationStatus.
     /// </summary>
     private (FitsFileMetaData meta, byte[] iq) ReadCombinedCaptureRawIq(string captureFilePath)
     {
@@ -244,7 +279,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         return _fitsFileIo.ReadCombinedRawIq(files, (status, fraction) =>
         {
-            _statusBar.CaptureStatus = status;
+            GenerationStatus = status;
             ReportProgress(fraction);
         });
     }
@@ -284,11 +319,17 @@ public partial class VisualiseViewModel : ObservableObject
     }
 
 
-    [RelayCommand]
+    private bool CanGenerateChart => !IsGenerating;
+
+    [RelayCommand(CanExecute = nameof(CanGenerateChart))]
     private async Task GenerateChartAsync()
     {
         if (BaselineFile is null && CaptureFile is null)
             return;
+
+        _generateCts = new CancellationTokenSource();
+        _generateCt = _generateCts.Token;
+        IsGenerating = true;
 
         BeginProgress("Processing…");
 
@@ -320,14 +361,32 @@ public partial class VisualiseViewModel : ObservableObject
                     // Handle the case where only the capture file is selected
                     ProcessCapture();
                 }
-            });
+            }, _generateCt);
 
-            _statusBar.CaptureStatus = "Completed";
+            GenerationStatus = "Completed";
+        }
+        catch (OperationCanceledException)
+        {
+            GenerationStatus = "Cancelled.";
         }
         finally
         {
             EndProgress();
+            IsGenerating = false;
+            _generateCts?.Dispose();
+            _generateCts = null;
         }
+    }
+
+    // Cancels a running GenerateChartAsync. ForEachChunk's per-iteration
+    // ThrowIfCancellationRequested() unwinds the current Process* method before it
+    // updates SpectrumVm, so the chart on screen is left showing whatever was last
+    // successfully generated rather than a half-updated one.
+    [RelayCommand(CanExecute = nameof(IsGenerating))]
+    private void CancelGenerateChart()
+    {
+        _generateCts?.Cancel();
+        GenerationStatus = "Cancelling…";
     }
 
     private void SelectBaseline()

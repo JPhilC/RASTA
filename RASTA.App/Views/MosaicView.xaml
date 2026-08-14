@@ -62,7 +62,7 @@
                 Padding="10,4" Width="160"/>
 
         <!-- Parameters row -->
-        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="9" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
+        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="7" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
             <TextBlock Text="Target FFT Size" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
             <TextBox Width="60" Text="{Binding TargetFftSize}" VerticalAlignment="Center"/>
 
@@ -73,11 +73,36 @@
                        ToolTip="Should match the sweep's own step size, in degrees, so each pixel is one real sky cell"/>
             <TextBox Width="60" Text="{Binding SkyCellSizeDeg}" VerticalAlignment="Center"/>
 
-            <Button Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
-                    Padding="10,4" Width="160" Margin="20,0,0,0"/>
-
             <TextBlock Text="{Binding StatusSummary}" VerticalAlignment="Center" Margin="15,0,0,0" FontStyle="Italic"/>
+
+
         </StackPanel>
+        
+        <Button Grid.Row="6" Grid.Column="8"  Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
+                    Visibility="{Binding IsGenerating, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                    Padding="10,4"  Width="160"/>
+
+        <!-- Replaces Generate Mosaic while a session is being processed - the button
+                 itself is the progress indicator (a green scrolling ProgressBar behind the
+                 "Cancel Mosaic" caption), same pattern as Visualise's Cancel button, and
+                 clicking it cancels processing. -->
+        <Button Grid.Row="6" Grid.Column="8"
+                Command="{Binding CancelMosaicCommand}"
+                    Visibility="{Binding IsGenerating, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    ToolTip="{Binding GenerationStatus, StringFormat='Cancel mosaic processing ({0})'}"
+                    Padding="10,4" Width="160" Height="25.96">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <ProgressBar Minimum="0" Maximum="1"
+                                 Value="{Binding GenerationProgress}"
+                                 IsHitTestVisible="False"/>
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                </ControlTemplate>
+            </Button.Template>
+            <TextBlock Text="Cancel Mosaic" FontWeight="Bold"/>
+        </Button>
 
         <!-- Results -->
         <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="9">

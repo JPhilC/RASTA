@@ -119,8 +119,32 @@
                 <Button Grid.Column="14" Grid.Row="6"
             Content="Generate Chart"
             Command="{Binding GenerateChartCommand}"
+            Visibility="{Binding IsGenerating, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
             Padding="10,4"
             Width="160"/>
+
+                <!-- Replaces Generate Chart while a chart is being generated (issue #12) -
+                     the button itself is the progress indicator (a green scrolling
+                     ProgressBar behind the "Cancel" caption), rather than a separate bar
+                     next to it, and clicking it cancels generation. -->
+                <Button Grid.Column="14" Grid.Row="6"
+            Command="{Binding CancelGenerateChartCommand}"
+            Visibility="{Binding IsGenerating, Converter={StaticResource BooleanToVisibilityConverter}}"
+            ToolTip="{Binding GenerationStatus, StringFormat='Cancel spectrum/chart generation ({0})'}"
+            Padding="10,4"
+            Width="160">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Grid Background="Transparent">
+                                <ProgressBar Minimum="0" Maximum="1"
+                                     Value="{Binding GenerationProgress}"
+                                     IsHitTestVisible="False"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <TextBlock Text="Cancel" FontWeight="Bold"/>
+                </Button>
 
                 <TextBlock Grid.Column="0" Grid.Row="8"
                        Text="Smooth" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>

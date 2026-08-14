@@ -170,6 +170,31 @@ public partial class MosaicViewModel : ObservableObject
 
     public ObservableCollection<MosaicPositionSummary> Positions { get; } = new();
 
+    // Own progress/busy/status state for GenerateMosaicAsync, deliberately separate from
+    // StatusBarViewModel.CaptureProgress/IsCaptureInProgress/CaptureStatus - those are also
+    // driven by CaptureViewModel (and VisualiseViewModel's own Generate Chart), so mosaic
+    // processing used to fight the same shared bar/text for ownership. Same pattern as
+    // VisualiseViewModel's IsGenerating/GenerationProgress/GenerationStatus - see there for
+    // the fuller rationale. Drives the Cancel Mosaic button that replaces "Generate Mosaic"
+    // while a mosaic is being processed (see MosaicView.xaml), which doubles as the progress
+    // indicator via GenerationProgress rather than a separate bar next to it.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(GenerateMosaicCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelMosaicCommand))]
+    private bool isGenerating;
+
+    [ObservableProperty]
+    private double generationProgress;
+
+    [ObservableProperty]
+    private string generationStatus = string.Empty;
+
+    // Only one GenerateMosaicAsync run at a time is ever in flight (GenerateMosaicCommand's
+    // CanExecute enforces that), so a single field is enough for CancelMosaic to reach.
+    // MosaicProcessor.ProcessFolderAsync already takes and observes a CancellationToken of
+    // its own (checked once per position), so no change was needed there.
+    private CancellationTokenSource? _generateCts;
+
     public MosaicViewModel(MosaicProcessor mosaicProcessor, GridBuilder gridBuilder, StatusBarViewModel statusBar)
     {
         _mosaicProcessor = mosaicProcessor;
@@ -180,25 +205,25 @@ public partial class MosaicViewModel : ObservableObject
     // ---------------------------------------------------------
     // Progress reporting - same convention as VisualiseViewModel/
     // Calibrator/CaptureViewModel: real, measured progress, not
-    // a time-based guess.
+    // a time-based guess. Reported on this view model's own
+    // GenerationProgress/GenerationStatus (see fields above),
+    // not StatusBarViewModel's shared bar/text.
     // ---------------------------------------------------------
 
     private void BeginProgress(string status)
     {
-        _statusBar.CaptureStatus = status;
-        _statusBar.CaptureProgress = 0;
-        _statusBar.IsCaptureInProgress = true;
+        GenerationStatus = status;
+        GenerationProgress = 0;
     }
 
     private void ReportProgress(double fraction)
     {
-        _statusBar.CaptureProgress = Math.Clamp(fraction, 0.0, 1.0);
+        GenerationProgress = Math.Clamp(fraction, 0.0, 1.0);
     }
 
     private void EndProgress()
     {
-        _statusBar.IsCaptureInProgress = false;
-        _statusBar.CaptureProgress = 0;
+        GenerationProgress = 0;
     }
 
     [RelayCommand]
@@ -267,11 +292,16 @@ public partial class MosaicViewModel : ObservableObject
 
     partial void OnSurfaceMetricChanged(MosaicSurfaceMetric value) => RenderSurface();
 
-    [RelayCommand]
+    private bool CanGenerateMosaic => !IsGenerating;
+
+    [RelayCommand(CanExecute = nameof(CanGenerateMosaic))]
     private async Task GenerateMosaicAsync()
     {
         if (CaptureFolder is null || BaselineFile is null)
             return;
+
+        _generateCts = new CancellationTokenSource();
+        IsGenerating = true;
 
         BeginProgress("Processing mosaic…");
         try
@@ -283,22 +313,42 @@ public partial class MosaicViewModel : ObservableObject
                 IntegratedWindowKmPerSec,
                 (status, fraction) =>
                 {
-                    _statusBar.CaptureStatus = status;
+                    GenerationStatus = status;
                     ReportProgress(fraction);
                 },
                 despike: DespikeEnabled,
-                despikeThresholdSigma: DespikeThresholdSigma);
+                despikeThresholdSigma: DespikeThresholdSigma,
+                ct: _generateCts.Token);
 
             BuildGrids(result);
             BuildPositionsSummary(result);
 
             StatusSummary = $"{result.Positions.Count} position(s) processed.";
-            _statusBar.CaptureStatus = "Completed";
+            GenerationStatus = "Completed";
+        }
+        catch (OperationCanceledException)
+        {
+            GenerationStatus = "Cancelled.";
+            StatusSummary = "Mosaic processing cancelled.";
         }
         finally
         {
             EndProgress();
+            IsGenerating = false;
+            _generateCts?.Dispose();
+            _generateCts = null;
         }
+    }
+
+    // Cancels a running GenerateMosaicAsync. MosaicProcessor.ProcessFolderAsync checks the
+    // token once per position (between whole capture groups, not per-chunk like
+    // VisualiseViewModel's ForEachChunk) so cancellation takes effect at the next position
+    // boundary rather than instantly mid-FFT.
+    [RelayCommand(CanExecute = nameof(IsGenerating))]
+    private void CancelMosaic()
+    {
+        _generateCts?.Cancel();
+        GenerationStatus = "Cancelling…";
     }
 
     /// <summary>
