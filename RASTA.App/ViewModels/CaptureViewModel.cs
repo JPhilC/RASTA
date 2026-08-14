@@ -411,8 +411,24 @@ public partial class CaptureViewModel : ObservableObject
         // against real measured per-point timing as the sweep actually runs.
         EstimatedCompletionTime = sweepPlanResult.EstimatedCompletionUtc?.ToLocalTime();
 
-        // Enable tracking if the plan requires it and the mount supports it.
-        if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
+        // Snapshot the mount's own tracking/at-home state before this sweep touches
+        // either, so both can be restored exactly as found once the sweep finishes or is
+        // cancelled (see the finally block below). Queried once up front rather than
+        // repeatedly, since a mount that can't report Can*/Get* shouldn't be asked again
+        // per target point.
+        bool canSetTracking = await _mount.GetCanSetTrackingAsync();
+        bool originalTrackingEnabled = canSetTracking && await _mount.GetTrackingAsync();
+        bool canFindHome = await _mount.GetCanFindHomeAsync();
+        bool wasAtHomeAtStart = canFindHome && await _mount.GetAtHomeAsync();
+
+        // This mount's ASCOM driver rejects a slew outright unless tracking is already
+        // on, regardless of whether the plan itself wants tracking left on through the
+        // dwell - so tracking always goes on here. If Tracking Enabled is ticked on the
+        // plan it simply stays on for the sweep's duration (the per-point loop below
+        // never turns it off); otherwise it's dropped back to originalTrackingEnabled
+        // right after each point's slew completes, and restored one final time in the
+        // finally block regardless of how the sweep ends.
+        if (canSetTracking)
         {
             await _mount.SetTrackingAsync(true);
         }
@@ -469,6 +485,15 @@ public partial class CaptureViewModel : ObservableObject
                 _statusBar.CaptureStatus = $"Slewing to pos {targetIndex + 1}";
                 _statusBar.IsCaptureInProgress = false;
 
+                // If Tracking Enabled isn't ticked, tracking was dropped back to
+                // originalTrackingEnabled after the previous point's slew (below) - turn
+                // it back on now so this slew isn't rejected by the mount. A no-op when
+                // Tracking Enabled is ticked, since it's already on for the whole sweep.
+                if (canSetTracking && !ActivePlan.TrackingEnabled)
+                {
+                    await _mount.SetTrackingAsync(true);
+                }
+
                 if (target.Mode == CoordinateMode.Equatorial)
                     await _mount.SlewToRaDecAsync(target.RightAscensionHours, target.DeclinationDeg);
                 else
@@ -504,6 +529,12 @@ public partial class CaptureViewModel : ObservableObject
                     return;
                 }
 
+                // The slew is done - if the plan doesn't want tracking on for the dwell,
+                // drop it back to whatever the mount was set to before this sweep began.
+                if (canSetTracking && !ActivePlan.TrackingEnabled)
+                {
+                    await _mount.SetTrackingAsync(originalTrackingEnabled);
+                }
 
                 // -----------------------------------------
                 // NEW TARGET → reset the running spectrum
@@ -616,16 +647,28 @@ public partial class CaptureViewModel : ObservableObject
             // stuck visible even after the sweep has genuinely stopped.
             try
             {
-                if (ActivePlan.TrackingEnabled && await _mount.GetCanSetTrackingAsync())
+                // Return home if the plan explicitly asks for it, or if the mount was
+                // already at home before this sweep started - restoring that starting
+                // state even when GoToHomeAfterCapture isn't ticked.
+                bool shouldReturnHome = ActivePlan.GoToHomeAfterCapture || wasAtHomeAtStart;
+
+                if (shouldReturnHome && canFindHome)
                 {
-                    await _mount.SetTrackingAsync(false);
-                }
-                if (ActivePlan.GoToHomeAfterCapture)
-                {
-                    if (await _mount.GetCanFindHomeAsync())
+                    // This mount refuses a slew (FindHome included) while tracking is
+                    // active, regardless of what originalTrackingEnabled will restore it
+                    // to below - so tracking must come off first if it's currently on.
+                    if (canSetTracking && await _mount.GetTrackingAsync())
                     {
-                        await _mount.FindHomeAsync();
+                        await _mount.SetTrackingAsync(false);
                     }
+                    await _mount.FindHomeAsync();
+                }
+
+                // Always put tracking back exactly how the mount had it before this sweep
+                // began, whether the sweep completed, failed, or was cancelled.
+                if (canSetTracking)
+                {
+                    await _mount.SetTrackingAsync(originalTrackingEnabled);
                 }
             }
             catch (Exception ex)
