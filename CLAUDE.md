@@ -316,6 +316,21 @@ stream in during a capture) runs on `HiStreamingAccumulator`/`HiStreamingPipelin
 calibration baseline, reassembling arbitrary-sized USB streaming chunks into fftSize-aligned frames
 first (`ProcessChunk`'s leftover-byte buffer) — raw async buffer chunks are *not* aligned to fftSize.
 
+`CaptureSweepAsync` always switches mount tracking on before a slew, regardless of the plan's own
+`TrackingEnabled` checkbox — this mount's ASCOM driver rejects a slew outright while tracking is off,
+which previously surfaced as a hard error the instant a sweep began if tracking hadn't already been
+switched on by hand. It snapshots the mount's original tracking/at-home state before touching either:
+if `TrackingEnabled` is ticked, tracking is switched on once and left on for the whole sweep; if not,
+it's switched on immediately before each target's slew and dropped back to whatever it originally was
+as soon as that slew completes, so the mount only tracks while actually slewing. The `finally` block
+always restores tracking to its original state, and sends the mount home if `GoToHomeAfterCapture` is
+set *or* the mount was already at home when the sweep started (dropping tracking first, since this
+mount also refuses a `FindHome` while tracking is active) — restoring the starting "at home" condition
+even when the plan itself doesn't explicitly ask for it. This `finally` block also swallows failures
+from its own post-sweep tracking/find-home calls, so a mount that dies mid-sweep (see "Capture
+cancellation and mount-disconnect recovery" below) doesn't leave `IsBusy`/`IsSweepCaptureRunning` stuck
+`true` and the Cancel button stuck visible after the sweep has genuinely stopped.
+
 `FitsFileMetaData` (`RASTA.Core/Storage/FitsFileMetaData.cs`) is the header schema written/read on
 every file: origin, data format, center freq, sample rate, FFT size, gain, dwell, observation date,
 site lat/lon/elevation, and pointing in **both** RA/Dec and Az/Alt (whichever the active
@@ -344,6 +359,44 @@ concatenates their raw IQ — each file's contribution is first trimmed to a who
 native FFT frames, so a chunk extracted later never straddles the boundary between two physically
 discontinuous captures. `CombinedFileCount` (shown in the view) reports how many files went in;
 non-matching filenames (baseline files, single-file dwells) are unaffected.
+
+### Capture cancellation and mount-disconnect recovery
+
+`CaptureViewModel` exposes `CancelSweepCommand`/`CancelQuickCaptureCommand`, each cancelling its own
+`CancellationTokenSource` (`_sweepCts`/`_quickCaptureCts` — Quick Capture used to run on a local
+`using var cts` nothing outside the method could reach). Cancellation unwinds before
+`FitsFileIo.WriteRawIq` is reached in both paths, so a cancelled capture's FITS file is never written
+to disk — only files from already-completed sweep points remain. The slew-wait loop's timeout handling
+deliberately uses a plain `catch (OperationCanceledException)` + conditional rethrow rather than an
+exception filter (`when (!ct.IsCancellationRequested)`): a filtered catch anywhere in an async method's
+compiled state machine can cause the debugger to mis-flag an unrelated, genuinely-handled throw
+elsewhere in the *same* method as user-unhandled during first-chance dispatch.
+
+Mount disconnects are handled separately from a user-initiated cancel, since `ITelescopeMount.
+IsConnected` is just a cached flag set on `ConnectAsync`/`DisconnectAsync` and never re-derived from a
+live check — the only way this app can actually tell the mount has gone away (network drop, mount
+powered off, Alpaca server gone) is a live poll call throwing. `TelescopeService`'s poll loop now stops
+itself and raises `ConnectionLost` (an `Action<Exception>`, fired on the poll loop's own background
+thread) the first time that happens, instead of retrying forever behind an "Error: ..." status string.
+`App.xaml.cs` subscribes once in `OnStartup` and tidies up in `OnTelescopeConnectionLost` exactly as if
+the user had clicked Disconnect: `CaptureViewModel.CancelAnyRunningCapture()` cancels any in-flight
+sweep/Quick Capture (same FITS-not-written guarantee as above), `SettingsViewModel.
+ForceDisconnectTelescope()` resets local connection state via `ITelescopeMount.MarkDisconnected()`
+*without* a live round-trip (the link is already known down, so a graceful `DisconnectAsync()` would
+just hang or fail again), `TelescopeService.Stop()` halts polling, and `NavigationViewModel` navigates
+back to Prepare — since Plan/Capture both require a connected mount to mean anything — before a
+`MessageBox` explains why. There's deliberately no auto-reconnect: once a live poll has failed there's
+no way to know what physical state the mount was actually left in (mid-slew? tracking? parked?), so
+reconnecting is left as a deliberate, informed action for the user.
+
+Because SDR/mount state changes can now fire from background threads at points that used to only ever
+run on the UI thread (`SdrDeviceService.EnumerateDevicesAsync` and `TelescopeService`'s poll loop both
+run inside their own `Task.Run`), `CaptureViewModel.LoadAvailablePlans`/`PlanViewModel.LoadSavedPlans`
+wrap their `ObservableCollection` mutations in `UiThread.SafeInvoke` (a raw, unmarshaled
+`ObservableCollection.Clear()`/`Add()` from a non-UI thread throws), and `SpectrumViewModel.
+UpdateSpectrum` — including its axis-limit mutations, previously unmarshaled entirely, called from
+`CaptureViewModel.ChunkWorker`'s background thread on every live-spectrum update — does the same in
+place of a raw, shutdown-unsafe `App.Current.Dispatcher.Invoke(...)` call.
 
 ### Mosaic sky-map view
 
@@ -476,22 +529,37 @@ click, called out directly in `MosaicView.xaml`'s UI.
 
 ### Progress reporting convention
 
-`Calibrator`, `CaptureViewModel`, and `VisualiseViewModel` all report progress the same way: real,
-measured progress from actual work completed (bytes captured, chunks processed, files read/gain
-trials finished) — never a simulated/time-based animation. `VisualiseViewModel` has the canonical
-small implementation of the pattern: `BeginProgress(status)` resets `StatusBarViewModel.CaptureProgress`
-to 0 and shows the bar, `ReportProgress(fraction)` updates it, `EndProgress()` hides it again, and
-`ForEachChunk` drives `ReportProgress` from a chunks-processed/total-chunks ratio. Each logical phase
-(reading a file, processing a baseline, processing a capture) gets its own fresh `BeginProgress` — a
-new 0→1 run with its own status message — rather than one continuous bar across unrelated phases.
-`StatusBarViewModel`'s properties are safe to set from a background thread (WPF's data-binding
-machinery marshals `INotifyPropertyChanged` notifications to the UI thread automatically); several of
-these call sites intentionally run inside `Task.Run(...)` so the UI thread stays free to actually
-repaint between updates — a synchronous CPU-bound loop on the UI thread will never show intermediate
-progress no matter how often you set the bound property. `CaptureViewModel.StartProgressTimer` (a
-`DispatcherTimer`-based *simulated* progress bar, since removed) is the anti-pattern to avoid: it
-estimated elapsed time against a nominal duration instead of measuring real progress, and could hit
-100%/hide itself while the real work was still running.
+`Calibrator`, `CaptureViewModel`, `VisualiseViewModel`, and `MosaicViewModel` all report progress the
+same way: real, measured progress from actual work completed (bytes captured, chunks processed, files
+read/gain trials finished, positions processed) — never a simulated/time-based animation. The pattern
+is the same small shape everywhere: `BeginProgress(status)` resets the progress value to 0 and sets a
+status message, `ReportProgress(fraction)` updates it, `EndProgress()` resets it again, and
+`ForEachChunk`/the per-position loop drives `ReportProgress` from a chunks-processed/total-chunks (or
+positions-processed/total-positions) ratio. Each logical phase (reading a file, processing a baseline,
+processing a capture, processing one mosaic position) gets its own fresh `BeginProgress` — a new 0→1
+run with its own status message — rather than one continuous bar across unrelated phases.
+
+`CaptureViewModel` and `PrepareViewModel`/`Calibrator` still drive the *shared* `StatusBarViewModel.
+CaptureProgress`/`IsCaptureInProgress`/`CaptureStatus` (the status bar's own progress bar, visible
+regardless of which view is on screen). `VisualiseViewModel` and `MosaicViewModel` deliberately do
+**not** — `GenerateChartAsync`/mosaic processing used to write to that same shared state, which meant
+generating a chart while a capture sweep was running elsewhere fought the sweep for ownership of the
+same bar and status text. Each now has its own `IsGenerating`/`GenerationProgress`/`GenerationStatus`
+instead, bound to a "Generate Chart"/"Generate Mosaic" button that turns into a Cancel button (the
+button itself doubles as the progress indicator — a `ProgressBar` templated behind the caption, rather
+than a separate bar next to it) while a run is in flight; `GenerationStatus` surfaces as that button's
+tooltip. Cancelling sets a `CancellationTokenSource` checked per-chunk in `VisualiseViewModel.
+ForEachChunk` / per-position in `MosaicProcessor.ProcessFolderAsync`'s existing token parameter, so a
+long chart/mosaic generation can be aborted promptly rather than only between whole-file phases.
+
+All of these properties are safe to set from a background thread (WPF's data-binding machinery
+marshals `INotifyPropertyChanged` notifications to the UI thread automatically); several of these call
+sites intentionally run inside `Task.Run(...)` so the UI thread stays free to actually repaint between
+updates — a synchronous CPU-bound loop on the UI thread will never show intermediate progress no matter
+how often you set the bound property. `CaptureViewModel.StartProgressTimer` (a `DispatcherTimer`-based
+*simulated* progress bar, since removed) is the anti-pattern to avoid: it estimated elapsed time
+against a nominal duration instead of measuring real progress, and could hit 100%/hide itself while the
+real work was still running.
 
 `CaptureViewModel.EstimatedCompletionTime` applies the same philosophy to session ETA: it starts from
 `SweepPlanResult.EstimatedCompletionUtc` (a nominal estimate from planned dwell/slew figures, computed
@@ -579,6 +647,16 @@ Desktop Runtime ahead of the MSI) build the release installer:
   cycle during iteration — bump `Version` between install-testing rebuilds to avoid it. The fixed
   `UpgradeCode` GUIDs (`RASTA.Setup`'s and `RASTA.Bundle`'s are different from each other) must never
   change once a real release has shipped — that's what ties future upgrades to this install.
+
+`scripts/Build-Release.ps1` automates the above into one step: builds `RASTA.Bundle` in the given
+configuration (default `Release`, retrying once with `-p:SuppressValidation=true` on the known
+`WIX0350` machine-specific quirk), then copies the resulting `RASTA-Setup.exe` into the repo-root
+`Releases\` folder (already covered by `.gitignore`'s `[Rr]eleases/` rule, so built installers never
+get committed) as `RASTA-Setup-<version>.exe`, reading `<version>` from `Directory.Build.props` so the
+installer and its filename can never disagree. Refuses to overwrite an existing versioned build unless
+run with `-Force` (bump `<Version>` in `Directory.Build.props` for a new build instead — see the GUID
+note above on why that matters during install-testing anyway); `-SkipBuild` just re-copies whatever's
+already built.
 
 ### Known incomplete / placeholder areas
 
