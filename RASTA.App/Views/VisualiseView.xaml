@@ -91,8 +91,7 @@
                     Content="Clear Capture FIT"
                     Command="{Binding ClearCaptureFileCommand}"
                     Visibility="{Binding CaptureAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
-                    Padding="10,4"
-                    Width="160" Click="Button_Click"/>
+                    Padding="10,4"/>
 
                 <TextBlock Grid.Column="0" Grid.Row="6"
             Text="Spectrum Mode" FontWeight="Bold"
