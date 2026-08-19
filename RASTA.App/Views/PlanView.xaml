@@ -124,11 +124,12 @@
                             <TextBox Width="120" Text="{Binding Range.AltitudeEndDeg}"/>
                         </StackPanel>
                     </StackPanel>
-                    <!-- Step size -->
+                    <!-- Angular separation -->
                     <StackPanel Orientation="Horizontal" Margin="0 5 0 0">
                         <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Step Size (Deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.StepDeg}"/>
+                            <TextBlock Text="Angular Separation (Deg)"/>
+                            <TextBox Width="120" Text="{Binding Range.AngularSeparationDeg}"
+                                     ToolTip="The true angular separation wanted between adjacent dwell points on the sky (e.g. half your antenna's beamwidth for Nyquist-sampled coverage). Declination/Elevation points are spaced this far apart directly; RA/Azimuth points are automatically spaced wider per row (divided by cos of that row's Dec/Elevation) so every point ends up this same real distance from its neighbours, rather than crowding together near the poles/zenith the way an equal-hours or equal-degrees step would."/>
                         </StackPanel>
                     </StackPanel>
 

@@ -51,8 +51,8 @@ namespace RASTA.Processing.Planning
             var range = plan.Range;
             if (plan.PlanType == PlanType.Drift)
                 return SweepPlanResult.Fail("Drift plans are not supported for sweeps.");
-            if (range.StepDeg <= 0)
-                return SweepPlanResult.Fail("Step size must be greater than zero.");
+            if (range.AngularSeparationDeg <= 0)
+                return SweepPlanResult.Fail("Angular separation must be greater than zero.");
 
             var rawPoints = (plan.PlanType == PlanType.AltAz)
                 ? BuildAltAzSweep(range)
@@ -158,11 +158,18 @@ namespace RASTA.Processing.Planning
         private IEnumerable<TargetPoint> BuildAltAzSweep(TargetRange range)
         {
             var points = new List<TargetPoint>();
-            double stepDeg = Math.Abs(range.StepDeg);
+            double separationDeg = Math.Abs(range.AngularSeparationDeg);
 
-            foreach (double el in StepRange(range.AltitudeStartDeg, range.AltitudeEndDeg, stepDeg))
+            foreach (double el in StepRange(range.AltitudeStartDeg, range.AltitudeEndDeg, separationDeg))
             {
-                foreach (double az in StepRange(range.AzimuthStartDeg, range.AzimuthEndDeg, stepDeg))
+                // Azimuth circles shrink toward the zenith (el=90deg) exactly like RA circles
+                // shrink toward the celestial pole - correct by cos(elevation) per row so
+                // azimuth points stay the same real angular distance apart everywhere in the
+                // sweep, rather than bunching closer together in real sky-angle the higher the
+                // row sits.
+                double azStepDeg = RowStepDeg(separationDeg, el);
+
+                foreach (double az in StepRange(range.AzimuthStartDeg, range.AzimuthEndDeg, azStepDeg))
                 {
                     points.Add(TargetPoint.FromAzEl(az, el));
                 }
@@ -174,18 +181,41 @@ namespace RASTA.Processing.Planning
         private IEnumerable<TargetPoint> BuildEquatorialSweep(TargetRange range)
         {
             var points = new List<TargetPoint>();
-            double stepDeg = Math.Abs(range.StepDeg);
-            double stepHours = DegreesToHours(stepDeg);
+            double separationDeg = Math.Abs(range.AngularSeparationDeg);
 
-            foreach (double dec in StepRange(range.DecStartDeg, range.DecEndDeg, stepDeg))
+            foreach (double dec in StepRange(range.DecStartDeg, range.DecEndDeg, separationDeg))
             {
-                foreach (double ra in StepRange(range.RAStartHours, range.RAEndHours, stepHours))
+                // RA circles shrink toward the celestial poles by cos(dec) - correct the RA
+                // step per row so points stay the same real angular distance apart everywhere
+                // in the sweep, rather than the naive "1h = 15deg" conversion (only exact at
+                // dec=0) leaving RA points crowded closer together in real sky-angle the
+                // higher |dec| gets.
+                double raStepHours = DegreesToHours(RowStepDeg(separationDeg, dec));
+
+                foreach (double ra in StepRange(range.RAStartHours, range.RAEndHours, raStepHours))
                 {
                     points.Add(TargetPoint.FromRaDec(ra, dec));
                 }
             }
 
             return points;
+        }
+
+        /// <summary>
+        /// The coordinate-space step (same units as <paramref name="separationDeg"/>) needed
+        /// along a row at <paramref name="rowAngleDeg"/> degrees from the equator/horizon so
+        /// adjacent points stay <paramref name="separationDeg"/> apart in real angle on the
+        /// sphere, rather than in raw coordinate units. Floors cos(rowAngle) instead of
+        /// dividing by (near) zero right at the pole/zenith - at that floor the resulting step
+        /// comfortably exceeds any real sweep range, so StepRange naturally collapses that row
+        /// to a single point, which is physically correct there (the row itself has shrunk to
+        /// essentially a point).
+        /// </summary>
+        private static double RowStepDeg(double separationDeg, double rowAngleDeg)
+        {
+            const double minCos = 0.01; // ~89.4 deg from the equator/horizon
+            double cosRow = Math.Max(Math.Abs(Math.Cos(rowAngleDeg * Math.PI / 180.0)), minCos);
+            return separationDeg / cosRow;
         }
 
         /// <summary>

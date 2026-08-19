@@ -9,12 +9,28 @@ namespace RASTA.App.Views
 {
     /// <summary>
     /// Renders MosaicViewModel's sky grid (SurfaceIntensityGrid/SurfaceXValues/SurfaceYValues -
-    /// RA x Dec x LineStrengthDb) as a rotatable 3D height-field surface via HelixToolkit.Wpf's
-    /// HelixViewport3D. The mesh itself is built by hand from plain WPF 3D types
+    /// RA x Dec x LineStrengthDb, or Az x El for an AltAz session) as a rotatable 3D globe via
+    /// HelixToolkit.Wpf's HelixViewport3D - genuinely curved onto a sphere (RA/Az wrapped around,
+    /// Dec/El as latitude) rather than a flat rectangular height-field, since the grid itself is
+    /// always a full-sky RA/Dec-or-Az/El array (see GridBuilder.BuildGrid) and a flat plot of it
+    /// carries the same equirectangular distortion the 2D heatmap has (see
+    /// HeatmapImageBuilder's sinusoidal remarks) - a real globe has none, by construction. Each
+    /// cell's value is a small radial bump/dent from a base sphere shell rather than a height
+    /// above a floor plane. The mesh itself is built by hand from plain WPF 3D types
     /// (Point3DCollection/Int32Collection) rather than HelixToolkit.Geometry.MeshBuilder,
     /// which in this Helix version works in System.Numerics.Vector3 and would need its own
     /// conversion step anyway - HelixToolkit's real value here is the interactive
     /// camera/viewport (rotate/zoom/pan), not mesh construction.
+    ///
+    /// Two known, deliberate simplifications rather than gaps: the poles (Dec=+/-90, or the
+    /// AltAz zenith El=90) aren't exact mesh vertices - GridBuilder's cell centers stop half a
+    /// cell short of them - so each pole is left as a small open circular gap rather than capped
+    /// with a fan of triangles, since a UK-latitude site will rarely if ever populate cells that
+    /// close to either pole anyway. And per-label text orientation is one fixed direction/up pair
+    /// for every label (see BuildAxes), which reads fine near the "front" of the globe but can
+    /// look edge-on elsewhere - proper per-label tangent-plane orientation is a real chunk of
+    /// extra geometry work for a cosmetic-only gain, left for later if it turns out to matter in
+    /// practice.
     ///
     /// Colour comes from a LinearGradientBrush (see BuildGradientBrush) sampled per-vertex via
     /// standard mesh texture coordinates (U only), since classic WPF 3D has no native
@@ -61,6 +77,39 @@ namespace RASTA.App.Views
             set => SetValue(YValuesProperty, value);
         }
 
+        public static readonly DependencyProperty IsAltAzProperty =
+            DependencyProperty.Register(nameof(IsAltAz), typeof(bool), typeof(MosaicSurfaceView),
+                new PropertyMetadata(false, OnDataChanged));
+
+        /// <summary>
+        /// True for an Az/El session (X wraps 0-360deg, Y spans 0-90deg from horizon to zenith),
+        /// false for RA/Dec (X wraps 0-24h, Y spans -90..+90deg pole to pole) - picks which
+        /// spherical convention Direction/BuildAxes use. Bound from MosaicViewModel.SurfaceIsAltAz.
+        /// </summary>
+        public bool IsAltAz
+        {
+            get => (bool)GetValue(IsAltAzProperty);
+            set => SetValue(IsAltAzProperty, value);
+        }
+
+        public static readonly DependencyProperty FlattenReliefProperty =
+            DependencyProperty.Register(nameof(FlattenRelief), typeof(bool), typeof(MosaicSurfaceView),
+                new PropertyMetadata(false, OnDataChanged));
+
+        /// <summary>
+        /// When true, every vertex sits exactly on the base SphereRadius shell regardless of its
+        /// data value - colour (see NormColor/texCoords) still carries the data, height doesn't.
+        /// This is the "true planetarium" look: from dead-center or close to it, a real sky has
+        /// no relief at all, only brightness varying by direction - matching that rather than the
+        /// bumpy-terrain look WalkAround's movement is otherwise meant to explore. Bound from
+        /// MosaicViewModel.FlattenGlobeRelief.
+        /// </summary>
+        public bool FlattenRelief
+        {
+            get => (bool)GetValue(FlattenReliefProperty);
+            set => SetValue(FlattenReliefProperty, value);
+        }
+
         public static readonly DependencyProperty SmoothProperty =
             DependencyProperty.Register(nameof(Smooth), typeof(bool), typeof(MosaicSurfaceView),
                 new PropertyMetadata(false, OnDataChanged));
@@ -101,10 +150,10 @@ namespace RASTA.App.Views
         {
             InitializeComponent();
             Loaded += (_, __) => Rebuild();
-            // Re-fit the camera once the "3D Surface" tab is actually shown, deferred a
-            // layout pass past the visibility flip so the viewport has real bounds to frame
-            // against (ZoomExtents against a not-yet-measured, never-attached viewport would
-            // otherwise compute a degenerate camera and leave the surface looking blank).
+            // Rebuild once the "3D Surface" tab is actually shown, deferred a layout pass past
+            // the visibility flip - the camera itself no longer needs fitting (it's fixed at the
+            // globe's center, see MosaicSurfaceView.xaml's remarks), but the mesh/geometry still
+            // needs a real, attached, measured viewport to render into.
             IsVisibleChanged += (_, e) =>
             {
                 if ((bool)e.NewValue)
@@ -115,11 +164,35 @@ namespace RASTA.App.Views
         private static void OnDataChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
             ((MosaicSurfaceView)d).Rebuild();
 
-        // Visual footprint of the surface, independent of the data's real units (velocity in
-        // km/s, position as an integer index) - every axis is normalized into this box so the
-        // camera's default framing looks sensible regardless of the session's actual scale.
-        private const double PlaneExtent = 10.0;
+        // Visual scale of the globe, independent of the data's real units (dB or km/s) - every
+        // cell's value is normalized into a radial bump/dent of at most +/-HeightExtent/2 around
+        // this base radius, so the camera's default framing looks sensible regardless of the
+        // session's actual data range. SphereRadius is deliberately large relative to
+        // HeightExtent (a 10% bump/dent, not the original 1:1.67 ratio) so peaks/troughs read as
+        // gentle, distant terrain relief once WalkAround lets you actually approach them, rather
+        // than looming - a "small planet, big sky" feel instead of "surrounded by spikes".
+        private const double SphereRadius = 30.0;
         private const double HeightExtent = 3.0;
+
+        /// <summary>
+        /// Unit direction for a point at (xVal, yVal) in the session's own axis units - RA hours
+        /// x Dec degrees, or Azimuth degrees x Elevation degrees - mapped so Dec/Elevation is
+        /// "up" (WPF Y), matching the celestial pole / zenith being the natural "up" for either
+        /// coordinate system. RA is converted to degrees (x15) first; Azimuth is already degrees.
+        /// </summary>
+        private static Vector3D Direction(double xVal, double yVal, bool isAltAz)
+        {
+            double xRad = (isAltAz ? xVal : xVal * 15.0) * Math.PI / 180.0;
+            double yRad = yVal * Math.PI / 180.0;
+            double cosY = Math.Cos(yRad);
+            return new Vector3D(cosY * Math.Cos(xRad), Math.Sin(yRad), cosY * Math.Sin(xRad));
+        }
+
+        private static Point3D SpherePoint(double xVal, double yVal, double radius, bool isAltAz)
+        {
+            var d = Direction(xVal, yVal, isAltAz);
+            return new Point3D(d.X * radius, d.Y * radius, d.Z * radius);
+        }
 
         private void Rebuild()
         {
@@ -145,8 +218,7 @@ namespace RASTA.App.Views
                 height = grid.GetLength(1);
             }
 
-            double xMin = xValues.Min(), xMax = xValues.Max();
-            double yMin = yValues.Min(), yMax = yValues.Max();
+            bool isAltAz = IsAltAz;
 
             double zMin = double.MaxValue, zMax = double.MinValue;
             for (int gx = 0; gx < width; gx++)
@@ -162,12 +234,8 @@ namespace RASTA.App.Views
             if (zMin > zMax)
                 return; // every cell is NaN - nothing to draw
 
-            double xRange = Math.Max(xMax - xMin, 1e-9);
-            double yRange = Math.Max(yMax - yMin, 1e-9);
             double zRange = Math.Max(zMax - zMin, 1e-9);
 
-            double NormX(double x) => (x - xMin) / xRange * PlaneExtent - PlaneExtent / 2;
-            double NormZ(double y) => (y - yMin) / yRange * PlaneExtent - PlaneExtent / 2;
             double NormHeight(double v) => (v - zMin) / zRange * HeightExtent - HeightExtent / 2;
             double NormColor(double v) => (v - zMin) / zRange;
 
@@ -181,8 +249,9 @@ namespace RASTA.App.Views
                 {
                     double v = grid[gx, gy];
                     bool valid = !double.IsNaN(v);
+                    double radius = SphereRadius + (!FlattenRelief && valid ? NormHeight(v) : 0);
 
-                    positions.Add(new Point3D(NormX(xValues[gx]), valid ? NormHeight(v) : 0, NormZ(yValues[gy])));
+                    positions.Add(SpherePoint(xValues[gx], yValues[gy], radius, isAltAz));
                     texCoords.Add(new Point(valid ? NormColor(v) : 0.5, 0));
                     vertexIndex[gx, gy] = gx * height + gy;
                 }
@@ -213,6 +282,23 @@ namespace RASTA.App.Views
                 }
             }
 
+            // Close the RA/Azimuth wraparound seam: xValues[width-1] and xValues[0] are exactly
+            // one cell-width apart once you wrap past 24h/360deg (GridBuilder's cell centers are
+            // evenly spaced across the whole wrap), so stitching the last column back to the
+            // first is exactly the same kind of quad as any other column pair - without this the
+            // globe would show a full pole-to-pole (or horizon-to-zenith) crack in its shell
+            // running down the 24h/0h or 360deg/0deg line, visible even where every cell is NaN.
+            for (int gy = 0; gy < height - 1; gy++)
+            {
+                int i00 = vertexIndex[width - 1, gy];
+                int i10 = vertexIndex[0, gy];
+                int i01 = vertexIndex[width - 1, gy + 1];
+                int i11 = vertexIndex[0, gy + 1];
+
+                indices.Add(i00); indices.Add(i11); indices.Add(i10);
+                indices.Add(i00); indices.Add(i01); indices.Add(i11);
+            }
+
             // Explicit per-vertex normals rather than relying on WPF's automatic normal
             // generation: HelixToolkit's own MeshBuilder-based visuals (see the GridLinesVisual3D/
             // SphereVisual3D diagnostic added while chasing RASTA issue #13's "nothing renders"
@@ -222,6 +308,13 @@ namespace RASTA.App.Views
             // exactly the symptom seen: geometry present (it affects ZoomExtents' bounds) but
             // nothing visibly drawn. Smooth (averaged) per-vertex shading, matching a height
             // field's continuous surface.
+            //
+            // Deliberately negated (edge2 x edge1, not edge1 x edge2) so normals point INWARD,
+            // toward the globe's own center - the triangle winding above was chosen for a mesh
+            // meant to be seen from outside, but the camera now always sits at the origin (see
+            // MosaicSurfaceView.xaml's CameraMode="FixedPosition" remarks) looking at the inside
+            // of the shell, so WPF's diffuse lighting needs the normal facing back toward it, not
+            // away, or the visible (inner) faces would be lit as if the light were behind them.
             var normalSums = new Vector3D[positions.Count];
             for (int t = 0; t < indices.Count; t += 3)
             {
@@ -229,20 +322,29 @@ namespace RASTA.App.Views
                 var p0 = positions[i0];
                 var edge1 = positions[i1] - p0;
                 var edge2 = positions[i2] - p0;
-                var faceNormal = Vector3D.CrossProduct(edge1, edge2);
+                var faceNormal = Vector3D.CrossProduct(edge2, edge1);
                 normalSums[i0] += faceNormal;
                 normalSums[i1] += faceNormal;
                 normalSums[i2] += faceNormal;
             }
 
             var normals = new Vector3DCollection(positions.Count);
-            foreach (var n in normalSums)
+            for (int i = 0; i < normalSums.Length; i++)
             {
-                var normal = n;
+                var normal = normalSums[i];
                 if (normal.LengthSquared > 1e-12)
+                {
                     normal.Normalize();
+                }
                 else
-                    normal = new Vector3D(0, 1, 0); // vertex touched by no valid triangle - shouldn't happen given the width/height>=2 guard above, but keep a sane fallback
+                {
+                    // Vertex touched by no valid triangle - shouldn't happen given the
+                    // width/height>=2 guard above, but "toward center" is the only sane default
+                    // on a sphere (see this loop's remarks on why inward, not outward).
+                    normal = -(Vector3D)positions[i];
+                    if (normal.LengthSquared > 1e-12)
+                        normal.Normalize();
+                }
                 normals.Add(normal);
             }
 
@@ -262,24 +364,22 @@ namespace RASTA.App.Views
             var model = new GeometryModel3D(mesh, material) { BackMaterial = material };
 
             SurfaceVisual.Content = model;
-            BuildAxes(NormX, NormZ);
-            Viewport.ZoomExtents(0);
+            BuildAxes(isAltAz);
         }
 
-        // Floor level for the reference grid/labels - the plot's own Y=0 (the height field's
-        // zero reference, not the data's min/max), rather than pinned to the bottom of whatever
-        // range the current session happens to span. For Velocity mode Y=0 is a real, physically
-        // meaningful plane (0 km/s, the LSR-corrected line center); for Strength/dB it's just a
-        // stable, data-independent mid-height reference. The mesh material is translucent (see
-        // TranslucentGradientBrush) precisely because this plane routinely sits *through* rather
-        // than below the surface, which would otherwise hide the grid/labels behind it.
-        private const double FloorY = 0.0;
-
-        // How far outside the PlaneExtent x PlaneExtent floor the tick labels sit, along
-        // whichever axis they're not measuring - just enough clearance to read separately from
-        // the gridlines themselves without drifting far from the surface they're labelling.
-        private const double LabelOffset = 0.6;
-        private const double LabelHeight = 0.35;
+        // Reference radius for the meridian/parallel gridlines - the globe's own zero reference
+        // (SphereRadius, the base shell before any data's radial bump/dent), not pinned to
+        // whatever radius the current session's own min/max data happens to span. For Velocity
+        // mode this shell is a real, physically meaningful surface (0 km/s, the LSR-corrected
+        // line center); for Strength/dB it's just a stable, data-independent reference. The mesh
+        // material is translucent (see TranslucentGradientBrush) precisely because this shell
+        // routinely sits *through* rather than under the data (a bump pokes out, a dent sinks
+        // in), which would otherwise hide the far side's gridlines/labels from view.
+        // Both scaled as a fraction of SphereRadius (rather than fixed absolute units) so they
+        // stay legibly sized whatever SphereRadius happens to be tuned to - a fixed 0.6/0.35
+        // would shrink to near-invisible specks now that SphereRadius is 30 instead of 5.
+        private const double LabelOffset = SphereRadius * 0.12;
+        private const double LabelHeight = SphereRadius * 0.07;
 
         // Both X and Y tick labels use the SAME textDirection/updirection - matching
         // HelixToolkit's own SurfacePlotVisual3D reference example (which labels every axis
@@ -291,62 +391,79 @@ namespace RASTA.App.Views
         private static readonly Vector3D LabelTextDirection = new(1, 0, 0);
         private static readonly Vector3D LabelUpDirection = new(0, 0, 1);
 
+        // How many segments a meridian/parallel arc is sampled into - enough to read as a smooth
+        // curve on the globe rather than a visibly faceted polygon.
+        private const int ArcSegments = 48;
+
         /// <summary>
-        /// Builds a faint reference floor grid plus tick labels at XTicks/YTicks' real RA/Dec(/
-        /// Az/El) values, mapped into the same normalized model space the mesh uses via the
-        /// caller's NormX/NormZ closures - so a gridline/label lines up exactly with the mesh
-        /// data it's next to, however the session's real coordinate range happens to sit within
-        /// the fixed PlaneExtent display box.
+        /// Builds reference meridian (constant RA/Az) and parallel (constant Dec/El) great-circle
+        /// arcs at XTicks/YTicks' real values, sitting on the globe's own reference shell (see
+        /// SphereRadius's remarks) rather than a flat floor plane - the spherical equivalent of
+        /// the old flat height-field's reference floor grid. A meridian runs pole-to-pole for an
+        /// Equatorial session or horizon-to-zenith for an AltAz one (Direction's Y domain differs
+        /// - see Rebuild); a parallel is always a full closed loop around the RA/Az axis.
         ///
         /// Gridlines use LinesVisual3D (a screen-space-constant-width line strip with a plain
         /// SolidColorBrush-backed material - the same "vector, not raster" family as
         /// BuildGradientBrush's LinearGradientBrush) rather than HelixToolkit's GridLinesVisual3D,
-        /// since GridLinesVisual3D's own Center/MinorDistance parameterization doesn't have an
-        /// easy way to force gridlines to land exactly on our already-computed nice-tick
-        /// positions - building the segments by hand guarantees a gridline and its label always
-        /// refer to the identical position.
+        /// which has no way to force its own gridlines onto our already-computed nice-tick
+        /// positions on a curved shell anyway.
         ///
         /// Tick text uses HelixToolkit's TextCreator.CreateTextLabelModel3D, which (unlike
         /// TextVisual3D/BillboardTextVisual3D - see MosaicSurfaceView's own history with this
         /// exact machine's WPF 3D render tier) renders its DiffuseMaterial via a VisualBrush
         /// wrapping a live TextBlock rather than a pre-rasterized BitmapSource, putting it in the
-        /// same "vector brush" family that's actually proven to render here. The label lies flat
-        /// on the floor plane (not billboarded to face the camera), so it reads best from close
-        /// to a top-down view - HelixViewport3D's ViewCube "Top" corner gets there in one click.
+        /// same "vector brush" family that's actually proven to render here. Every label shares
+        /// one fixed direction/up pair regardless of where on the globe it sits (see this class's
+        /// remarks on that being a known, deliberate simplification) - a meridian label sits on
+        /// the celestial equator/horizon (yVal=0, valid in both conventions), a parallel label
+        /// at RA/Az=0, both nudged radially outward by LabelOffset.
         /// </summary>
-        private void BuildAxes(Func<double, double> normX, Func<double, double> normZ)
+        private void BuildAxes(bool isAltAz)
         {
             var xTicks = XTicks;
             var yTicks = YTicks;
             if (xTicks is null || yTicks is null)
                 return;
 
-            const double half = PlaneExtent / 2;
+            double yLo = isAltAz ? 0 : -90;
+            const double yHi = 90;
+            double xHi = isAltAz ? 360 : 24; // Azimuth degrees, or RA hours - SpherePoint/Direction do the RAx15 conversion
 
             var linePoints = new Point3DCollection();
             var labels = new Model3DGroup();
 
+            // Meridians: constant RA/Az, arcing from horizon/pole to zenith/pole.
             foreach (var tick in xTicks)
             {
-                double x = normX(tick.Position);
-                linePoints.Add(new Point3D(x, FloorY, -half));
-                linePoints.Add(new Point3D(x, FloorY, half));
+                for (int i = 0; i < ArcSegments; i++)
+                {
+                    double y0 = yLo + (yHi - yLo) * i / ArcSegments;
+                    double y1 = yLo + (yHi - yLo) * (i + 1) / ArcSegments;
+                    linePoints.Add(SpherePoint(tick.Position, y0, SphereRadius, isAltAz));
+                    linePoints.Add(SpherePoint(tick.Position, y1, SphereRadius, isAltAz));
+                }
 
                 labels.Children.Add(TextCreator.CreateTextLabelModel3D(
                     tick.Label, Brushes.DimGray, isDoubleSided: true, height: LabelHeight,
-                    center: new Point3D(x, FloorY, -half - LabelOffset),
+                    center: SpherePoint(tick.Position, 0, SphereRadius + LabelOffset, isAltAz),
                     textDirection: LabelTextDirection, updirection: LabelUpDirection));
             }
 
+            // Parallels: constant Dec/El, a full closed loop around the RA/Az axis.
             foreach (var tick in yTicks)
             {
-                double z = normZ(tick.Position);
-                linePoints.Add(new Point3D(-half, FloorY, z));
-                linePoints.Add(new Point3D(half, FloorY, z));
+                for (int i = 0; i < ArcSegments; i++)
+                {
+                    double x0 = xHi * i / ArcSegments;
+                    double x1 = xHi * (i + 1) / ArcSegments;
+                    linePoints.Add(SpherePoint(x0, tick.Position, SphereRadius, isAltAz));
+                    linePoints.Add(SpherePoint(x1, tick.Position, SphereRadius, isAltAz));
+                }
 
                 labels.Children.Add(TextCreator.CreateTextLabelModel3D(
                     tick.Label, Brushes.DimGray, isDoubleSided: true, height: LabelHeight,
-                    center: new Point3D(-half - LabelOffset, FloorY, z),
+                    center: SpherePoint(0, tick.Position, SphereRadius + LabelOffset, isAltAz),
                     textDirection: LabelTextDirection, updirection: LabelUpDirection));
             }
 

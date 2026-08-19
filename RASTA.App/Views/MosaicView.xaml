@@ -62,11 +62,14 @@
                 Padding="10,4" Width="160"/>
 
         <!-- Parameters row -->
+        <!-- Target FFT Size, Smooth, Smoothing Window and Despike are deliberately NOT
+             repeated here - they're mirrored straight from the Single Capture tab (see
+             VisualiseViewModel's On...Changed partials and MosaicViewModel.TargetFftSize's
+             remarks), so the workflow is: dial those in on Single Capture until a file looks
+             right, then Generate Mosaic reprocesses every position in the session with those
+             same settings, rather than keeping a second copy of each control in sync by hand. -->
         <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="7" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
-            <TextBlock Text="Target FFT Size" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-            <TextBox Width="60" Text="{Binding TargetFftSize}" VerticalAlignment="Center"/>
-
-            <TextBlock Text="Integrated Window (km/s)" FontWeight="Bold" VerticalAlignment="Center" Margin="15,0,5,0"/>
+            <TextBlock Text="Integrated Window (km/s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
             <TextBox Width="60" Text="{Binding IntegratedWindowKmPerSec}" VerticalAlignment="Center"/>
 
             <TextBlock Text="Sky Cell Size (°)" FontWeight="Bold" VerticalAlignment="Center" Margin="15,0,5,0"
@@ -240,7 +243,9 @@
                                                   IntensityGrid="{Binding SurfaceIntensityGrid}"
                                                   XValues="{Binding SurfaceXValues}"
                                                   YValues="{Binding SurfaceYValues}"
+                                                  IsAltAz="{Binding SurfaceIsAltAz}"
                                                   Smooth="{Binding UseSmoothBlend}"
+                                                  FlattenRelief="{Binding FlattenGlobeRelief}"
                                                   XTicks="{Binding SurfaceXTicks}"
                                                   YTicks="{Binding SurfaceYTicks}"/>
 
@@ -253,7 +258,10 @@
                             <CheckBox Content="Smooth blend" IsChecked="{Binding UseSmoothBlend}"
                                       VerticalAlignment="Center" Margin="25,0,0,0"
                                       ToolTip="Bilinear-subdivide the grid before meshing, instead of one flat facet per measured cell - shares the Sky Mosaic tab's own smoothing toggle"/>
-                            <TextBlock Text="(axis labels read best from the ViewCube's &quot;Top&quot; view)"
+                            <CheckBox Content="Flat (colour only)" IsChecked="{Binding FlattenGlobeRelief}"
+                                      VerticalAlignment="Center" Margin="15,0,0,0"
+                                      ToolTip="Render the globe as a plain sphere with no radial bump/dent - colour alone carries the data, matching how the real sky looks (no relief) from near its center. Untick to see the literal terrain-style height visualization instead."/>
+                            <TextBlock Text="(walk with the arrow keys, look around by dragging; axis labels read best from the ViewCube's &quot;Top&quot; view)"
                                        FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center" Margin="20,0,0,0"/>
                         </StackPanel>
 

@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Helpers;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
+using RASTA.Processing.Dsp;
 using RASTA.Processing.Gridding;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Mosaic;
@@ -60,10 +61,15 @@ public class MosaicHeatmapDisplay
 /// HiStreamingPipeline VisualiseViewModel.ProcessHiCore uses for a single file (via
 /// MosaicProcessor), and renders the combined result as a sky-mosaic heatmap (RA/Dec x peak
 /// power relative to the cold-sky baseline, in dB - see MosaicProcessor.FindLinePeak) and a
-/// 3D surface (see MosaicSurfaceView) built from a grid of the same shape. The heatmap renders
-/// via HeatmapImageBuilder (a hand-rolled BitmapSource) rather than LiveChartsCore's HeatSeries,
-/// which produced a blank chart against real, well-spread session data - see
-/// HeatmapImageBuilder's remarks. UseSmoothBlend switches HeatmapImageBuilder.Build (one flat
+/// 3D surface (see MosaicSurfaceView, rendered as an actual globe, not a flat height-field) built
+/// from a grid of the same shape. The 2D heatmap renders via HeatmapImageBuilder (a hand-rolled
+/// BitmapSource) rather than LiveChartsCore's HeatSeries, which produced a blank chart against
+/// real, well-spread session data - see HeatmapImageBuilder's remarks - as a sinusoidal
+/// (Sanson-Flamsteed) equal-area projection (RenderSkyHeatmap's RowFactor* closures), matching
+/// the same cos(Dec)/cos(Elevation) correction SweepPlanner.RowStepDeg applies to sweep spacing,
+/// rather than a plain equirectangular RA/Az-vs-Dec/El grid whose real angular spacing would
+/// otherwise shrink away from the equator/horizon while still being drawn at full width.
+/// UseSmoothBlend switches HeatmapImageBuilder.Build (one flat
 /// colour per measured cell, the default - each cell is a real independent measurement) for
 /// HeatmapImageBuilder.BuildBlended (bilinear-interpolated between neighbouring cell centers,
 /// for a continuous-looking gradient) on the 2D heatmap, and drives MosaicSurfaceView's own
@@ -93,24 +99,43 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private string? baselineFile;
 
+    // Mirrored from VisualiseViewModel.TargetFftSize/SmoothingKind/SmoothingWindow/
+    // DespikeEnabled/DespikeThresholdSigma (see their On...Changed partials) - deliberately
+    // no separate controls on the Mosaic tab itself for any of these, so the intent is
+    // "dial the Single Capture tab in until it looks right, then Generate Mosaic processes
+    // every position in the session with those same settings" rather than a second set of
+    // controls to keep in sync by hand.
     [ObservableProperty]
     private int targetFftSize;
 
     [ObservableProperty]
     private double integratedWindowKmPerSec = MosaicProcessor.DefaultIntegratedWindowKmPerSec;
 
-    // Mirrored from VisualiseViewModel.DespikeEnabled/DespikeThresholdSigma (see their
-    // On...Changed partials) - deliberately no separate controls on the Mosaic tab itself,
-    // so the ones on the main Visualise view govern both.
     [ObservableProperty]
     private bool despikeEnabled;
 
     [ObservableProperty]
     private double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma;
 
-    // Matches the sweep's own step size (e.g. TargetRange.StepDeg from the plan that produced
-    // this session) so each rendered pixel is one real sky cell, not an arbitrary subdivision
-    // of however much sky this one session happened to cover - see GridBuilder.BuildGrid.
+    // Applied to MosaicProcessor.FindLinePeak's own search input (a smoothed copy of
+    // RatioSpectrum), not just the stored MosaicPosition.HiSpectrum - unlike
+    // HiStreamingPipeline.Process's single-file behaviour (which only ever smooths HiSpectrum,
+    // see VisualiseViewModel.SmoothingKind's remarks), Mosaic's own displayed values
+    // (LineStrengthDb/PeakVelocityKmPerSec) come from RatioSpectrum, so smoothing has to reach
+    // that same array to actually change what the heatmap/globe show, rather than smoothing an
+    // array nothing reads.
+    [ObservableProperty]
+    private SmoothingKind smoothingKind = SmoothingKind.None;
+
+    [ObservableProperty]
+    private int smoothingWindow = 21;
+
+    // Matches the sweep's own angular separation (e.g. TargetRange.AngularSeparationDeg from
+    // the plan that produced this session) so each rendered pixel is one real sky cell, not an
+    // arbitrary subdivision of however much sky this one session happened to cover - see
+    // GridBuilder.BuildGrid. Note GridBuilder itself still bins onto a uniform-coordinate (not
+    // cos(dec)-corrected) full-sky canvas - see its own remarks - so this is an approximation
+    // that's closest to correct near the cell's own declination/elevation.
     [ObservableProperty]
     private double skyCellSizeDeg = 5.0;
 
@@ -124,6 +149,13 @@ public partial class MosaicViewModel : ObservableObject
     // instead of reprocessing the session.
     [ObservableProperty]
     private bool useSmoothBlend;
+
+    // Bound to MosaicSurfaceView.FlattenRelief - true renders the 3D globe as a plain sphere
+    // (colour only, no radial bump/dent), matching what the real sky actually looks like from
+    // near its center; false (default) keeps the literal terrain-relief visualization. Only
+    // affects the 3D Surface tab - the 2D heatmap has no equivalent "relief" to flatten.
+    [ObservableProperty]
+    private bool flattenGlobeRelief;
 
     // Which MosaicPosition metric the 3D surface currently renders - see MosaicSurfaceMetric.
     [ObservableProperty]
@@ -152,6 +184,11 @@ public partial class MosaicViewModel : ObservableObject
 
     [ObservableProperty]
     private double[]? surfaceYValues; // Dec or El degrees
+
+    // Bound to MosaicSurfaceView.IsAltAz - which spherical convention it renders the globe with
+    // (RA/Dec pole-to-pole vs Az/El horizon-to-zenith - see MosaicSurfaceView.Direction).
+    [ObservableProperty]
+    private bool surfaceIsAltAz;
 
     [ObservableProperty]
     private string surfaceLegendMinText = string.Empty;
@@ -318,6 +355,8 @@ public partial class MosaicViewModel : ObservableObject
                 },
                 despike: DespikeEnabled,
                 despikeThresholdSigma: DespikeThresholdSigma,
+                smoothing: SmoothingKind,
+                smoothingWindow: SmoothingWindow,
                 ct: _generateCts.Token);
 
             BuildGrids(result);
@@ -340,10 +379,11 @@ public partial class MosaicViewModel : ObservableObject
         }
     }
 
-    // Cancels a running GenerateMosaicAsync. MosaicProcessor.ProcessFolderAsync checks the
-    // token once per position (between whole capture groups, not per-chunk like
-    // VisualiseViewModel's ForEachChunk) so cancellation takes effect at the next position
-    // boundary rather than instantly mid-FFT.
+    // Cancels a running GenerateMosaicAsync. MosaicProcessor.ProcessFolderAsync processes
+    // positions concurrently (Parallel.For) and stops scheduling new ones once this token is
+    // cancelled, so whichever positions were already in flight (up to one per core) finish
+    // before it actually returns - not instantly, and not per-chunk like VisualiseViewModel's
+    // ForEachChunk, but bounded rather than running the rest of the whole session.
     [RelayCommand(CanExecute = nameof(IsGenerating))]
     private void CancelMosaic()
     {
@@ -379,11 +419,23 @@ public partial class MosaicViewModel : ObservableObject
 
         var (gridLines, xLabels, yLabels) = BuildPixelAxisOverlay(grid, altAz, pixelWidth, pixelHeight);
 
+        // Sinusoidal (Sanson-Flamsteed) equal-area projection: RA/Azimuth circles are physically
+        // smaller away from the equator/horizon (cos(Dec) or cos(Elevation) - same correction
+        // SweepPlanner.RowStepDeg applies to sweep spacing), so each row's rendered width is
+        // compressed by that same factor rather than stretched flat across the full image width -
+        // see HeatmapImageBuilder.Build's remarks. AxisYCenters already holds Dec-or-El degrees
+        // either way, so one formula covers both CoordinateModes.
+        double cellSizeYForRows = grid.AxisYCenters.Length > 1 ? grid.AxisYCenters[1] - grid.AxisYCenters[0] : 1;
+        double minYForRows = grid.AxisYCenters[0] - cellSizeYForRows / 2;
+        double RowFactorAtIndex(int gy) => Math.Cos(grid.AxisYCenters[gy] * Math.PI / 180.0);
+        double RowFactorContinuous(double gyF) =>
+            Math.Cos((minYForRows + (gyF + 0.5) * cellSizeYForRows) * Math.PI / 180.0);
+
         SkyHeatmap = new MosaicHeatmapDisplay
         {
             Image = UseSmoothBlend
-                ? HeatmapImageBuilder.BuildBlended(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true)
-                : HeatmapImageBuilder.Build(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true),
+                ? HeatmapImageBuilder.BuildBlended(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true, RowFactorContinuous)
+                : HeatmapImageBuilder.Build(grid.IntensityGrid, pixelWidth, pixelHeight, flipY: true, RowFactorAtIndex),
             PixelWidth = pixelWidth,
             PixelHeight = pixelHeight,
             XAxisLabel = altAz ? "Azimuth" : "RA",
@@ -406,6 +458,15 @@ public partial class MosaicViewModel : ObservableObject
     /// one-to-one bindings - no runtime ActualWidth/ActualHeight dependency, since pixelWidth/
     /// pixelHeight are already fixed at build time. Y uses the heatmap's own flipY=true
     /// convention (Dec/Alt increases upward, i.e. toward pixel row 0).
+    ///
+    /// Gridlines trace the same sinusoidal silhouette RenderSkyHeatmap's row-compression gives
+    /// the rendered image (see HeatmapImageBuilder.Build's remarks): a meridian (constant RA/Az)
+    /// is a curved polyline, sampled every few degrees of Dec/El, rather than one straight
+    /// vertical line; a parallel (constant Dec/El) is shortened to that row's own compressed
+    /// width instead of spanning the full image. Tick label positions are unaffected - the X
+    /// label strip sits in its own row below the plot (an axis caption, not a point on the curve
+    /// itself), and the Y label strip already only needs the same linear Dec/El-to-pixel-row
+    /// mapping the parallels themselves use.
     /// </summary>
     private static (List<AxisGridLine> gridLines, List<AxisTick> xLabels, List<AxisTick> yLabels) BuildPixelAxisOverlay(
         GridBuilder.MosaicGridResult grid, bool altAz, int pixelWidth, int pixelHeight)
@@ -423,17 +484,31 @@ public partial class MosaicViewModel : ObservableObject
         double xRange = Math.Max(maxX - minX, 1e-9);
         double yRange = Math.Max(maxY - minY, 1e-9);
 
+        double RowFactor(double decOrElDeg) => Math.Cos(decOrElDeg * Math.PI / 180.0);
+        double PyFor(double decOrElDeg) => pixelHeight - (decOrElDeg - minY) / yRange * pixelHeight;
+
+        const int meridianSteps = 24;
         foreach (double tick in AxisTicks.ComputeNiceTicks(minX, maxX))
         {
-            double px = (tick - minX) / xRange * pixelWidth;
-            gridLines.Add(new AxisGridLine(px, 0, px, pixelHeight));
-            xLabels.Add(new AxisTick(FormatAxisValue(tick, isXAxis: true, altAz), px));
+            double u = (tick - minX) / xRange * 2 - 1; // -1..+1, matching HeatmapImageBuilder's own u
+            double? prevPx = null, prevPy = null;
+            for (int i = 0; i <= meridianSteps; i++)
+            {
+                double decOrEl = minY + (maxY - minY) * i / meridianSteps;
+                double px = pixelWidth / 2.0 * (1 + u * RowFactor(decOrEl));
+                double py = PyFor(decOrEl);
+                if (prevPx is not null)
+                    gridLines.Add(new AxisGridLine(prevPx.Value, prevPy!.Value, px, py));
+                prevPx = px; prevPy = py;
+            }
+            xLabels.Add(new AxisTick(FormatAxisValue(tick, isXAxis: true, altAz), pixelWidth / 2.0 * (1 + u)));
         }
 
         foreach (double tick in AxisTicks.ComputeNiceTicks(minY, maxY))
         {
-            double py = pixelHeight - (tick - minY) / yRange * pixelHeight;
-            gridLines.Add(new AxisGridLine(0, py, pixelWidth, py));
+            double factor = RowFactor(tick);
+            double py = PyFor(tick);
+            gridLines.Add(new AxisGridLine(pixelWidth / 2.0 * (1 - factor), py, pixelWidth / 2.0 * (1 + factor), py));
             yLabels.Add(new AxisTick(FormatAxisValue(tick, isXAxis: false, altAz), py - 6));
         }
 
@@ -466,6 +541,7 @@ public partial class MosaicViewModel : ObservableObject
         SurfaceIntensityGrid = grid.IntensityGrid;
         SurfaceXValues = grid.AxisXCenters;
         SurfaceYValues = grid.AxisYCenters;
+        SurfaceIsAltAz = altAz;
         SurfaceLegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} {unit}";
         SurfaceLegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} {unit}";
 

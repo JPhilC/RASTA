@@ -43,8 +43,13 @@ public partial class VisualiseViewModel : ObservableObject
     [ObservableProperty]
     private int scanFftSize;
 
+    // Mirrored into MosaicVm (see DespikeEnabled's remarks on the same pattern) - the intent
+    // is "adjust it on Single Capture until it looks right, then Mosaic processes every file
+    // with the same setting", not a second control to keep in sync by hand.
     [ObservableProperty]
     private int targetFftSize;
+
+    partial void OnTargetFftSizeChanged(int value) => MosaicVm.TargetFftSize = value;
 
     [ObservableProperty]
     private string frameCount = string.Empty;
@@ -105,9 +110,15 @@ public partial class VisualiseViewModel : ObservableObject
     // pipeline never smooths its final output, and leaving raw per-bin scatter visible is
     // what let SpectrumViewModel.ApplyRobustYAxisRange reveal it in the first place. Only
     // affects HiSpectrum (via ProcessHiCore); RatioSpectrum and the SKAO TTRT cross-check
-    // (SpectrumMode.TTRT, deliberately kept unmodified) are unaffected either way.
+    // (SpectrumMode.TTRT, deliberately kept unmodified) are unaffected either way. Mirrored
+    // into MosaicVm (see DespikeEnabled's remarks on the same pattern) - unlike HiSpectrum
+    // here, MosaicProcessor.FindLinePeak applies it to the RatioSpectrum it actually searches
+    // (see MosaicViewModel's own remarks), so it genuinely changes the Mosaic tab's values,
+    // not just an unused stored field.
     [ObservableProperty]
     private SmoothingKind smoothingKind = SmoothingKind.None;
+
+    partial void OnSmoothingKindChanged(SmoothingKind value) => MosaicVm.SmoothingKind = value;
 
     // A single FFT bin is far narrower than a real HI line, so the default window needs to
     // span many bins before smoothing visibly does anything - see the "very small change"
@@ -115,6 +126,8 @@ public partial class VisualiseViewModel : ObservableObject
     // so it can be dialed to whatever the line width in a given capture actually calls for.
     [ObservableProperty]
     private int smoothingWindow = 21;
+
+    partial void OnSmoothingWindowChanged(int value) => MosaicVm.SmoothingWindow = value;
 
     // Own progress/busy state for GenerateChartAsync, deliberately separate from
     // StatusBarViewModel.CaptureProgress/IsCaptureInProgress - those are also driven by
@@ -161,9 +174,14 @@ public partial class VisualiseViewModel : ObservableObject
         _fftEngine = fftEngine;
         _statusBar = statusBar;
         MosaicVm = mosaicVm;
-        // Keep Mosaic in sync with this view's despike controls from the start.
+        // Keep Mosaic in sync with this view's despike/FFT-size/smoothing controls from the
+        // start - the On...Changed partials below only fire on a later change, not on these
+        // field initializers, so the very first values need setting explicitly here too.
         MosaicVm.DespikeEnabled = DespikeEnabled;
         MosaicVm.DespikeThresholdSigma = DespikeThresholdSigma;
+        MosaicVm.TargetFftSize = TargetFftSize;
+        MosaicVm.SmoothingKind = SmoothingKind;
+        MosaicVm.SmoothingWindow = SmoothingWindow;
         SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
     }
 

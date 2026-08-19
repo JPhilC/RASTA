@@ -343,10 +343,22 @@ directly for its live spectrum rather than re-reading any FITS file, for both a 
 
 ### Sweep planning
 
-`SweepPlanner.BuildSweep` turns a `CapturePlan`'s `TargetRange` (RA/Dec or Az/El start, end, and step
-— whichever pair applies is picked from `plan.PlanType`, which in turn follows the connected mount's
-own coordinate mode, not a user toggle) into an ordered `List<TargetPoint>`. Two things worth knowing:
+`SweepPlanner.BuildSweep` turns a `CapturePlan`'s `TargetRange` (RA/Dec or Az/El start, end, and
+angular separation — whichever pair applies is picked from `plan.PlanType`, which in turn follows the
+connected mount's own coordinate mode, not a user toggle) into an ordered `List<TargetPoint>`. Three
+things worth knowing:
 
+- **`TargetRange.AngularSeparationDeg`** (renamed from `StepDeg`) is the true angular separation
+  wanted *on the sky* between adjacent dwell points, not a raw per-axis coordinate step. Dec/Elevation
+  rows are spaced this far apart directly; RA/Azimuth within each row is corrected by
+  `SweepPlanner.RowStepDeg` (`separationDeg / cos(rowAngleDeg)`, floored at `cos = 0.01` so a row near
+  a pole/zenith collapses to a single point rather than dividing by ~zero) so points end up genuinely
+  equal-angle apart everywhere in the sweep, not just at the celestial equator/horizon. Before this,
+  RA was converted from a single shared `StepDeg` via a flat `/15` (only exact at Dec=0), so real RA
+  spacing silently *shrank* toward the poles while Dec spacing stayed constant — doubling (or worse)
+  point count/capture time for no coverage benefit on a plan that ever strays from Dec≈0 (which most
+  Galactic-plane targets from a mid-latitude site do). `PlanView.xaml`'s "Angular Separation (Deg)"
+  field is what feeds this now, replacing the old "Step Size (Deg)" control.
 - **Range direction is start/end-agnostic.** `StepRange` steps from start to end using the *absolute*
   step magnitude, automatically counting downward if `end < start` — so e.g. `RAStartHours=20,
   RAEndHours=4` sweeps downward through 20h→4h just as validly as the reverse. It steps by an integer
@@ -465,29 +477,166 @@ configurable window of the LSR-corrected line center (0 km/s), reported as `Line
 deliberately single-differenced against the baseline rather than each position's own local continuum,
 so a position with no HI signal at all reads close to 0 dB rather than a fraction of a dB, and broad
 continuum brightness differences across the sky (e.g. toward the Galactic plane) show up too, not just
-narrow HI-line strength) and `PeakVelocityKmPerSec` (that channel's own velocity — signed,
-toward/away from the LSR). Both come back `NaN` together when no channel falls in the window.
+narrow HI-line strength) and `PeakVelocityKmPerSec` (that channel's own velocity — **signed, radio
+convention: positive = redshifted/receding, negative = blueshifted/approaching**, matching
+`HiStreamingPipeline.Process`'s own "v > 0 means redshifted / receding" convention exactly — the
+`MosaicProcessor.FindLinePeak` doc comment used to have this backwards ("positive/toward"), since fixed).
+Both come back `NaN` together when no channel falls in the window.
+
+`MosaicProcessor.ProcessFolder` processes positions **concurrently** via `Parallel.For` — each
+position's own FFT-accumulate-pipeline-peak-search work is fully independent of every other position's
+(sharing only the already-computed, read-only baseline), so this scales with core count rather than
+being stuck at one position at a time. The one thing that *is* still serialized is the FITS file read
+itself (`_fitsReadLock`): `FftEngine`/MathNet.Numerics is genuinely stateless and safe under
+concurrency, but the underlying `nom.tam.fits`/`nom.tam.util` library (an old Java port `FitsFileIo`
+reads through) is not — calling it from multiple positions at once hung the whole process (observed as
+CPU/memory activity both flatlining mid-run, a deadlock signature, not a crash). Everything after the
+read (FFT/accumulate/despike/continuum-fit/peak-search) still runs in parallel; only the read itself is
+one-at-a-time. `positionsArray[g] = ...` writes to each position's own array slot (no lock needed,
+deterministic order regardless of completion order); `frequencyAxis`/`velocityAxis` are captured only
+from index 0 specifically (every position's axis is validated identical anyway, so any one is
+representative, and this keeps the result deterministic rather than "whichever position happened to
+finish first"); progress uses `Interlocked.Increment` since completion order isn't loop order; a
+`Parallel.For` body exception surfaces as `AggregateException`, unwrapped back to the original single
+exception via `ExceptionDispatchInfo` so callers see the same exception shape the old sequential loop
+threw directly. Cancelling (`MosaicViewModel.CancelMosaic`) stops scheduling new positions immediately,
+but whichever were already in flight (up to one per core) finish before `ProcessFolderAsync` actually
+returns, not just "the next" one as it would under strict sequential execution.
+
+**`TargetFftSize`, `SmoothingKind`, and `SmoothingWindow` are mirrored one-way from
+`VisualiseViewModel`** into `MosaicViewModel` via `partial void On...Changed` methods (same pattern
+`DespikeEnabled`/`DespikeThresholdSigma` already used) — deliberately no separate controls for any of
+these on the Mosaic tab itself (the old standalone "Target FFT Size" textbox on `MosaicView.xaml` is
+gone). The intent: dial Single Capture's controls in against one file until it looks right, then
+Generate Mosaic reprocesses every position in the session with those same settings, rather than a
+second set of controls to keep in sync by hand. Smoothing needed one genuine behavioural fix to make
+that mirroring actually mean something: `HiStreamingPipeline.Process` only ever smooths `HiSpectrum`
+(see below), never `RatioSpectrum` — but Mosaic's own displayed values (`LineStrengthDb`/
+`PeakVelocityKmPerSec`) come from `FindLinePeak` searching `RatioSpectrum`, and `MosaicPosition.
+HiSpectrum` isn't read anywhere in the Mosaic UI. So `MosaicProcessor.ProcessFolder` smooths a
+*separate copy* of `RatioSpectrum` (via `HiStreamingPipeline.ApplySmoothing`) specifically for
+`FindLinePeak`'s search input — `pipeline.RatioSpectrum` itself, and everything else that reads it, is
+untouched. Without this, wiring `SmoothingKind`/`SmoothingWindow` through would compile and run but
+change nothing you could actually see on the Mosaic tab.
+
 `GridBuilder.BuildGrid` bins whichever of a `MosaicPosition`'s fields its `valueSelector` picks (default
 `LineStrengthDb`) onto a uniform RA/Dec-or-Az/El grid covering the *full* sky at a fixed cell size (not
 just the captured area's own bounding box — the intent is one full-sky canvas that fills in across many
 sessions over time, not a differently-scaled image every run); cells no position landed in stay `NaN`
-and should be skipped, not treated as 0. `MosaicViewModel.BuildGrids` bins both metrics into
-`_lastStrengthGrid`/`_lastVelocityGrid` every time a session is processed, and `MosaicSurfaceMetric`
-(`Strength`/`Velocity`, radio-button toggle in `MosaicView.xaml`) picks which one `RenderSurface` feeds
-the 3D tab, independently of the 2D heatmap — which always shows `LineStrengthDb`, since a
-position-velocity map only means "toward/away from LSR" and doesn't read as a brightness scale the way
-dB does. The grid renders as a 2D heatmap via `RASTA.App/Helpers/HeatmapImageBuilder` (a hand-rolled
-`BitmapSource` — LiveChartsCore's `HeatSeries` produced a blank chart against real session data) —
-`Build` for one flat colour per measured cell (the default, since each cell is a real independent
-measurement) or `BuildBlended` for a bilinear-interpolated, continuous-looking gradient
-(`MosaicViewModel.UseSmoothBlend`, re-renders the already-cached grid instantly rather than reprocessing
-the session) — and as a 3D height-field surface (`MosaicSurfaceView`, built on `HelixToolkit.Wpf`) from
-whichever grid `SurfaceMetric` selects. `UseSmoothBlend` also drives the 3D surface's own smoothing
-(`MosaicSurfaceView.Smooth`) — one control smooths both representations together.
+and should be skipped, not treated as 0. This grid is still a plain uniform-coordinate array (RA-hours
+× Dec-degrees, or Az × El) — *not* cos(Dec)-corrected — deliberately kept that way so it stays a simple
+persistent 2D array sessions can accumulate onto over time (see "sinusoidal projection" below for where
+the cos-correction actually happens instead: display, not storage). `MosaicViewModel.BuildGrids` bins
+both metrics into `_lastStrengthGrid`/`_lastVelocityGrid` every time a session is processed, and
+`MosaicSurfaceMetric` (`Strength`/`Velocity`, radio-button toggle in `MosaicView.xaml`) picks which one
+`RenderSurface` feeds the 3D tab, independently of the 2D heatmap — which always shows `LineStrengthDb`,
+since a position-velocity map only means "toward/away from LSR" and doesn't read as a brightness scale
+the way dB does. `UseSmoothBlend` drives both the 2D heatmap's rendering mode (`HeatmapImageBuilder.
+Build` vs `BuildBlended`) and the 3D surface's own bilinear grid subdivision (`MosaicSurfaceView.
+Smooth`) — one control smooths both representations together, re-rendering the already-cached grid
+instantly rather than reprocessing the session.
 
 This supersedes the old `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`/`SpectrumImageBuilder.cs`
 placeholders (removed entirely), which consumed the old `ObservationRecord.AveragedSpectrum.Max()` shape
 and were never wired to any View/ViewModel.
+
+#### 2D heatmap: sinusoidal projection, not a plain RA/Dec grid
+
+`HeatmapImageBuilder.Build`/`BuildBlended` render a **sinusoidal (Sanson-Flamsteed) equal-area
+projection**, not the plain equirectangular (RA/Az-vs-Dec/El) layout they started as. A straight
+RA-vs-Dec grid draws every row at the same pixel width even though RA circles are physically narrower
+away from the celestial equator (the same distortion `SweepPlanner.RowStepDeg` corrects for sweep
+spacing — see "Sweep planning" above) — so real angular relationships between grid cells would read as
+increasingly wrong toward the poles/zenith, right after the sweep itself was fixed to actually collect
+equal-angle-spaced points. Both methods take an optional `rowCompressionFactor` (`MosaicViewModel.
+RenderSkyHeatmap` always supplies `cos(Dec)`/`cos(El)` per row, computed from `grid.AxisYCenters` —
+same value for both Equatorial and AltAz sessions, since `AxisYCenters` already holds the Dec-or-El
+degrees either way): a pixel whose horizontal offset from its row's center exceeds that row's
+compressed half-width is rendered fully transparent (not `NoDataColor` — it isn't part of the sky
+map's silhouette at all, the way a globe's poles pinch to a point), giving the classic "eye/lens"
+sinusoidal outline. `MosaicViewModel.BuildPixelAxisOverlay` matches this in the gridline/label overlay:
+meridians (constant RA/Az) are now curved polylines (`AxisGridLine` segments sampled every few degrees
+of Dec/El, following the same per-row `cos` factor) instead of one straight vertical line, and
+parallels (constant Dec/El) are shortened to their own row's compressed width instead of spanning the
+full image. Tick *label* positions are unaffected — the label strips sit in their own row/column
+outside the plot area (an axis caption, not a point on the curve), so they keep the original linear
+pixel mapping.
+
+#### 3D surface: a genuine globe, not a flat height-field
+
+`MosaicSurfaceView`'s mesh vertices sit on an actual sphere — RA/Az mapped to longitude, Dec/El to
+latitude, `LineStrengthDb`/`PeakVelocityKmPerSec` as a radial bump/dent from a base shell — rather
+than a flat rectangular RA-vs-Dec height-field. The grid is always a full-sky RA/Dec-or-Az/El array
+(see `GridBuilder.BuildGrid` above) and a flat plot of it carries the same equirectangular distortion
+the 2D heatmap's sinusoidal projection exists to fix — a real globe has none, by construction.
+`Direction(xVal, yVal, isAltAz)` converts axis values to a unit vector (RA×15 → degrees first; Dec/El
+already degrees; Dec/Elevation mapped to WPF's Y so the celestial pole/zenith is "up" for either
+convention), and `SpherePoint` scales that by a radius: `SphereRadius + NormHeight(v)` for a real cell,
+`SphereRadius` exactly for a NaN cell (matching the old height-field's "positions without data default
+to zero" behaviour) or for every cell when `FlattenRelief` is on (see below). The RA/Azimuth
+wraparound seam (`xValues[width-1]` back to `xValues[0]`) is explicitly stitched closed with one more
+ring of quads — without it the sphere would show a full pole-to-pole (or horizon-to-zenith) crack down
+the 24h/0h or 360°/0° line, visible even where every cell is `NaN`. The poles themselves (Dec=±90°, or
+AltAz's zenith El=90°) are *not* capped — `GridBuilder`'s cell centers stop half a cell short of them,
+so each pole is left as a small open circular gap, accepted since a UK-latitude site will rarely if
+ever populate cells that close to either pole anyway.
+
+**Camera: from "orbit around the outside" through "stand dead-center" to "walk around inside".**
+`MosaicSurfaceView.xaml`'s `HelixViewport3D` went through three stages this session, each fixing a
+real problem the last one exposed:
+
+1. **`CameraMode="Inspect"` (the HelixToolkit default)** orbits the camera around the *outside* of the
+   bounding box via `ZoomExtents` — correct for a terrestrial globe, backwards for a sky globe: it
+   made the mosaic look like a solid ball viewed from a distance, not a sky viewed from within it.
+2. **`CameraMode="FixedPosition"`, `Position="0,0,0"`** put the observer at the globe's exact
+   mathematical center, looking outward (`ZoomExtentsWhenLoaded="False"`, and `Rebuild` no longer
+   calls `ZoomExtents` at all — there's no "whole object" to fit into frame from outside, and
+   re-fitting on every data refresh would fight the user's own look direction). This is geometrically
+   inert from the perspective the *lighting* needs, though: **vertex normals had to be flipped inward**
+   (`Vector3D.CrossProduct(edge2, edge1)`, not `(edge1, edge2)`, plus a `-(Vector3D)positions[i]`
+   fallback for any untouched vertex) — the mesh winding was chosen for viewing from outside, so
+   without the flip the inside faces the camera now sees would light as if the light source were
+   behind them. But dead-center turned out to have its own, more fundamental problem (see next point).
+3. **From dead-center, every direction is a pure radius** — a bump can only ever be closer or farther
+   *along its own ray*, never occlude or graze against a *neighboring* ray's data, since two different
+   (RA,Dec) directions are two different rays from the same fixed point. That's what actually reads as
+   "terrain" (a hill blocking part of the view behind it, seen at an angle) — and it's unfixable by FOV
+   or bump-scale tuning alone, because it's inherent to the vantage point, not the geometry's scale.
+   `CameraMode="WalkAround"` fixes this properly: unlike `FixedPosition` (look-around only), it adds
+   real translation (arrow keys move, mouse-drag still rotates `LookDirection`), so the viewer can
+   actually steer toward a bump/dent and see it in relief with genuine parallax against what's behind
+   it — closer to "walking past hills" than "floating at a fixed point ever could be.
+
+**Scale**: `SphereRadius` was raised from 5 to 30 while `HeightExtent` (the ±half-range a data value
+bumps/dents) stayed at 3 — dropping the bump-to-radius ratio from ~30-60% down to ~10%, so peaks/
+troughs read as gentle, distant terrain relief once `WalkAround` lets you actually approach them,
+rather than looming right at the original dead-center vantage. `LabelOffset`/`LabelHeight` are derived
+as fractions of `SphereRadius` (`* 0.12`/`* 0.07`) rather than fixed literals, so retuning the radius
+again won't shrink labels to invisible specks or blow them up.
+
+**`FlattenRelief`** (`MosaicViewModel.FlattenGlobeRelief`, a checkbox on the 3D Surface tab) renders
+every vertex at exactly `SphereRadius` regardless of data value — colour (`NormColor`/`texCoords`)
+still carries the data, height doesn't. This is the "true planetarium" look: a real sky has no relief
+at all from the ground, only brightness varying by direction, which is a genuinely different (and
+sometimes more legible) representation than the literal terrain-style bump/dent visualization
+`WalkAround`'s movement is otherwise meant to explore — both are offered rather than picking one.
+
+**Velocity sign/colour/geometry all agree, confirmed by tracing the actual math (not assumed):** radio
+convention (`HiStreamingPipeline.Process`) has `v > 0` = redshifted/receding, `v < 0` = blueshifted/
+approaching. `NormColor` maps the most-negative velocity to `t=0` → `HeatmapImageBuilder.
+DivergingStops[0]` = deep blue (correct astronomical convention: blue = approaching). `NormHeight` maps
+that same most-negative velocity to the *smallest* radius — physically nearer the camera, which sits
+at/near the globe's center. So a blueshifted patch is rendered both blue *and* pulled inward toward
+the viewer, while a redshifted patch is red and pushed outward away — colour and bump direction agree
+with each other and with reality, which falls out correctly from the existing sign conventions rather
+than needing a deliberate fix.
+
+**Longer-term, parked goal**: overlay the heatmap on a lightweight background star/constellation map,
+similar to Cartes du Ciel — specifically its **Alt/Az stereographic dome projection centered on the
+zenith** (not an RA/Dec all-sky atlas projection like Mollweide/Aitoff), since that's the better fit
+for a from-one-site view. Deliberately not Stellarium-grade realism — just enough context (stars,
+constellation lines) to orient the heatmap. Not started; would need a lightweight star catalog/
+constellation-line dataset plus the projection math.
 
 #### 3D surface mesh: getting HelixToolkit to actually render on this machine
 
@@ -511,7 +660,9 @@ Mosaic-specific:
   render tier — HelixToolkit's own `MeshBuilder`-based visuals always compute normals explicitly, which
   is why a `GridLinesVisual3D`/`SphereVisual3D` diagnostic added mid-investigation rendered fine while
   the hand-built mesh stayed invisible. Fixed by averaging face normals into an explicit
-  `Vector3DCollection` (smooth per-vertex shading, matching a continuous height-field).
+  `Vector3DCollection` (smooth per-vertex shading, matching a continuous surface). Now deliberately
+  flipped inward (see "3D surface: a genuine globe" above) rather than the outward direction this
+  averaging naturally produces from the mesh's winding.
 - **The real fix: raster `ImageBrush` materials don't render as 3D materials here, full stop.** The
   height→colour gradient was originally an `ImageBrush` wrapping a `BitmapSource` from
   `HeatmapImageBuilder.BuildLegendStrip` — swapping in a plain `Brushes.Orange` `SolidColorBrush`
@@ -525,10 +676,13 @@ Mosaic-specific:
   `RenderTargetBitmap` → `ImageBrush` internally — the same failing pattern) in favour of
   `HelixToolkit.Wpf.TextCreator.CreateTextLabelModel3D`, which renders its `DiffuseMaterial` via a
   `VisualBrush` wrapping a live `TextBlock` — vector-brush family, proven to render here.
-- **`ZoomExtents(0)`** is called every rebuild so the camera reframes on new data; `IsVisibleChanged` +
-  a `Dispatcher.InvokeAsync(..., DispatcherPriority.Loaded)` re-triggers the whole rebuild once the "3D
-  Surface" tab is actually shown, since a `HelixViewport3D` inside a never-selected `TabItem` has no
-  layout to frame a camera against yet.
+- **`IsVisibleChanged` + a `Dispatcher.InvokeAsync(..., DispatcherPriority.Loaded)`** re-triggers a
+  full `Rebuild()` once the "3D Surface" tab is actually shown, since a `HelixViewport3D` inside a
+  never-selected `TabItem` has no layout to render into yet. `Rebuild()` used to end with
+  `Viewport.ZoomExtents(0)` to reframe the camera on new data — removed once the camera moved to
+  `FixedPosition`/`WalkAround` (see "3D surface: a genuine globe" above), since there's no longer a
+  "whole object" to fit into frame from outside, and re-fitting on every data refresh would fight the
+  user's own position/look direction.
 
 `MosaicSurfaceView.Smooth` (bound to `UseSmoothBlend`) bilinearly subdivides the grid (`
 UpsampleBilinear`, `SmoothSubdivisionFactor` = 4×) before meshing — the same NaN-dropping/renormalizing
@@ -539,11 +693,13 @@ above; subdividing tapers each real measurement smoothly toward that fallback in
 always land exactly on the subdivided grid, so smoothing never moves an actual measurement.
 
 The mesh material is deliberately translucent (`TranslucentGradientBrush`, alpha baked into each
-gradient stop since the brush is `Frozen`), because the reference axis grid/labels below sit at `Y=0` —
-the plot's own zero reference (a real, physically meaningful plane in Velocity mode: 0 km/s, the
-LSR-corrected line center), not pinned below the data's own minimum — which for data straddling zero
-routinely sits *through* rather than under the surface. An opaque material would hide whatever part of
-the grid/labels falls behind it from the current view angle.
+gradient stop since the brush is `Frozen`), because the reference meridian/parallel gridlines/labels
+(see below) sit at `SphereRadius` exactly — the globe's own zero reference (a real, physically
+meaningful shell in Velocity mode: 0 km/s, the LSR-corrected line center), not pinned below the data's
+own minimum — which for data straddling zero routinely sits *through* rather than under the surface (a
+bump pokes out, a dent sinks in). An opaque material would hide whatever part of the grid/labels falls
+behind it from the current view angle, or — now that the camera can be anywhere inside the globe via
+`WalkAround` — behind the surface generally.
 
 #### Axis ticks and gridlines (Sky Mosaic 2D + 3D Surface)
 
@@ -568,19 +724,25 @@ canvas's own (0,0) origin until the position was moved onto an `ItemContainerSty
 `ContentPresenter` instead. The gridlines (`Line` elements) never had this problem, since `Line`
 positions itself via its own `X1`/`Y1`/`X2`/`Y2` coordinates rather than `Canvas.Left`/`Top`.
 
-On the 3D surface, `MosaicSurfaceView.BuildAxes` maps `XTicks`/`YTicks`' real RA/Dec(/Az/El) values into
-the mesh's own normalized model space via the same `NormX`/`NormZ` closures the mesh uses, so a
-gridline/label always lines up with the data beside it regardless of the session's real coordinate
-range. Gridlines are one `LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed —
-proven-safe per the section above) rather than HelixToolkit's `GridLinesVisual3D`, since
-`GridLinesVisual3D`'s own `Center`/`MinorDistance` parameterization has no easy way to force gridlines
-onto already-computed nice-tick positions. Both X and Y tick labels share one fixed
-`textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) — matching HelixToolkit's own `SurfacePlotVisual3D`
-reference example's convention of one consistent direction pair for every axis, rather than a different
-one per axis (which is what originally produced upside-down labels). The label lies flat on the floor
-plane rather than billboarding to face the camera (this text technique has no such behaviour), so it
-reads best close to a top-down view — `HelixViewport3D`'s `ViewCube` "Top" corner gets there in one
-click, called out directly in `MosaicView.xaml`'s UI.
+On the 3D surface, `MosaicSurfaceView.BuildAxes` draws reference **meridian and parallel great-circle
+arcs** at `XTicks`/`YTicks`' real RA/Dec(/Az/El) values, sitting on the globe's own `SphereRadius`
+shell via the same `SpherePoint`/`Direction` mapping the mesh itself uses (not a flat floor grid at
+`Y=0` — the spherical equivalent). A meridian (constant RA/Az) is a curved arc sampled across the full
+Dec/El domain (pole-to-pole for Equatorial, horizon-to-zenith for AltAz — `Direction`'s Y domain
+differs by mode); a parallel (constant Dec/El) is always a full closed loop around the RA/Az axis.
+Gridlines are one `LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed — proven-safe
+per the section above) rather than HelixToolkit's `GridLinesVisual3D`, which has no way to force its
+own gridlines onto already-computed nice-tick positions on a curved shell anyway. Both X and Y tick
+labels share one fixed `textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) — matching HelixToolkit's
+own `SurfacePlotVisual3D` reference example's convention of one consistent direction pair for every
+axis, rather than a different one per axis (which is what originally produced upside-down labels). A
+meridian label sits on the celestial equator/horizon (Dec/El=0, valid in both conventions); a parallel
+label sits at RA/Az=0; both nudged radially outward by `LabelOffset`. The label doesn't billboard to
+face the camera (this text technique has no such behaviour), so it reads best close to a top-down view
+— `HelixViewport3D`'s `ViewCube` "Top" corner gets there in one click — and can look edge-on from other
+angles now that `WalkAround` lets the camera roam freely; proper per-label tangent-plane orientation
+would fix that but is a real chunk of extra geometry work for a cosmetic-only gain, left for later if
+it turns out to matter in practice.
 
 ### Progress reporting convention
 
@@ -604,8 +766,11 @@ instead, bound to a "Generate Chart"/"Generate Mosaic" button that turns into a 
 button itself doubles as the progress indicator — a `ProgressBar` templated behind the caption, rather
 than a separate bar next to it) while a run is in flight; `GenerationStatus` surfaces as that button's
 tooltip. Cancelling sets a `CancellationTokenSource` checked per-chunk in `VisualiseViewModel.
-ForEachChunk` / per-position in `MosaicProcessor.ProcessFolderAsync`'s existing token parameter, so a
-long chart/mosaic generation can be aborted promptly rather than only between whole-file phases.
+ForEachChunk` / via `Parallel.For`'s own `ParallelOptions.CancellationToken` in `MosaicProcessor.
+ProcessFolder` (see "Mosaic sky-map view" above), so a long chart/mosaic generation can be aborted
+promptly rather than only between whole-file phases — though for Mosaic specifically, "promptly" now
+means "once whichever positions were already running in parallel finish," not instantly, since multiple
+positions can be in flight at once.
 
 All of these properties are safe to set from a background thread (WPF's data-binding machinery
 marshals `INotifyPropertyChanged` notifications to the UI thread automatically); several of these call

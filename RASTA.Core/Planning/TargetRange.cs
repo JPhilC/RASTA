@@ -21,8 +21,13 @@ namespace RASTA.Core.Planning
         [ObservableProperty] private double altitudeStartDeg;
         [ObservableProperty] private double altitudeEndDeg;
 
-        // Common
-        [ObservableProperty] private double stepDeg;
+        // Common - the true angular separation (great-circle degrees) wanted between
+        // adjacent dwell points on the sky, not a raw per-axis coordinate step. SweepPlanner
+        // derives each axis's actual coordinate step from this: Dec/Elevation use it directly,
+        // while RA/Azimuth are corrected by cos(Dec)/cos(Elevation) per row so the resulting
+        // grid is (approximately) equally spaced on the celestial sphere rather than equally
+        // spaced in RA-hours/Az-degrees, which shrinks in real angle away from the equator/horizon.
+        [ObservableProperty] private double angularSeparationDeg;
 
         // Optional dwell time per point
         [ObservableProperty] private TimeSpan dwellTime = TimeSpan.FromSeconds(1);
@@ -33,8 +38,8 @@ namespace RASTA.Core.Planning
         public override string ToString()
         {
             return Mode == CoordinateMode.AltAz
-                ? $"AltAz Range: Az {AzimuthStartDeg}→{AzimuthEndDeg}, El {AltitudeStartDeg}→{AltitudeEndDeg}, Step {StepDeg}°"
-                : $"Equatorial Range: RA {RAStartHours}→{RAEndHours}h, Dec {DecStartDeg}→{DecEndDeg}°, Step {StepDeg}°";
+                ? $"AltAz Range: Az {AzimuthStartDeg}→{AzimuthEndDeg}, El {AltitudeStartDeg}→{AltitudeEndDeg}, Separation {AngularSeparationDeg}°"
+                : $"Equatorial Range: RA {RAStartHours}→{RAEndHours}h, Dec {DecStartDeg}→{DecEndDeg}°, Separation {AngularSeparationDeg}°";
         }
 
         public TargetRange Clone()
@@ -56,7 +61,7 @@ namespace RASTA.Core.Planning
                 AltitudeEndDeg = this.AltitudeEndDeg,
 
                 // Common
-                StepDeg = this.StepDeg,
+                AngularSeparationDeg = this.AngularSeparationDeg,
             };
         }
 

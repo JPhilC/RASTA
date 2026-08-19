@@ -13,6 +13,13 @@ namespace RASTA.App.Helpers
     /// HeatmapBuilder). One solid-colour block per grid cell (nearest-neighbour, not
     /// interpolated) - each cell is a real independent measurement, blending between them
     /// would imply data that isn't there.
+    ///
+    /// Both Build and BuildBlended accept an optional per-row compression factor (see their own
+    /// remarks) to render a sinusoidal equal-area projection instead of a plain equirectangular
+    /// one - MosaicViewModel.RenderSkyHeatmap always supplies one, since a straight RA/Az-vs-
+    /// Dec/El grid draws every row at the same width even though RA/Azimuth circles are
+    /// physically narrower away from the equator/horizon (the same distortion SweepPlanner's
+    /// RowStepDeg corrects for sweep spacing, here corrected for display instead).
     /// </summary>
     public static class HeatmapImageBuilder
     {
@@ -38,8 +45,21 @@ namespace RASTA.App.Helpers
         /// edge when flipY is true (the default - matches "Dec/Alt increases upward" chart
         /// convention) or at the TOP edge when false (matches top-to-bottom list/table order,
         /// used for the position-velocity diagram's position axis).
+        ///
+        /// <paramref name="rowCompressionFactor"/>, if given, renders a sinusoidal (Sanson-
+        /// Flamsteed) equal-area projection instead of a plain equirectangular one: for the row
+        /// at grid index gy, it returns cos(Dec) (or cos(Elevation)) - how much that row's real
+        /// angular width shrinks relative to the equator/horizon, since RA/Azimuth circles are
+        /// physically smaller away from it (see SweepPlanner.RowStepDeg, which corrects sweep
+        /// spacing for exactly this). Pixels outside that row's compressed width are transparent
+        /// (alpha=0, distinct from NoDataColor's "measured, sky exists, nothing found here") -
+        /// they aren't part of the map's silhouette at all, the way the poles pinch to a point on
+        /// a real globe. Null (the default) renders the original equirectangular layout, which is
+        /// exactly what this produces anyway when every row's factor is 1.
         /// </summary>
-        public static BitmapSource Build(double[,] grid, int pixelWidth, int pixelHeight, bool flipY = true)
+        public static BitmapSource Build(
+            double[,] grid, int pixelWidth, int pixelHeight, bool flipY = true,
+            Func<int, double>? rowCompressionFactor = null)
         {
             int gridWidth = grid.GetLength(0);
             int gridHeight = grid.GetLength(1);
@@ -64,15 +84,27 @@ namespace RASTA.App.Helpers
             {
                 int gyFromTop = gridHeight > 1 ? Math.Clamp(py * gridHeight / pixelHeight, 0, gridHeight - 1) : 0;
                 int gy = flipY ? gridHeight - 1 - gyFromTop : gyFromTop;
+                double factor = rowCompressionFactor?.Invoke(gy) ?? 1.0;
+                double safeFactor = Math.Max(factor, 1e-6); // avoid /0 right at a pole row (factor=0); the u-vs-factor test below already excludes everything but u==0 there
 
                 for (int px = 0; px < pixelWidth; px++)
                 {
-                    int gx = gridWidth > 1 ? Math.Clamp(px * gridWidth / pixelWidth, 0, gridWidth - 1) : 0;
+                    // u ranges -1 (left edge) .. +1 (right edge), centered on the row's midpoint.
+                    double u = ((px + 0.5) / pixelWidth) * 2 - 1;
+
+                    int idx = (py * pixelWidth + px) * 4;
+                    if (Math.Abs(u) > factor)
+                    {
+                        // Outside this row's compressed width - not part of the map's silhouette.
+                        pixels[idx + 3] = 0;
+                        continue;
+                    }
+
+                    int gx = gridWidth > 1 ? Math.Clamp((int)((u / safeFactor + 1) / 2 * gridWidth), 0, gridWidth - 1) : 0;
 
                     double v = grid[gx, gy];
                     var color = !hasData || double.IsNaN(v) ? NoDataColor : Ramp((v - min) / range);
 
-                    int idx = (py * pixelWidth + px) * 4;
                     pixels[idx + 0] = color.b;
                     pixels[idx + 1] = color.g;
                     pixels[idx + 2] = color.r;
@@ -102,7 +134,10 @@ namespace RASTA.App.Helpers
         /// design (see GridBuilder.BuildGrid) - it does not extrapolate coverage the way an
         /// unbounded interpolation (e.g. across the whole 24h x 180deg canvas) would.
         /// </summary>
-        public static BitmapSource BuildBlended(double[,] grid, int pixelWidth, int pixelHeight, bool flipY = true)
+        /// <summary>See Build's <paramref name="rowCompressionFactor"/> remarks - same sinusoidal projection, applied to the blended/interpolated rendering instead.</summary>
+        public static BitmapSource BuildBlended(
+            double[,] grid, int pixelWidth, int pixelHeight, bool flipY = true,
+            Func<double, double>? rowCompressionFactor = null)
         {
             int gridWidth = grid.GetLength(0);
             int gridHeight = grid.GetLength(1);
@@ -131,14 +166,29 @@ namespace RASTA.App.Helpers
                 double gyFromTop = gridHeight > 1 ? (py + 0.5) * gridHeight / (double)pixelHeight - 0.5 : 0;
                 double gyF = flipY ? (gridHeight - 1) - gyFromTop : gyFromTop;
 
+                // Sinusoidal compression is evaluated continuously (at this row's fractional gyF,
+                // not rounded to a cell index) so the map's outer edge tapers smoothly rather than
+                // in visible per-cell steps - unlike Build's per-cell factor, which is fine there
+                // since Build never blends across rows anyway.
+                double factor = rowCompressionFactor?.Invoke(gyF) ?? 1.0;
+                double safeFactor = Math.Max(factor, 1e-6);
+
                 for (int px = 0; px < pixelWidth; px++)
                 {
-                    double gxF = gridWidth > 1 ? (px + 0.5) * gridWidth / (double)pixelWidth - 0.5 : 0;
+                    double u = ((px + 0.5) / pixelWidth) * 2 - 1;
+
+                    int idx = (py * pixelWidth + px) * 4;
+                    if (Math.Abs(u) > factor)
+                    {
+                        pixels[idx + 3] = 0;
+                        continue;
+                    }
+
+                    double gxF = gridWidth > 1 ? (u / safeFactor + 1) / 2 * gridWidth - 0.5 : 0;
 
                     double? v = BilinearSample(grid, gxF, gyF, gridWidth, gridHeight);
                     var color = !hasData || v is null ? NoDataColor : Ramp((v.Value - min) / range);
 
-                    int idx = (py * pixelWidth + px) * 4;
                     pixels[idx + 0] = color.b;
                     pixels[idx + 1] = color.g;
                     pixels[idx + 2] = color.r;

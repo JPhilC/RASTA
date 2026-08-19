@@ -6,10 +6,37 @@
              xmlns:h="http://helix-toolkit.org/wpf"
              mc:Ignorable="d">
     <Grid>
+        <!-- CameraMode="WalkAround": unlike "FixedPosition" (look-around only, camera pinned to
+             one spot), this adds real translation - arrow keys move the camera, mouse-drag
+             still rotates LookDirection - so you can actually steer toward a bump/dent and see it
+             in relief against what's behind it, instead of being stuck dead-center where every
+             direction is a pure radius and nothing can ever occlude anything else (see
+             MosaicSurfaceView.xaml.cs's Direction/SpherePoint remarks - that flatness is inherent
+             to viewing from the exact center, not fixable by camera FOV or bump scale alone).
+             Matches an observer standing at (or wandering around near) the globe's own center
+             looking out at the inside of the celestial sphere, rather than HelixViewport3D's
+             default "Inspect" mode which orbits a camera around the OUTSIDE of the object (correct
+             for a terrestrial globe, backwards for a sky globe). ZoomExtentsWhenLoaded is off and
+             Rebuild no longer calls ZoomExtents for the same reason - there's no "whole object" to
+             fit into frame from outside; the initial Camera below already puts the viewer roughly
+             where they belong, and re-fitting it on every data refresh would also fight the user's
+             own position/look direction. -->
         <h:HelixViewport3D x:Name="Viewport"
                            ShowCoordinateSystem="True"
                            ShowViewCube="True"
-                           ZoomExtentsWhenLoaded="True">
+                           CameraMode="WalkAround"
+                           ZoomExtentsWhenLoaded="False">
+            <h:HelixViewport3D.Camera>
+                <!-- Position=(0,0,0): starts at the globe's center - a reasonable default since
+                     WalkAround lets the viewer move away from there towards whatever they want a
+                     grazing view of. LookDirection is an arbitrary starting glance (toward
+                     RA=0h/Az=0deg, Dec/El=0deg - see Direction) since the viewer can freely look
+                     and move anywhere from here; FieldOfView is wide (a standard PerspectiveCamera
+                     tops out just under 180deg) for an immersive, more of the dome at once feel
+                     rather than a narrow, zoomed-in default. -->
+                <PerspectiveCamera Position="0,0,0" LookDirection="1,0,0" UpDirection="0,1,0"
+                                    FieldOfView="100" NearPlaneDistance="0.01"/>
+            </h:HelixViewport3D.Camera>
             <ModelVisual3D>
                 <ModelVisual3D.Content>
                     <AmbientLight Color="#DDDDDD"/>
