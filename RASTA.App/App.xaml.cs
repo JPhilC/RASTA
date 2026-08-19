@@ -25,6 +25,8 @@ namespace RASTA.App
     {
         public static IServiceProvider Services { get; private set; } = default!;
 
+        private static readonly TimeSpan SplashMinimumDuration = TimeSpan.FromSeconds(2);
+
         private RastaLogger? _logger;
 
         protected override void OnStartup(StartupEventArgs e)
@@ -50,6 +52,14 @@ namespace RASTA.App
             DispatcherUnhandledException += OnDispatcherUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
             TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
+            // Shown here (rather than via the SplashScreen build action - see the note in
+            // RASTA.App.csproj) so RastaSplash.png's transparent border actually renders
+            // transparent. No StartupUri in App.xaml any more, so nothing else creates a window
+            // until MainWindow is explicitly shown further down.
+            var splash = new SplashWindow();
+            splash.Show();
+            var splashShownAt = DateTime.UtcNow;
 
             var services = new ServiceCollection();
 
@@ -154,6 +164,24 @@ namespace RASTA.App
             // See OnTelescopeConnectionLost below - the mount side's equivalent of
             // SdrDeviceService's hot-plug handling.
             Services.GetRequiredService<TelescopeService>().ConnectionLost += OnTelescopeConnectionLost;
+
+            // Replaces what StartupUri used to do. MainWindow is created and shown here so the
+            // splash can be closed once it's actually rendered (ContentRendered), rather than
+            // closing on a fixed delay that might cut in before or long after the real window is
+            // ready.
+            var main = new MainWindow();
+            MainWindow = main;
+            main.ContentRendered += async (_, _) =>
+            {
+                // DI setup above is fast enough that the splash would otherwise vanish almost
+                // instantly - hold it up to a 2s minimum so it's actually visible, without
+                // blocking the UI thread (Task.Delay + await, not Thread.Sleep).
+                var remaining = SplashMinimumDuration - (DateTime.UtcNow - splashShownAt);
+                if (remaining > TimeSpan.Zero)
+                    await Task.Delay(remaining);
+                splash.Close();
+            };
+            main.Show();
 
             base.OnStartup(e);
         }

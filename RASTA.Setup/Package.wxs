@@ -35,10 +35,24 @@
           <RemoveFolder Id="RemoveProgramMenuFolder" Directory="ProgramMenuFolder" On="uninstall" />
           <RegistryValue Root="HKCU" Key="Software\JPhilC\RASTA" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
         </Component>
+
+        <!-- Desktop shortcut, created unconditionally alongside the Start Menu one above
+             (no opt-out checkbox - this package currently has no wizard UI to host one). -->
+        <Component Id="DesktopShortcut">
+          <Shortcut Id="DesktopShortcutIcon"
+                     Name="R.A.S.T.A."
+                     Directory="DesktopFolder"
+                     WorkingDirectory="INSTALLFOLDER"
+                     Icon="RastaIcon.exe"
+                     Target="[INSTALLFOLDER]RASTA.App.exe" />
+          <RemoveFolder Id="RemoveDesktopFolder" Directory="DesktopFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\JPhilC\RASTA" Name="DesktopShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
 
   </Package>
 </Wix>

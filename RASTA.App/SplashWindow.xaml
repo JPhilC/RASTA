@@ -1,0 +1,19 @@
+<Window x:Class="RASTA.App.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="CenterScreen"
+        Width="360" Height="360">
+    <!-- RastaSplash.png is 1254x1254 with a transparent border - Stretch="Uniform" scales it down
+         to fit this window rather than showing it at native size (which would dominate most
+         screens), and the window itself being transparent (AllowsTransparency + Background
+         Transparent, requires WindowStyle="None") is what actually lets that transparent border
+         show through instead of painting white - see the SplashScreen build-action note in
+         RASTA.App.csproj for why the simpler built-in mechanism can't do this. -->
+    <Image Source="/Assets/RastaSplash.png" Stretch="Uniform"/>
+</Window>
