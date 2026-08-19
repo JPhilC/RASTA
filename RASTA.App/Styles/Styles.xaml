@@ -4,4 +4,22 @@
     <Style TargetType="TextBox">
         <Setter Property="HorizontalAlignment" Value="Left"/>
     </Style>
+
+    <!-- Implicit style (no x:Key) so every plain-string tooltip in the app
+         (ToolTip="some long explanation...") wraps into a sensibly-sized box instead of
+         spanning the whole window unwrapped - WPF's default ToolTip template doesn't wrap
+         text on its own, it just sizes to content. ContentTemplate's {Binding} resolves to
+         the ToolTip's own Content (the string set via the shorthand ToolTip="..." syntax).
+         TextBlock does honor literal newlines (the &#x0a; entities used in some tooltips)
+         as line breaks even with TextWrapping set, so paragraph breaks still render. -->
+    <Style TargetType="ToolTip">
+        <Setter Property="MaxWidth" Value="480"/>
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

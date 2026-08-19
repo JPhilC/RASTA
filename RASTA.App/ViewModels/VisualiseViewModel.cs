@@ -424,8 +424,16 @@ public partial class VisualiseViewModel : ObservableObject
         SamplingHz = baselineMeta.SampFreqHz;
         Gain = baselineMeta.GainDb;
 
+        if (TargetFftSize == 0)
+            TargetFftSize = ScanFftSize;   // default to no downscaling
+        if (TargetFftSize > ScanFftSize)
+            TargetFftSize = ScanFftSize;
+
         // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator.
+        // per fftSize frame, arithmetic mean via HiStreamingAccumulator. Always at the
+        // file's native resolution - Target FFT Size re-binning happens further down, on
+        // the averaged spectrum, via SpectrumBinner (see its remarks for why shrinking the
+        // raw IQ before the FFT - the old approach - was actually a bug, not a downscale).
         var acc = new HiStreamingAccumulator(ScanFftSize);
         int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
 
@@ -440,12 +448,19 @@ public partial class VisualiseViewModel : ObservableObject
         // index 0) - shift it into monotonic frequency order before display, the same
         // way HiStreamingPipeline.Process does for the combined baseline/capture views.
         baselineSpectrum = HiStreamingPipeline.FftShift(acc.GetBaselineAverage());
+        if (TargetFftSize < ScanFftSize)
+            baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
         rawBaselineSpectrum = baselineSpectrum;
         if (DespikeEnabled)
             baselineSpectrum = HiStreamingPipeline.Despike(baselineSpectrum, SamplingHz, DespikeThresholdSigma);
+        // Same smoothing kernel the combined HI views apply to their final output, but here
+        // on the standalone averaged spectrum - lets the effect of Smooth/Window be judged
+        // on this file alone, before it's ever divided against its counterpart.
+        if (SmoothingKind != SmoothingKind.None)
+            baselineSpectrum = HiStreamingPipeline.ApplySmoothing(baselineSpectrum, SmoothingKind, SmoothingWindow);
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
-        SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(baselineSpectrum) : baselineSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
@@ -461,8 +476,16 @@ public partial class VisualiseViewModel : ObservableObject
         SamplingHz = captureMeta.SampFreqHz;
         Gain = captureMeta.GainDb;
 
+        if (TargetFftSize == 0)
+            TargetFftSize = ScanFftSize;   // default to no downscaling
+        if (TargetFftSize > ScanFftSize)
+            TargetFftSize = ScanFftSize;
+
         // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator.
+        // per fftSize frame, arithmetic mean via HiStreamingAccumulator. Always at the
+        // file's native resolution - Target FFT Size re-binning happens further down, on
+        // the averaged spectrum, via SpectrumBinner (see its remarks for why shrinking the
+        // raw IQ before the FFT - the old approach - was actually a bug, not a downscale).
         var acc = new HiStreamingAccumulator(ScanFftSize);
         int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
 
@@ -475,30 +498,40 @@ public partial class VisualiseViewModel : ObservableObject
 
         // Same fix as ProcessBaseline: shift out of raw FFT-bin order before display.
         captureSpectrum = HiStreamingPipeline.FftShift(acc.GetCaptureAverage());
+        if (TargetFftSize < ScanFftSize)
+            captureSpectrum = SpectrumBinner.BinAverage(captureSpectrum, TargetFftSize);
         rawCaptureSpectrum = captureSpectrum;
         if (DespikeEnabled)
             captureSpectrum = HiStreamingPipeline.Despike(captureSpectrum, SamplingHz, DespikeThresholdSigma);
+        // Same smoothing kernel the combined HI views apply to their final output, but here
+        // on the standalone averaged spectrum - lets the effect of Smooth/Window be judged
+        // on this file alone, before it's ever divided against its counterpart.
+        if (SmoothingKind != SmoothingKind.None)
+            captureSpectrum = HiStreamingPipeline.ApplySmoothing(captureSpectrum, SmoothingKind, SmoothingWindow);
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
 
-        SpectrumVm.UpdateParameters(ScanFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(captureSpectrum) : captureSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
     }
 
     /// <summary>
-    /// Diagnostic dump of the raw-vs-despiked baseline/capture arrays cached by the last
+    /// Diagnostic dump of the raw-vs-processed baseline/capture arrays cached by the last
     /// ProcessBaseline/ProcessCapture run (i.e. the standalone single-file views - run
     /// Generate Chart there first, with Baseline/Capture Only, not the combined
     /// HiFrequency/Ratio mode, since that goes through ProcessHiCore's pair-based despike
     /// instead and doesn't cache a "before" state). One row per FFT bin: bin index,
-    /// frequency, and whichever of raw/despiked baseline/capture were generated. Written
-    /// next to the source FITS file so it's easy to find, and readable directly off disk -
-    /// no need to paste the contents anywhere. No CanExecute gating (unlike most commands
-    /// here, which is deliberate - see e.g. ProcessBaseline/ProcessCapture's own early
-    /// returns): this can run moments after a background Task.Run finishes populating the
-    /// raw*Spectrum fields, and NotifyCanExecuteChanged from a background thread isn't
+    /// frequency, and whichever of raw/processed baseline/capture were generated - the
+    /// "processed" column reflects Despike and/or Smooth, whichever of those were ticked
+    /// for that run (still labelled *Despiked for historical reasons; it's the same "after"
+    /// column Despike originally added, now also carrying Smooth's effect when enabled).
+    /// Written next to the source FITS file so it's easy to find, and readable directly off
+    /// disk - no need to paste the contents anywhere. No CanExecute gating (unlike most
+    /// commands here, which is deliberate - see e.g. ProcessBaseline/ProcessCapture's own
+    /// early returns): this can run moments after a background Task.Run finishes populating
+    /// the raw*Spectrum fields, and NotifyCanExecuteChanged from a background thread isn't
     /// safe to rely on here, so the guard is a plain early return instead.
     /// </summary>
     [RelayCommand]
@@ -523,6 +556,8 @@ public partial class VisualiseViewModel : ObservableObject
         using (var writer = new StreamWriter(path, append: false))
         {
             writer.WriteLine("Index,FrequencyHz,CaptureRaw,CaptureDespiked,BaselineRaw,BaselineDespiked");
+            // Note: the *Despiked columns reflect Despike and/or Smooth, whichever were
+            // enabled for the run that populated them - see the doc comment above.
             for (int i = 0; i < n; i++)
             {
                 double freq = FrequencyHz + (i - mid) * df;
@@ -563,24 +598,19 @@ public partial class VisualiseViewModel : ObservableObject
         if (TargetFftSize > ScanFftSize)
             TargetFftSize = ScanFftSize;
 
+        int bytesPerFrame = ScanFftSize * 2;
 
-        int bytesPerFrame = TargetFftSize * 2;
-
-        if (TargetFftSize < ScanFftSize)
-        {
-            // Downscale the IQ data to the target FFT size
-            baselineIq = IqDownscaler.Downscale(baselineIq, ScanFftSize, TargetFftSize);
-            captureIq = IqDownscaler.Downscale(captureIq, ScanFftSize, TargetFftSize);
-        }
-
-        // --- 3. Create streaming accumulator ---
-        var acc = new HiStreamingAccumulator(TargetFftSize);
+        // --- 3. Create streaming accumulator --- always at the file's native resolution;
+        // Target FFT Size re-binning happens after averaging (step 6, via SpectrumBinner),
+        // not by shrinking the raw IQ beforehand - see SpectrumBinner's remarks for why
+        // that used to be a real bug (aliasing), not just a coarser downscale.
+        var acc = new HiStreamingAccumulator(ScanFftSize);
 
         // --- 4. Accumulate baseline frames ---
         BeginProgress("Processing baseline…");
         ForEachChunk(baselineIq, bytesPerFrame, chunk =>
         {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, TargetFftSize);
+            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
             acc.AddBaselineFrame(spectrum);
         });
 
@@ -588,16 +618,23 @@ public partial class VisualiseViewModel : ObservableObject
         BeginProgress("Processing capture…");
         ForEachChunk(captureIq, bytesPerFrame, chunk =>
         {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, TargetFftSize);
+            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
             acc.AddCaptureFrame(spectrum);
         });
 
         FrameCount = $"{acc.BaselineFrames}/{acc.CaptureFrames}";
-        // --- 6. Get averaged spectra ---
+        // --- 6. Get averaged spectra, then re-bin down to Target FFT Size if requested ---
         var (baselineSpectrum, captureSpectrum) = acc.GetAveragedSpectra();
+        if (TargetFftSize < ScanFftSize)
+        {
+            baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
+            captureSpectrum = SpectrumBinner.BinAverage(captureSpectrum, TargetFftSize);
+        }
 
-        // --- 7. LSR correction, from the capture's recorded pointing/time/site (the
-        // baseline is just a terminator reading - its own pointing is meaningless here).
+        // --- 7. LSR correction, from the capture's recorded pointing/time/site (never the
+        // baseline - even though it now has its own real, meaningful cold-sky pointing, it's
+        // a calibration reference position, not the target actually being observed, so LSR
+        // correction is about the capture's target, not the baseline's).
         double lsrCorrectionKmPerSec = captureMeta.ComputeLsrCorrectionKmPerSec();
         LsrInfo = lsrCorrectionKmPerSec != 0.0
             ? $"{lsrCorrectionKmPerSec:+0.00;-0.00} km/s"
@@ -688,10 +725,15 @@ public partial class VisualiseViewModel : ObservableObject
         // integration over a small, fixed-size slice), so just bracket the whole thing.
         BeginProgress("Processing SKAO TTRT…");
 
-        baselineIq = IqDownscaler.Downscale(baselineIq, ScanFftSize, TargetFftSize);
-        captureIq = IqDownscaler.Downscale(captureIq, ScanFftSize, TargetFftSize);
-
-            FrameCount = $"{targetFrames}/{targetFrames}";
+        // baselineIq/captureIq are passed through at native resolution, unmodified -
+        // SkaoHiObservation.ProcessIq slices its own literal 256-raw-sample chunks
+        // directly from them (see its own loop), which is what the SKAO reference
+        // algorithm actually does against a native-rate capture. An earlier version of
+        // this method pre-shrank the raw IQ to 256 samples/frame first (an artifact of
+        // trying to route Target FFT Size through every mode uniformly) - that doesn't
+        // match the reference at all, and time-domain shrinking has the same aliasing
+        // problem SpectrumBinner's own remarks describe for the other Spectrum Modes.
+        FrameCount = $"{targetFrames}/{targetFrames}";
 
         // --- Run SKAO pipeline ---
         var skao = new SkaoHiObservation();

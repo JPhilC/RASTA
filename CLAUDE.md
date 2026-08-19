@@ -87,6 +87,16 @@ deserializes fresh `CapturePlan` instances on every call, `LoadAvailablePlans` r
 selection by `FriendlyName` against the newly loaded instances rather than relying on reference
 equality, dropping it only if no plan with that name is still offered.
 
+### Tooltips
+
+Every plain-string `ToolTip="..."` in the app wraps into a sensibly-sized box via an implicit
+`Style TargetType="ToolTip"` in `RASTA.App/Styles/Styles.xaml` (`MaxWidth="480"` plus a
+`ContentTemplate` that puts `{Binding}` in a `TextBlock TextWrapping="Wrap"`) — WPF's default
+`ToolTip` template doesn't wrap on its own, it just sizes to content, which is what made the longer
+Visualise tooltips span the whole window unwrapped before this. Literal `&#x0a;` newlines inside a
+tooltip string still render as paragraph breaks even with wrapping on, since WPF's `TextBlock` honors
+them directly - no need to avoid them for this reason.
+
 ### The HI reduction pipeline (the scientific core)
 
 `RASTA.Processing/HiPipeline/HiPipelineProcessor.cs` (documented in detail in
@@ -102,6 +112,28 @@ equality, dropping it only if no plan with that name is still offered.
   suggest) → continuum subtraction → optional Savitzky–Golay smoothing.
 - `HiStreamingProcessor` — convenience wrapper combining the two.
 
+`HiPipeline/SpectrumBinner.cs` is what implements the FFT-size-agnostic part for a **Target FFT
+Size** smaller than a file's native size: `BinAverage` averages groups of physically-adjacent bins
+of the *already-FFT'd, already frame-averaged* power spectrum together — it never touches the raw
+IQ. It supersedes a since-removed `IqDownscaler`, which shrank the raw IQ *before* the FFT by
+block-averaging groups of consecutive time-domain samples. That looked plausible but was a real bug:
+block-averaging D consecutive time samples and then FFT-ing the shorter result is decimation, and
+decimating in time *aliases* the spectrum — each output bin ended up combining a native bin with
+another one a whole output-length away (e.g. a 4096→2048 downscale folded the middle of the band together with
+its far edge) rather than averaging nearby frequencies. That's exactly why lowering Target FFT Size
+used to make a spectrum *noisier* and erase its bandpass shape instead of smoothing it. It was mostly
+invisible in the combined baseline/capture ratio view only because the same aliasing pattern hit both
+spectra identically and roughly canceled in the division — not because the math was actually correct
+there. `VisualiseViewModel.ProcessBaseline`/`ProcessCapture`/`ProcessHiCore` and
+`MosaicProcessor.ProcessFolderAsync` all now FFT/accumulate at a file's **native** FFT size
+unconditionally, then call `SpectrumBinner.BinAverage` on the averaged result only if `TargetFftSize`
+is smaller. `ProcessBaseline`/`ProcessCapture` didn't respect `TargetFftSize` at all before this fix
+(always native) — it's now usable on the standalone single-file charts too, not just the combined
+HI/Ratio modes. `ProcessSkaoTtrt` (the SKAO reference cross-check) no longer downscales at all — it
+passes native-rate raw IQ straight to `SkaoHiObservation.ProcessIq`, whose own fixed 256-point FFT is
+meant to run against a native-rate capture in the first place; the old pre-shrink step there was never
+part of the actual reference algorithm, so removing it makes that mode *more* faithful, not less.
+
 `HiStreamingPipeline.Process` unconditionally runs `RemoveDcSpike` right after the fftshift: every
 zero-IF SDR (including the RTL-SDR this app targets) leaks a fixed LO/DC-offset spike at exactly the
 tuned center frequency, which after fftshift always lands on the array's center bin regardless of
@@ -110,10 +142,13 @@ MHz no matter where the scope pointed" symptom when the center frequency happene
 to the HI rest frequency itself). Rather than hardcoding a fixed bin window to blank — which could
 just as easily discard genuine HI emission if the tuned center ever coincided with a target's actual
 line frequency — the window is *detected from the baseline spectrum alone* (`LocalMedianExcluding` +
-a threshold-ratio scan outward from the center bin, capped at `DcSpikeMaxHalfWidthBins`). Since the
-baseline is a terminator reading with zero sky signal, any bin that spikes there is unambiguously
-instrumental; the decision never inspects the capture spectrum, so it structurally cannot excise
-real, capture-only signal. Only bins actually elevated in the baseline get linearly interpolated
+a threshold-ratio scan outward from the center bin, capped at `DcSpikeMaxHalfWidthBins`). The
+baseline file is always a cold-sky capture (see "Calibration flow" below — a terminator is used only
+for the separate gain-sweep step, never for the baseline FITS file itself), deliberately chosen off
+the HI-rich Galactic plane, so it carries no strong, narrow line of its own; any bin that spikes there
+against the surrounding continuum is unambiguously instrumental, not sky signal. The decision never
+inspects the capture spectrum, so it structurally cannot excise real, capture-only signal. Only bins
+actually elevated in the baseline get linearly interpolated
 away, identically, in both baseline and capture, before anything downstream (ratio, continuum fit)
 sees them. `SkaoPipelineProcessor` deliberately does *not* get this fix — it exists specifically as
 an unmodified cross-check against the SKAO reference algorithm.
@@ -123,7 +158,10 @@ artifact discovered after moving the default center frequency to 1420.7 MHz: a n
 spur at a fixed **relative** offset from center (~+100 kHz — a rational fraction of the 2.4 MHz sample
 rate, consistent with a typical RTL-SDR self-generated "birdie"), confirmed pointing-invariant across
 an entire night's sweep (same bin regardless of RA/Dec) but *absent from that same session's baseline*
-— it only appears once a real antenna/LNA is on the front end, not with a terminator. Since it isn't
+— it only appears once a real antenna/LNA is on the front end, not with a terminator (this finding
+predates the cold-sky baseline migration described in "Calibration flow" below — worth re-confirming
+against a cold-sky baseline, which also has a real antenna/LNA on the front end, rather than assuming
+it still holds unchanged). Since it isn't
 baseline-verified the way the DC spike is, blanking it in `HiStreamingPipeline` itself would reintroduce
 exactly the "might discard genuine signal" risk `RemoveDcSpike` was designed to avoid, so it's left in
 the data. Instead `SpectrumViewModel.ApplyRobustYAxisRange` (used by both `UpdateSpectrum` overloads)
@@ -173,8 +211,10 @@ strictly positive, unlike `HiSpectrum`, so it's the one mode that can validly be
 `HiStreamingPipeline.Process` (and `HiStreamingProcessor.Compute`) take an optional
 `lsrCorrectionKmPerSec` parameter (default 0), added as a flat offset to every channel's velocity —
 `VisualiseViewModel.ProcessHiCore` computes it via `AstronomyUtils.ComputeLsrCorrectionKmPerSec` from
-the **capture** file's recorded pointing/time/site (never the baseline — that's just a terminator
-reading with no meaningful pointing), falling back to 0 for files that predate that metadata.
+the **capture** file's recorded pointing/time/site (never the baseline — even though the baseline file
+now has its own real, meaningful cold-sky pointing, it's a calibration reference position, not the
+target actually being observed, so LSR correction is about the capture's target, not the baseline's),
+falling back to 0 for files that predate that metadata.
 
 `HiStreamingPipeline.Process` also takes optional `smoothing`/`smoothingWindow`/`smoothingPolyOrder`
 parameters (`RASTA.Processing.Dsp.SmoothingKind`: `None`/`SavitzkyGolay`/`MovingAverage`, default
@@ -192,6 +232,21 @@ local-polynomial fit, since a real HI line (tens to hundreds of kHz wide) is far
 FFT bin (~586 Hz at 2.4 Msps/4096 FFT) — the fixed 5-bin kernel barely perturbs a spectrum at that
 scale, which is why a wide, user-tunable window (not a different algorithm) is what actually reveals
 a line.
+
+`ApplySmoothing` (the dispatch `Process` uses internally) is `public static`, reused directly by
+`VisualiseViewModel.ProcessBaseline`/`ProcessCapture` to smooth their own averaged spectrum (post-
+`SpectrumBinner`, post-Despike) so a single file's own noise can be judged before it's ever combined
+with its counterpart — those two views ignored `SmoothingKind` entirely before this session. `Process`
+itself deliberately still smooths only the *final* `HiSpectrum`, not `baselinePower`/`capturePower`
+individually before dividing them, even though that's what the single-file views do and even though it
+was tried: `RatioSpectrum` is multiplied by `HiConstants.RatioDisplayScale` (300) before continuum
+subtraction, so even a small (few-percent) residual per-bin scatter left in each *independently*
+smoothed spectrum — invisible on that file's own dB-scale plot — combines in quadrature through the
+division and then gets amplified ~300×, making the combined chart noisier than smoothing the
+already-divided result directly. Smoothing the final `HiSpectrum` only has to reduce noise in the one
+already-amplified quantity actually being displayed, which is structurally more effective per unit of
+window size than requiring both inputs smoothed enough that their combined residual is separately
+invisible.
 
 Frame-level power spectra are computed by `IFftEngine.ComputeSkAoPower` (Hann-windowed, SKAO-style
 `|FFT/N·2|²` normalization) — this is the one to use for anything that will be averaged and fed

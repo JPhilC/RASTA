@@ -19,8 +19,10 @@
          been added", RG1000). Visual Studio pairs a Remove like this automatically when you set a
          file's Build Action through the Properties window; it's required by hand here since these
          were added by editing the csproj directly. -->
+    <None Remove="Assets\ButtonBarFooter.png" />
     <None Remove="Assets\Rasta.ico" />
     <None Remove="Assets\RastaSplash.png" />
+    <Resource Include="Assets\ButtonBarFooter.png" />
 
     <Resource Include="Assets\Rasta.ico" />
     <!-- NOT the SplashScreen build action: that renders via a native GDI call before WPF's own

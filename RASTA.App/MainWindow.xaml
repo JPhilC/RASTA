@@ -161,6 +161,9 @@
                 </Button.Style>
             </Button>
         </StackPanel>
+        <Image Margin="10"
+               VerticalAlignment="Bottom"
+               Source="/Assets/ButtonBarFooter.png"/>
 
         <!-- Main Content -->
         <ContentControl Grid.Column="1" Grid.Row="0"

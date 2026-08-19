@@ -165,7 +165,7 @@ namespace RASTA.Processing.HiPipeline
             double lsrCorrectionKmPerSec = 0.0, // add AstronomyUtils.ComputeLsrCorrectionKmPerSec(...) here to report LSR velocity instead of raw topocentric
             bool despike = false, // opt-in narrowband RFI excision (comb/birdie spikes) - see Despike
             double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma, // only used when despike is true
-            SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
+            SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths at all
             int smoothingWindow = 5,
             int smoothingPolyOrder = 2) // only used when smoothing == SavitzkyGolay
         {
@@ -196,6 +196,20 @@ namespace RASTA.Processing.HiPipeline
             // center frequency - see RemoveDcSpike for why the window is detected from
             // the baseline rather than hardcoded).
             RemoveDcSpike(baselinePower, capturePower);
+
+            // NOTE: smoothing deliberately does NOT run here, on baselinePower/capturePower
+            // individually, even though that would match what the standalone single-file
+            // Baseline/Capture views do (ProcessBaseline/ProcessCapture smooth at this same
+            // point). Tried it (2026-08-19) - it made the combined chart *noisier*, not
+            // smoother: RatioSpectrum is scaled by RatioDisplayScale (300, see step 4) before
+            // continuum subtraction, so even a residual few percent of leftover per-bin
+            // scatter in each *independently* smoothed spectrum - invisible on the
+            // baseline/capture's own dB-scale plot - combines in quadrature through the
+            // division and then gets amplified ~300x, swamping the display. Smoothing the
+            // *already-divided* RatioSpectrum/HiSpectrum (step 7 below) only has to reduce
+            // noise in the one already-amplified quantity actually being displayed, which is
+            // structurally more effective per unit of window size than requiring both inputs
+            // smoothed enough that their combined residual is separately invisible.
 
             // 2. Frequency axis
             FrequencyHz = ComputeFrequencyAxis(n, sampleRateHz, centerFreqHz);
@@ -241,23 +255,33 @@ namespace RASTA.Processing.HiPipeline
             }
 
             // 7. Optional final smoothing (display-only - never feeds back into the continuum
-            //    fit or RatioSpectrum, both already computed above). SkaoPipelineProcessor is
-            //    unaffected either way; it always applies its own fixed 5-point kernel to match
-            //    the SKAO reference algorithm exactly.
+            //    fit or RatioSpectrum, both already computed above) - see the NOTE above step 2
+            //    for why this runs here, on the final result, rather than on baselinePower/
+            //    capturePower individually before division. SkaoPipelineProcessor is unaffected
+            //    either way; it always applies its own fixed 5-point kernel to match the SKAO
+            //    reference algorithm exactly.
             if (smoothing != SmoothingKind.None)
             {
-                HiSpectrum = ApplyFinalSmoothing(HiSpectrum, smoothing, smoothingWindow, smoothingPolyOrder);
+                HiSpectrum = ApplySmoothing(HiSpectrum, smoothing, smoothingWindow, smoothingPolyOrder);
             }
         }
 
         /// <summary>
-        /// Dispatches to whichever final-smoothing kernel the caller asked for. SavitzkyGolay
+        /// Dispatches to whichever smoothing kernel the caller asked for. SavitzkyGolay
         /// reuses the same general-purpose, arbitrary-window/order implementation already used
         /// internally for RFI outlier detection (SavitzkyGolaySmooth below) rather than the
         /// crude fixed-5-point RASTA.Processing.Dsp.SavitzkyGolay class, which is reserved for
-        /// SkaoPipelineProcessor's unmodified reference kernel.
+        /// SkaoPipelineProcessor's unmodified reference kernel. Public - like FftShift below -
+        /// so a caller assessing a single averaged baseline/capture spectrum on its own (post-
+        /// bin, post-despike) can apply the same kernel Process itself applies to its own final
+        /// HiSpectrum. Note this is deliberately *not* the same pipeline stage in both cases:
+        /// the standalone single-file views smooth before any division ever happens (there's
+        /// nothing else to divide against), while Process smooths only its own final,
+        /// already-divided/continuum-subtracted output - see the NOTE in Process for why
+        /// smoothing baselinePower/capturePower individually before dividing was tried and
+        /// reverted (it amplifies, rather than suppresses, per-bin noise through the division).
         /// </summary>
-        private static double[] ApplyFinalSmoothing(double[] data, SmoothingKind kind, int window, int polyOrder)
+        public static double[] ApplySmoothing(double[] data, SmoothingKind kind, int window, int polyOrder = 2)
         {
             if (window < 1) window = 1;
             if (window % 2 == 0) window++; // SG and the centered moving average both expect an odd window

@@ -103,16 +103,18 @@ namespace RASTA.Processing.Mosaic
 
             int scanFftSize = baselineMeta.FftSize;
             int fftSize = (targetFftSize > 0 && targetFftSize <= scanFftSize) ? targetFftSize : scanFftSize;
-            int bytesPerFrame = fftSize * 2;
+            int bytesPerFrame = scanFftSize * 2;
 
-            byte[] baselineIq = fftSize < scanFftSize
-                ? IqDownscaler.Downscale(baselineIqRaw, scanFftSize, fftSize)
-                : baselineIqRaw;
-
-            var baselineAcc = new HiStreamingAccumulator(fftSize);
-            ForEachChunk(baselineIq, bytesPerFrame, chunk =>
-                baselineAcc.AddBaselineFrame(_fftEngine.ComputeSkAoPower(chunk, fftSize)));
+            // Always FFT/accumulate at native resolution; Target FFT Size re-binning
+            // happens after averaging, via SpectrumBinner - not by shrinking the raw IQ
+            // beforehand, which aliases distant frequency bins together instead of
+            // averaging local ones (see SpectrumBinner's own remarks for why).
+            var baselineAcc = new HiStreamingAccumulator(scanFftSize);
+            ForEachChunk(baselineIqRaw, bytesPerFrame, chunk =>
+                baselineAcc.AddBaselineFrame(_fftEngine.ComputeSkAoPower(chunk, scanFftSize)));
             double[] baselinePower = baselineAcc.GetBaselineAverage();
+            if (fftSize < scanFftSize)
+                baselinePower = SpectrumBinner.BinAverage(baselinePower, fftSize);
 
             // --- One dwell-point capture group per sky/AltAz position ---
             var positions = new List<MosaicPosition>(groups.Count);
@@ -139,14 +141,12 @@ namespace RASTA.Processing.Mosaic
                         "frequency than the baseline.");
                 }
 
-                byte[] captureIq = fftSize < scanFftSize
-                    ? IqDownscaler.Downscale(captureIqRaw, scanFftSize, fftSize)
-                    : captureIqRaw;
-
-                var captureAcc = new HiStreamingAccumulator(fftSize);
-                ForEachChunk(captureIq, bytesPerFrame, chunk =>
-                    captureAcc.AddCaptureFrame(_fftEngine.ComputeSkAoPower(chunk, fftSize)));
+                var captureAcc = new HiStreamingAccumulator(scanFftSize);
+                ForEachChunk(captureIqRaw, bytesPerFrame, chunk =>
+                    captureAcc.AddCaptureFrame(_fftEngine.ComputeSkAoPower(chunk, scanFftSize)));
                 double[] capturePower = captureAcc.GetCaptureAverage();
+                if (fftSize < scanFftSize)
+                    capturePower = SpectrumBinner.BinAverage(capturePower, fftSize);
 
                 // Each position has its own pointing, so its own LSR correction - unlike
                 // ProcessHiCore, this can't be hoisted out of the loop.
