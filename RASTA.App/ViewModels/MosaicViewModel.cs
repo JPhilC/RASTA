@@ -72,6 +72,14 @@ public record DomeRing(double Left, double Top, double Diameter);
 public record DomeLabel(string Text, double X, double Y);
 
 /// <summary>
+/// One position feeding MosaicDomeSurfaceView's 3D dome (see MosaicViewModel.RenderSurface) - live
+/// Az/El at DomeTimeUtc (shared with the 2D Zenith Dome tab - see ComputeVisibleDomePositions) plus
+/// whichever metric SurfaceMetric currently selects. The view itself does the Az/El-to-X/Z-ground-
+/// plane projection and the value-to-height extrusion; this record only carries the raw ingredients.
+/// </summary>
+public record DomeSurfacePoint(string Label, double AzDeg, double ElDeg, double Value);
+
+/// <summary>
 /// Rendered state for the "Zenith Dome" tab - a from-here-right-now view, distinct from the
 /// "Sky Mosaic" tab's persistent full-sky RA/Dec canvas (see MosaicViewModel.RenderDome for why
 /// the two can't be the same view). Always a square canvas; markers/rings/spokes/labels are all
@@ -131,9 +139,9 @@ public partial class MosaicViewModel : ObservableObject
     private readonly StatusBarViewModel _statusBar;
     private readonly TelescopeState _telescopeState;
 
-    // The raw per-position list behind whichever grids are currently displayed - kept
-    // separately from _lastStrengthGrid/_lastVelocityGrid because RenderDome needs each
-    // position's own RA/Dec (or Az/El) to re-project it live, not a pre-binned RA/Dec cell.
+    // The raw per-position list behind the currently-displayed session - kept separately from
+    // _lastStrengthGrid because RenderDome/RenderSurface (see ComputeVisibleDomePositions) need
+    // each position's own RA/Dec (or Az/El) to re-project it live, not a pre-binned RA/Dec cell.
     private IReadOnlyList<MosaicPosition>? _lastPositions;
 
     [ObservableProperty]
@@ -221,23 +229,25 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private bool useSmoothBlend;
 
-    // Bound to MosaicSurfaceView.FlattenRelief - true renders the 3D globe as a plain sphere
-    // (colour only, no radial bump/dent), matching what the real sky actually looks like from
-    // near its center; false (default) keeps the literal terrain-relief visualization. Only
-    // affects the 3D Surface tab - the 2D heatmap has no equivalent "relief" to flatten.
-    [ObservableProperty]
-    private bool flattenGlobeRelief;
-
-    // Which MosaicPosition metric the 3D surface currently renders - see MosaicSurfaceMetric.
+    // Which MosaicPosition metric the 3D dome currently renders - see MosaicSurfaceMetric.
     [ObservableProperty]
     private MosaicSurfaceMetric surfaceMetric = MosaicSurfaceMetric.Strength;
 
-    // The grids behind the currently-displayed heatmap/surface, kept so toggling
-    // UseSmoothBlend/SurfaceMetric can re-render immediately instead of re-running
-    // MosaicProcessor against the FITS files. Both are built together in BuildGrids since
-    // they're cheap re-binnings of the same already-processed MosaicResult.
+    // Bound to MosaicDomeSurfaceView.FitMesh - overlays a Delaunay-triangulated translucent
+    // surface through each visible point's own extruded (x, height, z) position, in addition to
+    // the per-point stems/dots (which stay visible either way - this is additive, not a
+    // replacement view). Off by default: on a genuinely sparse session the triangulation still
+    // spans the full convex hull of whatever points exist, which can read as a confusing web of
+    // long triangles bridging distant, unrelated positions until enough real coverage exists to
+    // make the fitted surface actually meaningful.
+    [ObservableProperty]
+    private bool fitMeshThroughPoints;
+
+    // The grid behind the currently-displayed Sky Mosaic heatmap, kept so toggling
+    // UseSmoothBlend can re-render immediately instead of re-running MosaicProcessor against the
+    // FITS files. Velocity no longer needs its own cached grid - see _lastVelocityGrid's removal
+    // and RenderSurface's remarks; the 3D dome reads straight from _lastPositions instead.
     private GridBuilder.MosaicGridResult? _lastStrengthGrid;
-    private GridBuilder.MosaicGridResult? _lastVelocityGrid;
 
     public bool BaselineAvailable => BaselineFile is not null;
 
@@ -251,37 +261,18 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private MosaicHeatmapDisplay skyHeatmap = new();
 
-    // Feeds MosaicSurfaceView's HelixToolkit mesh - whichever of _lastStrengthGrid/
-    // _lastVelocityGrid SurfaceMetric currently selects (see RenderSurface), consumed as a
-    // height field instead of a flat colour map.
+    // Feeds MosaicDomeSurfaceView - every currently-visible-above-the-horizon position (see
+    // ComputeVisibleDomePositions) with whichever metric SurfaceMetric selects. The view itself
+    // does the Az/El projection and value-to-height extrusion (see RenderSurface's remarks on why
+    // this replaced a GridBuilder-based height field).
     [ObservableProperty]
-    private double[,]? surfaceIntensityGrid;
-
-    [ObservableProperty]
-    private double[]? surfaceXValues; // RA hours or Az degrees
-
-    [ObservableProperty]
-    private double[]? surfaceYValues; // Dec or El degrees
-
-    // Bound to MosaicSurfaceView.IsAltAz - which spherical convention it renders the globe with
-    // (RA/Dec pole-to-pole vs Az/El horizon-to-zenith - see MosaicSurfaceView.Direction).
-    [ObservableProperty]
-    private bool surfaceIsAltAz;
+    private IReadOnlyList<DomeSurfacePoint> surfacePoints = Array.Empty<DomeSurfacePoint>();
 
     [ObservableProperty]
     private string surfaceLegendMinText = string.Empty;
 
     [ObservableProperty]
     private string surfaceLegendMaxText = string.Empty;
-
-    // Real-valued (not pixel) axis ticks for MosaicSurfaceView's own floor grid/labels - see
-    // RenderSurface. Position is an RA/Az value for XTicks, Dec/El for YTicks; MosaicSurfaceView
-    // maps these into its normalized model space with the same NormX/NormZ it uses for the mesh.
-    [ObservableProperty]
-    private IReadOnlyList<AxisTick> surfaceXTicks = Array.Empty<AxisTick>();
-
-    [ObservableProperty]
-    private IReadOnlyList<AxisTick> surfaceYTicks = Array.Empty<AxisTick>();
 
     // ---------------------------------------------------------
     // Zenith Dome tab - a from-here-right-now Alt/Az view (see RenderDome), distinct from the
@@ -296,7 +287,11 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private MosaicDomeDisplay skyDome = new();
 
-    partial void OnDomeTimeUtcChanged(DateTime value) => RenderDome();
+    partial void OnDomeTimeUtcChanged(DateTime value)
+    {
+        RenderDome();
+        RenderSurface(); // the 3D dome depends on the same live Az/El, at this same instant
+    }
 
     [RelayCommand]
     private void SetDomeTimeNow() => DomeTimeUtc = DateTime.UtcNow;
@@ -549,7 +544,6 @@ public partial class MosaicViewModel : ObservableObject
     private void BuildGrids(MosaicResult result)
     {
         _lastStrengthGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.LineStrengthDb);
-        _lastVelocityGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.PeakVelocityKmPerSec);
         _lastPositions = result.Positions;
         RenderSkyHeatmap(_lastStrengthGrid);
         RenderSurface();
@@ -557,56 +551,30 @@ public partial class MosaicViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Renders the "Zenith Dome" tab: every position's live Az/El at DomeTimeUtc, from the
-    /// site recorded on TelescopeState (the same site the app already tracks for the connected
-    /// mount - see SettingsViewModel), projected onto a zenith-centered dome and coloured the
-    /// same LineStrengthDb/StrengthUnitLabel ramp the 2D heatmap uses (HeatmapImageBuilder.Ramp).
-    ///
-    /// Deliberately NOT built from _lastStrengthGrid/GridBuilder - unlike the Sky Mosaic tab's
-    /// persistent "coverage so far" RA/Dec canvas, an Az/El dome is only valid at one instant
-    /// (the same RA/Dec sits at a different Az/El an hour later), so there's no meaningful sense
-    /// in which it could accumulate across sessions - each position is re-projected fresh from
-    /// its own stored RA/Dec (or, for an AltAz-mode session, its already-fixed Az/El) every time
-    /// this runs, whether that's after a fresh Generate Mosaic or just DomeTimeUtc changing.
-    ///
-    /// Compass orientation matches how a naked-eye sky chart (e.g. Cartes du Ciel's Alt/Az
-    /// view) is drawn, not a ground map: N up, S down, E LEFT, W RIGHT - looking up at the
-    /// inside of the sky's dome mirrors east/west relative to looking down at a map. Derived by
-    /// projecting azimuth clockwise-negated (screenTheta = -azimuth) so Az=90 (E) lands left of
-    /// centre and Az=270 (W) lands right - see the pixel formula below.
-    ///
-    /// Only positions currently above the horizon (ElevationDeg >= 0) are plotted at all - a
-    /// position below the horizon right now genuinely isn't part of "the sky as it looks from
-    /// here right now", the dome's whole premise, rather than something to grey out.
+    /// Every currently-visible-above-the-horizon position from the last processed session, as
+    /// (label, live Az/El at DomeTimeUtc, the caller's chosen metric) - the shared ingredient
+    /// behind both the 2D Zenith Dome (RenderDome, always LineStrengthDb) and the 3D dome
+    /// (RenderSurface, whichever metric SurfaceMetric selects). Site lat/lon comes from
+    /// TelescopeState (the same site the app already tracks for the connected mount - see
+    /// SettingsViewModel). A position with a NaN value, or below the horizon right now, is
+    /// dropped entirely rather than included as a zero/grayed-out entry - a dome's whole premise
+    /// is "the sky as it looks from here, right now", not a placeholder for what isn't up or
+    /// wasn't measurable.
     /// </summary>
-    private void RenderDome()
+    private List<(string Label, double AzDeg, double ElDeg, double Value)> ComputeVisibleDomePositions(
+        Func<MosaicPosition, double> valueSelector)
     {
-        if (_lastPositions is null || _lastPositions.Count == 0)
-        {
-            SkyDome = new MosaicDomeDisplay { StatusText = "No mosaic processed yet." };
-            return;
-        }
-
-        const double canvasSize = 640;
-        const double margin = 50; // room for compass labels outside the dome circle
-        double cx = canvasSize / 2.0;
-        double cy = canvasSize / 2.0;
-        double domeRadius = canvasSize / 2.0 - margin;
+        var result = new List<(string, double, double, double)>();
+        if (_lastPositions is null)
+            return result;
 
         double siteLatDeg = _telescopeState.SiteLatitudeDeg;
         double siteLonDeg = _telescopeState.SiteLongitudeDeg;
 
-        (double x, double y) Project(double azDeg, double elDeg)
-        {
-            double r = Math.Clamp((90.0 - elDeg) / 90.0, 0.0, 1.0) * domeRadius;
-            double azRad = azDeg * Math.PI / 180.0;
-            return (cx - r * Math.Sin(azRad), cy - r * Math.Cos(azRad));
-        }
-
-        var raw = new List<(string label, double x, double y, double value, double elDeg, double azDeg)>();
         foreach (var p in _lastPositions)
         {
-            if (double.IsNaN(p.LineStrengthDb))
+            double value = valueSelector(p);
+            if (double.IsNaN(value))
                 continue;
 
             double azDeg, elDeg;
@@ -627,19 +595,63 @@ public partial class MosaicViewModel : ObservableObject
             if (elDeg < 0)
                 continue; // below the horizon right now - not part of "the sky, from here, now"
 
-            var (x, y) = Project(azDeg, elDeg);
-            raw.Add((p.Label, x, y, p.LineStrengthDb, elDeg, azDeg));
+            result.Add((p.Label, azDeg, elDeg, value));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Renders the "Zenith Dome" tab: every position's live Az/El at DomeTimeUtc, projected onto
+    /// a zenith-centered dome and coloured the same LineStrengthDb/StrengthUnitLabel ramp the 2D
+    /// heatmap uses (HeatmapImageBuilder.Ramp). Always LineStrengthDb regardless of SurfaceMetric
+    /// - same reasoning RenderSkyHeatmap's own remarks give for the 2D Sky Mosaic heatmap.
+    ///
+    /// Deliberately NOT built from _lastStrengthGrid/GridBuilder - unlike the Sky Mosaic tab's
+    /// persistent "coverage so far" RA/Dec canvas, an Az/El dome is only valid at one instant
+    /// (the same RA/Dec sits at a different Az/El an hour later), so there's no meaningful sense
+    /// in which it could accumulate across sessions - see ComputeVisibleDomePositions, called
+    /// fresh whether this runs after a new Generate Mosaic or just DomeTimeUtc changing.
+    ///
+    /// Compass orientation matches how a naked-eye sky chart (e.g. Cartes du Ciel's Alt/Az
+    /// view) is drawn, not a ground map: N up, S down, E LEFT, W RIGHT - looking up at the
+    /// inside of the sky's dome mirrors east/west relative to looking down at a map. Derived by
+    /// projecting azimuth clockwise-negated (screenTheta = -azimuth) so Az=90 (E) lands left of
+    /// centre and Az=270 (W) lands right - see the pixel formula below.
+    /// </summary>
+    private void RenderDome()
+    {
+        var visible = ComputeVisibleDomePositions(p => p.LineStrengthDb);
+        int totalPositions = _lastPositions?.Count ?? 0;
+
+        if (totalPositions == 0)
+        {
+            SkyDome = new MosaicDomeDisplay { StatusText = "No mosaic processed yet." };
+            return;
         }
 
-        double min = raw.Count > 0 ? raw.Min(m => m.value) : 0;
-        double max = raw.Count > 0 ? raw.Max(m => m.value) : 1;
+        const double canvasSize = 640;
+        const double margin = 50; // room for compass labels outside the dome circle
+        double cx = canvasSize / 2.0;
+        double cy = canvasSize / 2.0;
+        double domeRadius = canvasSize / 2.0 - margin;
+
+        (double x, double y) Project(double azDeg, double elDeg)
+        {
+            double r = Math.Clamp((90.0 - elDeg) / 90.0, 0.0, 1.0) * domeRadius;
+            double azRad = azDeg * Math.PI / 180.0;
+            return (cx - r * Math.Sin(azRad), cy - r * Math.Cos(azRad));
+        }
+
+        double min = visible.Count > 0 ? visible.Min(m => m.Value) : 0;
+        double max = visible.Count > 0 ? visible.Max(m => m.Value) : 1;
         double range = Math.Max(max - min, 1e-9);
 
-        var markers = raw.Select(m =>
+        var markers = visible.Select(m =>
         {
-            var (r, g, b) = HeatmapImageBuilder.Ramp((m.value - min) / range);
-            string tooltip = $"{m.label}\nAz {m.azDeg:F1}°  El {m.elDeg:F1}°\n{m.value:F1} {StrengthUnitLabel}";
-            return new DomeMarker(m.label, m.x, m.y, m.value, m.elDeg, m.azDeg, Color.FromRgb(r, g, b), tooltip);
+            var (x, y) = Project(m.AzDeg, m.ElDeg);
+            var (r, g, b) = HeatmapImageBuilder.Ramp((m.Value - min) / range);
+            string tooltip = $"{m.Label}\nAz {m.AzDeg:F1}°  El {m.ElDeg:F1}°\n{m.Value:F1} {StrengthUnitLabel}";
+            return new DomeMarker(m.Label, x, y, m.Value, m.ElDeg, m.AzDeg, Color.FromRgb(r, g, b), tooltip);
         }).ToList();
 
         var rings = new List<DomeRing>();
@@ -673,12 +685,12 @@ public partial class MosaicViewModel : ObservableObject
             AltitudeRings = rings,
             AzimuthSpokes = spokes,
             CompassLabels = labels,
-            LegendMinText = raw.Count == 0 ? "n/a" : $"{min:F1} {StrengthUnitLabel}",
-            LegendMaxText = raw.Count == 0 ? "n/a" : $"{max:F1} {StrengthUnitLabel}",
+            LegendMinText = visible.Count == 0 ? "n/a" : $"{min:F1} {StrengthUnitLabel}",
+            LegendMaxText = visible.Count == 0 ? "n/a" : $"{max:F1} {StrengthUnitLabel}",
             LegendImage = HeatmapImageBuilder.BuildLegendStrip(200),
-            StatusText = raw.Count == 0
+            StatusText = visible.Count == 0
                 ? "None of this session's positions are above the horizon at the selected time."
-                : $"{raw.Count} of {_lastPositions.Count} position(s) above the horizon at {DomeTimeUtc:yyyy-MM-dd HH:mm} UTC."
+                : $"{visible.Count} of {totalPositions} position(s) above the horizon at {DomeTimeUtc:yyyy-MM-dd HH:mm} UTC."
         };
     }
 
@@ -802,38 +814,36 @@ public partial class MosaicViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Feeds MosaicSurfaceView from whichever of _lastStrengthGrid/_lastVelocityGrid
-    /// SurfaceMetric currently selects - split out so both the metric toggle and a fresh
-    /// BuildGrids can reach it without duplicating the grid-picking logic.
+    /// Feeds MosaicDomeSurfaceView (the "3D Surface" tab - a 3D extrusion of the same live-Az/El
+    /// dome the 2D Zenith Dome tab shows, replacing the old RA/Dec-globe-height-field approach):
+    /// every currently-visible position's live Az/El plus whichever metric SurfaceMetric selects.
+    /// Split out from BuildGrids so the metric toggle and a fresh mosaic can both reach it without
+    /// duplicating the position-gathering logic - see ComputeVisibleDomePositions. Unlike the old
+    /// GridBuilder-based height field, this needs no separate grid/mode/tick bookkeeping: the view
+    /// itself owns the fixed dome projection and reference geometry (rings/spokes/labels), so all
+    /// this method does is gather the data points and the legend range.
     /// </summary>
     private void RenderSurface()
     {
-        var grid = SurfaceMetric == MosaicSurfaceMetric.Velocity ? _lastVelocityGrid : _lastStrengthGrid;
-        if (grid is null)
-            return;
+        Func<MosaicPosition, double> selector = SurfaceMetric == MosaicSurfaceMetric.Velocity
+            ? p => p.PeakVelocityKmPerSec
+            : p => p.LineStrengthDb;
 
-        bool altAz = grid.Mode == CoordinateMode.AltAz;
-        var (min, max) = FindRange(grid.IntensityGrid);
+        var visible = ComputeVisibleDomePositions(selector);
+        SurfacePoints = visible.Select(v => new DomeSurfacePoint(v.Label, v.AzDeg, v.ElDeg, v.Value)).ToList();
+
         string unit = SurfaceMetric == MosaicSurfaceMetric.Velocity ? "km/s" : StrengthUnitLabel;
+        if (visible.Count == 0)
+        {
+            SurfaceLegendMinText = "n/a";
+            SurfaceLegendMaxText = "n/a";
+            return;
+        }
 
-        SurfaceIntensityGrid = grid.IntensityGrid;
-        SurfaceXValues = grid.AxisXCenters;
-        SurfaceYValues = grid.AxisYCenters;
-        SurfaceIsAltAz = altAz;
-        SurfaceLegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} {unit}";
-        SurfaceLegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} {unit}";
-
-        double cellSizeX = grid.AxisXCenters.Length > 1 ? grid.AxisXCenters[1] - grid.AxisXCenters[0] : 1;
-        double cellSizeY = grid.AxisYCenters.Length > 1 ? grid.AxisYCenters[1] - grid.AxisYCenters[0] : 1;
-        double minX = grid.AxisXCenters[0] - cellSizeX / 2;
-        double maxX = grid.AxisXCenters[^1] + cellSizeX / 2;
-        double minY = grid.AxisYCenters[0] - cellSizeY / 2;
-        double maxY = grid.AxisYCenters[^1] + cellSizeY / 2;
-
-        SurfaceXTicks = AxisTicks.ComputeNiceTicks(minX, maxX)
-            .Select(v => new AxisTick(FormatAxisValue(v, isXAxis: true, altAz), v)).ToList();
-        SurfaceYTicks = AxisTicks.ComputeNiceTicks(minY, maxY)
-            .Select(v => new AxisTick(FormatAxisValue(v, isXAxis: false, altAz), v)).ToList();
+        double min = visible.Min(v => v.Value);
+        double max = visible.Max(v => v.Value);
+        SurfaceLegendMinText = $"{min:F1} {unit}";
+        SurfaceLegendMaxText = $"{max:F1} {unit}";
     }
 
     private void BuildPositionsSummary(MosaicResult result)

@@ -16,6 +16,10 @@
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
@@ -27,9 +31,11 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="10"/>
+            <RowDefinition Height="5"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="10"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="5"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -40,11 +46,11 @@
         <!-- Folder / baseline row -->
         <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center"
                    Text="Session Folder" FontWeight="Bold"/>
-        <TextBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="5" MinWidth="300"
+        <TextBox Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="9" MinWidth="300"
                  VerticalAlignment="Center"
                  Text="{Binding CaptureFolder, Mode=OneWay}" IsReadOnly="True"
                  HorizontalAlignment="Left" Margin="0,0,5,0"/>
-        <Button Grid.Row="2" Grid.Column="8"
+        <Button Grid.Row="2" Grid.Column="12"
                 Content="Select Folder…" Command="{Binding SelectFolderCommand}"
                 Padding="10,4" Width="160"/>
 
@@ -53,16 +59,16 @@
         <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center"
                    Text="Baseline File" FontWeight="Bold"
                    Visibility="{Binding IsLabSurveySource, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
-        <TextBox Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="5" MinWidth="300"
+        <TextBox Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="9" MinWidth="300"
                  VerticalAlignment="Center"
                  Text="{Binding BaselineFile, Mode=OneWay}" IsReadOnly="True"
                  HorizontalAlignment="Left" Margin="0,0,5,0"
                  Visibility="{Binding IsLabSurveySource, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
-        <Button Grid.Row="4" Grid.Column="8"
+        <Button Grid.Row="4" Grid.Column="12"
                 Content="Select Baseline FIT" Command="{Binding SelectBaselineFileCommand}"
                 Visibility="{Binding ShowSelectBaselineButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Padding="10,4" Width="160"/>
-        <Button Grid.Row="4" Grid.Column="8"
+        <Button Grid.Row="4" Grid.Column="12"
                 Content="Clear Baseline FIT" Command="{Binding ClearBaselineFileCommand}"
                 Visibility="{Binding BaselineAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Padding="10,4" Width="160"/>
@@ -81,20 +87,16 @@
              remarks), so the workflow is: dial those in on Single Capture until a file looks
              right, then Generate Mosaic reprocesses every position in the session with those
              same settings, rather than keeping a second copy of each control in sync by hand. -->
-        <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="7" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
-            <TextBlock Text="Integrated Window (km/s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-            <TextBox Width="60" Text="{Binding IntegratedWindowKmPerSec}" VerticalAlignment="Center"/>
+        <TextBlock Grid.Row="8" Grid.Column="0" Text="Integrated Window (km/s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+        <TextBox Grid.Row="8" Grid.Column="2" Width="60" Text="{Binding IntegratedWindowKmPerSec}" VerticalAlignment="Center"/>
 
-            <TextBlock Text="Sky Cell Size (°)" FontWeight="Bold" VerticalAlignment="Center" Margin="15,0,5,0"
+        <TextBlock Grid.Row="8" Grid.Column="4" Text="Sky Cell Size (°)" FontWeight="Bold" VerticalAlignment="Center" Margin="15,0,5,0"
                        ToolTip="Should match the sweep's own step size, in degrees, so each pixel is one real sky cell"/>
-            <TextBox Width="60" Text="{Binding SkyCellSizeDeg}" VerticalAlignment="Center"/>
+        <TextBox Grid.Row="8" Grid.Column="6" Width="60" Text="{Binding SkyCellSizeDeg}" VerticalAlignment="Center"/>
 
-            <TextBlock Text="{Binding StatusSummary}" VerticalAlignment="Center" Margin="15,0,0,0" FontStyle="Italic"/>
+        <TextBlock Grid.Row="8" Grid.Column="8" Text="{Binding StatusSummary}" VerticalAlignment="Center" Margin="15,0,0,0" FontStyle="Italic"/>
 
-
-        </StackPanel>
-        
-        <Button Grid.Row="8" Grid.Column="8"  Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
+        <Button Grid.Row="8" Grid.Column="12"  Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
                     Visibility="{Binding IsGenerating, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
                     Padding="10,4"  Width="160"/>
 
@@ -102,7 +104,7 @@
                  itself is the progress indicator (a green scrolling ProgressBar behind the
                  "Cancel Mosaic" caption), same pattern as Visualise's Cancel button, and
                  clicking it cancels processing. -->
-        <Button Grid.Row="8" Grid.Column="8"
+        <Button Grid.Row="8" Grid.Column="12"
                 Command="{Binding CancelMosaicCommand}"
                     Visibility="{Binding IsGenerating, Converter={StaticResource BooleanToVisibilityConverter}}"
                     ToolTip="{Binding GenerationStatus, StringFormat='Cancel mosaic processing ({0})'}"
@@ -120,13 +122,27 @@
             <TextBlock Text="Cancel Mosaic" FontWeight="Bold"/>
         </Button>
 
+        <!-- Shared by both the Zenith Dome and 3D Dome tabs, which both depend on the same
+                 live Az/El snapshot (MosaicViewModel.DomeTimeUtc / ComputeVisibleDomePositions) -
+                 sits above the TabControl rather than inside either tab so switching between them
+                 doesn't lose sight of (or duplicate) the control. Defaults to "now"; editable so
+                 you can also see what the sky looked like at an arbitrary moment. -->
+        <TextBlock Grid.Row="10" Grid.Column="0" Text="Time (UTC)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+        <TextBox Grid.Row="10" Grid.Column="2" Grid.ColumnSpan="4" Width="150" VerticalAlignment="Center"
+                         Text="{Binding DomeTimeUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"/>
+        <Button Grid.Row="10" Grid.Column="6" Content="Now" Command="{Binding SetDomeTimeNowCommand}"
+                        Padding="10,2" Margin="8,0,0,0"/>
+        <TextBlock Grid.Row="10" Grid.Column="8" Grid.ColumnSpan="3" Text="(applies to the Zenith Dome and 3D Dome tabs)"
+                           FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center" Margin="10,0,0,0"/>
+
         <!-- Results -->
-        <Grid Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9">
+        <Grid Grid.Row="14" Grid.Column="0" Grid.ColumnSpan="13">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
+
 
             <TabControl Grid.Row="0" Grid.Column="0">
                 <TabItem Header="Sky Mosaic">
@@ -161,7 +177,9 @@
                                         Height="{Binding SkyHeatmap.PixelHeight}">
                                     <ItemsControl ItemsSource="{Binding SkyHeatmap.YTickLabels}">
                                         <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                            <ItemsPanelTemplate>
+                                                <Canvas/>
+                                            </ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                         <!-- Canvas.Left/Top/Right only take effect on a DIRECT
                                              child of a Canvas - the ItemsPanel Canvas's actual
@@ -192,7 +210,9 @@
                                                RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                                         <ItemsControl ItemsSource="{Binding SkyHeatmap.GridLines}" IsHitTestVisible="False">
                                             <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                                <ItemsPanelTemplate>
+                                                    <Canvas/>
+                                                </ItemsPanelTemplate>
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
@@ -208,7 +228,9 @@
                                 <Canvas Grid.Row="1" Grid.Column="1" Width="{Binding SkyHeatmap.PixelWidth}" Height="18">
                                     <ItemsControl ItemsSource="{Binding SkyHeatmap.XTickLabels}">
                                         <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                            <ItemsPanelTemplate>
+                                                <Canvas/>
+                                            </ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                         <!-- See the Dec/Elevation Canvas above for why this has
                                              to be an ItemContainerStyle, not Canvas.Left on the
@@ -253,18 +275,14 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
+                        <!-- Time (UTC) now lives above the TabControl (shared with the 3D Dome
+                             tab, which depends on the same live Az/El snapshot) - see the Results
+                             Grid above. Row 0 here is deliberately left empty rather than
+                             renumbering every other row below it. -->
                         <!-- A from-here-right-now Alt/Az view (RenderDome) - NOT the same data
                              as the Sky Mosaic tab's persistent RA/Dec canvas above, since an
-                             Az/El position is only valid at one instant. Defaults to "now";
-                             editable so you can also see what the sky looked like at an
-                             arbitrary moment. -->
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,8">
-                            <TextBlock Text="Time (UTC)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <TextBox Width="150" VerticalAlignment="Center"
-                                     Text="{Binding DomeTimeUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"/>
-                            <Button Content="Now" Command="{Binding SetDomeTimeNowCommand}"
-                                    Padding="10,2" Margin="8,0,0,0"/>
-                        </StackPanel>
+                             Az/El position is only valid at one instant. -->
+
 
                         <Canvas Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Top"
                                 Width="{Binding SkyDome.CanvasSize}" Height="{Binding SkyDome.CanvasSize}">
@@ -272,7 +290,9 @@
                             <!-- Concentric altitude rings, 15deg apart - the outermost (El=0) is the horizon. -->
                             <ItemsControl ItemsSource="{Binding SkyDome.AltitudeRings}" IsHitTestVisible="False">
                                 <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                    <ItemsPanelTemplate>
+                                        <Canvas/>
+                                    </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemContainerStyle>
                                     <Style TargetType="ContentPresenter">
@@ -291,7 +311,9 @@
                             <!-- Azimuth spokes, every 30deg, from the zenith out to the horizon. -->
                             <ItemsControl ItemsSource="{Binding SkyDome.AzimuthSpokes}" IsHitTestVisible="False">
                                 <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                    <ItemsPanelTemplate>
+                                        <Canvas/>
+                                    </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -306,7 +328,9 @@
                                  not a ground map. -->
                             <ItemsControl ItemsSource="{Binding SkyDome.CompassLabels}" IsHitTestVisible="False">
                                 <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                    <ItemsPanelTemplate>
+                                        <Canvas/>
+                                    </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemContainerStyle>
                                     <Style TargetType="ContentPresenter">
@@ -326,7 +350,9 @@
                                  LineStrengthDb the same ramp the 2D heatmap uses. -->
                             <ItemsControl ItemsSource="{Binding SkyDome.Markers}">
                                 <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                    <ItemsPanelTemplate>
+                                        <Canvas/>
+                                    </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemContainerStyle>
                                     <Style TargetType="ContentPresenter">
@@ -359,7 +385,7 @@
                         </StackPanel>
                     </Grid>
                 </TabItem>
-                <TabItem Header="3D Surface">
+                <TabItem Header="3D Dome">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*"/>
@@ -367,15 +393,9 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <views:MosaicSurfaceView Grid.Row="0"
-                                                  IntensityGrid="{Binding SurfaceIntensityGrid}"
-                                                  XValues="{Binding SurfaceXValues}"
-                                                  YValues="{Binding SurfaceYValues}"
-                                                  IsAltAz="{Binding SurfaceIsAltAz}"
-                                                  Smooth="{Binding UseSmoothBlend}"
-                                                  FlattenRelief="{Binding FlattenGlobeRelief}"
-                                                  XTicks="{Binding SurfaceXTicks}"
-                                                  YTicks="{Binding SurfaceYTicks}"/>
+                        <views:MosaicDomeSurfaceView Grid.Row="0"
+                                                  Points="{Binding SurfacePoints}"
+                                                  FitMesh="{Binding FitMeshThroughPoints}"/>
 
                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
                             <TextBlock Text="Height:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
@@ -383,13 +403,10 @@
                                          IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Strength}"/>
                             <RadioButton Content="Velocity (km/s)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
                                          IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Velocity}"/>
-                            <CheckBox Content="Smooth blend" IsChecked="{Binding UseSmoothBlend}"
+                            <CheckBox Content="Fit mesh through points" IsChecked="{Binding FitMeshThroughPoints}"
                                       VerticalAlignment="Center" Margin="25,0,0,0"
-                                      ToolTip="Bilinear-subdivide the grid before meshing, instead of one flat facet per measured cell - shares the Sky Mosaic tab's own smoothing toggle"/>
-                            <CheckBox Content="Flat (colour only)" IsChecked="{Binding FlattenGlobeRelief}"
-                                      VerticalAlignment="Center" Margin="15,0,0,0"
-                                      ToolTip="Render the globe as a plain sphere with no radial bump/dent - colour alone carries the data, matching how the real sky looks (no relief) from near its center. Untick to see the literal terrain-style height visualization instead."/>
-                            <TextBlock Text="(walk with the arrow keys, look around by dragging; axis labels read best from the ViewCube's &quot;Top&quot; view)"
+                                      ToolTip="Replace the individual stems/dots with a translucent surface triangulated through each point's own extruded center"/>
+                            <TextBlock Text="(drag to orbit, scroll to zoom; axis labels read best from the ViewCube's &quot;Top&quot; view)"
                                        FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center" Margin="20,0,0,0"/>
                         </StackPanel>
 
@@ -401,14 +418,18 @@
                     </Grid>
                 </TabItem>
             </TabControl>
-
-            <DataGrid Grid.Row="0" Grid.Column="2" ItemsSource="{Binding Positions}" AutoGenerateColumns="False"
+            
+            <GridSplitter Grid.Row="0" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+            
+            <DataGrid Grid.Row="0" Grid.Column="2" ItemsSource="{Binding Positions}" 
+                      AutoGenerateColumns="False" 
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                       IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="*"/>
-                    <DataGridTextColumn Header="Coordinates" Binding="{Binding Coordinates}" Width="2*"/>
-                    <DataGridTextColumn Header="Line Strength" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="*"/>
-                    <DataGridTextColumn Header="Velocity (km/s)" Binding="{Binding PeakVelocityKmPerSec, StringFormat=F1}" Width="*"/>
+                    <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="Auto"/>
+                    <DataGridTextColumn Header="Coordinates" Binding="{Binding Coordinates}" Width="Auto"/>
+                    <DataGridTextColumn Header="Line Strength" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="Auto"/>
+                    <DataGridTextColumn Header="Velocity (km/s)" Binding="{Binding PeakVelocityKmPerSec, StringFormat=F1}" Width="Auto"/>
                     <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="Auto"/>
                 </DataGrid.Columns>
             </DataGrid>

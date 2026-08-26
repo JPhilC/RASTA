@@ -1,0 +1,46 @@
+<UserControl x:Class="RASTA.App.Views.MosaicDomeSurfaceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:h="http://helix-toolkit.org/wpf"
+             mc:Ignorable="d">
+    <Grid>
+        <!-- CameraMode="Inspect": unlike the old spherical globe (a sky viewed from within,
+             where orbiting from outside looked backwards - see git history), this dome+stems
+             scene is a flat terrain/bar-chart shape meant to be viewed from outside/above, which
+             is exactly what Inspect's orbit-around-the-outside behaviour is for. ZoomExtents
+             (called at the end of Rebuild - see MosaicDomeSurfaceView.xaml.cs) frames the whole
+             scene automatically as data changes, since there IS a well-defined "whole object"
+             here, unlike the globe's dead-center vantage point. -->
+        <h:HelixViewport3D x:Name="Viewport"
+                           ShowCoordinateSystem="True"
+                           ShowViewCube="True"
+                           CameraMode="Inspect"
+                           ZoomExtentsWhenLoaded="False">
+            <h:HelixViewport3D.Camera>
+                <!-- UpDirection="0,0,1": the reference grid sits in the X-Y plane (Z=0) and every
+                     stem/dot/mesh extrudes along +/-Z - see MosaicDomeSurfaceView.xaml.cs's DomeXY/
+                     Rebuild - so Z, not the WPF-conventional Y, is "up" for this scene. Position/
+                     LookDirection are an arbitrary 3/4-overhead starting angle - ZoomExtents
+                     (called after every Rebuild) immediately refits this to whatever data actually
+                     loaded, so the exact starting numbers only matter before the first real render. -->
+                <PerspectiveCamera Position="45,45,55" LookDirection="-45,-45,-55" UpDirection="0,0,1"
+                                    FieldOfView="55" NearPlaneDistance="0.01"/>
+            </h:HelixViewport3D.Camera>
+            <ModelVisual3D>
+                <ModelVisual3D.Content>
+                    <AmbientLight Color="#999999"/>
+                </ModelVisual3D.Content>
+            </ModelVisual3D>
+            <ModelVisual3D>
+                <ModelVisual3D.Content>
+                    <DirectionalLight Color="#AAAAAA" Direction="-1,-1,-1"/>
+                </ModelVisual3D.Content>
+            </ModelVisual3D>
+            <ModelVisual3D x:Name="PointsVisual"/>
+            <ModelVisual3D x:Name="MeshVisual"/>
+            <ModelVisual3D x:Name="AxisVisual"/>
+        </h:HelixViewport3D>
+    </Grid>
+</UserControl>
