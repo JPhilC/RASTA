@@ -153,9 +153,7 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                      HorizontalAlignment="Center" VerticalAlignment="Top"
-                                      MaxWidth="1000" MaxHeight="560">
+                        <Viewbox Grid.Row="0" Stretch="Uniform">
                             <!-- Axis-label column/row sized in Auto so they hug the plot's own
                                  PixelWidth/PixelHeight - the plot cell (Row 0/Col 1) fixes both
                                  via explicit Width/Height, and the label strips (Row 1/Col 0)
@@ -248,7 +246,7 @@
                                     </ItemsControl>
                                 </Canvas>
                             </Grid>
-                        </ScrollViewer>
+                        </Viewbox>
 
                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
                             <TextBlock Text="{Binding SkyHeatmap.YAxisLabel}" Margin="0,0,15,0"/>
@@ -284,95 +282,96 @@
                              Az/El position is only valid at one instant. -->
 
 
-                        <Canvas Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Top"
-                                Width="{Binding SkyDome.CanvasSize}" Height="{Binding SkyDome.CanvasSize}">
+                        <Viewbox Grid.Row="1" Stretch="Uniform">
+                            <Canvas Width="{Binding SkyDome.CanvasSize}" Height="{Binding SkyDome.CanvasSize}">
 
-                            <!-- Concentric altitude rings, 15deg apart - the outermost (El=0) is the horizon. -->
-                            <ItemsControl ItemsSource="{Binding SkyDome.AltitudeRings}" IsHitTestVisible="False">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <Canvas/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemContainerStyle>
-                                    <Style TargetType="ContentPresenter">
-                                        <Setter Property="Canvas.Left" Value="{Binding Left}"/>
-                                        <Setter Property="Canvas.Top" Value="{Binding Top}"/>
-                                    </Style>
-                                </ItemsControl.ItemContainerStyle>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Ellipse Width="{Binding Diameter}" Height="{Binding Diameter}"
-                                                 Stroke="#40808080" StrokeThickness="1"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                <!-- Concentric altitude rings, 15deg apart - the outermost (El=0) is the horizon. -->
+                                <ItemsControl ItemsSource="{Binding SkyDome.AltitudeRings}" IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding Left}"/>
+                                            <Setter Property="Canvas.Top" Value="{Binding Top}"/>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Ellipse Width="{Binding Diameter}" Height="{Binding Diameter}"
+                                                     Stroke="#40808080" StrokeThickness="1"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
 
-                            <!-- Azimuth spokes, every 30deg, from the zenith out to the horizon. -->
-                            <ItemsControl ItemsSource="{Binding SkyDome.AzimuthSpokes}" IsHitTestVisible="False">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <Canvas/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
-                                              Stroke="#30808080" StrokeThickness="1"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                <!-- Azimuth spokes, every 30deg, from the zenith out to the horizon. -->
+                                <ItemsControl ItemsSource="{Binding SkyDome.AzimuthSpokes}" IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                                  Stroke="#30808080" StrokeThickness="1"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
 
-                            <!-- Compass rose labels (N/NE/E/SE/S/SW/W/NW) - E left, W right, matching
-                                 how the sky's own dome looks from underneath (see RenderDome's remarks),
-                                 not a ground map. -->
-                            <ItemsControl ItemsSource="{Binding SkyDome.CompassLabels}" IsHitTestVisible="False">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <Canvas/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemContainerStyle>
-                                    <Style TargetType="ContentPresenter">
-                                        <Setter Property="Canvas.Left" Value="{Binding X}"/>
-                                        <Setter Property="Canvas.Top" Value="{Binding Y}"/>
-                                    </Style>
-                                </ItemsControl.ItemContainerStyle>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding Text}" FontSize="11" FontWeight="Bold"
-                                                   Margin="-10,-8,0,0"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                <!-- Compass rose labels (N/NE/E/SE/S/SW/W/NW) - E left, W right, matching
+                                     how the sky's own dome looks from underneath (see RenderDome's remarks),
+                                     not a ground map. -->
+                                <ItemsControl ItemsSource="{Binding SkyDome.CompassLabels}" IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Text}" FontSize="11" FontWeight="Bold"
+                                                       Margin="-10,-8,0,0"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
 
-                            <!-- One marker per position currently above the horizon, coloured by
-                                 LineStrengthDb the same ramp the 2D heatmap uses. -->
-                            <ItemsControl ItemsSource="{Binding SkyDome.Markers}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <Canvas/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemContainerStyle>
-                                    <Style TargetType="ContentPresenter">
-                                        <Setter Property="Canvas.Left" Value="{Binding X}"/>
-                                        <Setter Property="Canvas.Top" Value="{Binding Y}"/>
-                                    </Style>
-                                </ItemsControl.ItemContainerStyle>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Ellipse Width="9" Height="9" Margin="-4.5,-4.5,0,0"
-                                                 Stroke="Black" StrokeThickness="0.5"
-                                                 ToolTip="{Binding Tooltip}">
-                                            <Ellipse.Fill>
-                                                <SolidColorBrush Color="{Binding Color}"/>
-                                            </Ellipse.Fill>
-                                        </Ellipse>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </Canvas>
+                                <!-- One marker per position currently above the horizon, coloured by
+                                     LineStrengthDb the same ramp the 2D heatmap uses. -->
+                                <ItemsControl ItemsSource="{Binding SkyDome.Markers}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Ellipse Width="9" Height="9" Margin="-4.5,-4.5,0,0"
+                                                     Stroke="Black" StrokeThickness="0.5"
+                                                     ToolTip="{Binding Tooltip}">
+                                                <Ellipse.Fill>
+                                                    <SolidColorBrush Color="{Binding Color}"/>
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Canvas>
+                        </Viewbox>
 
                         <TextBlock Grid.Row="2" Text="{Binding SkyDome.StatusText}"
                                    HorizontalAlignment="Center" FontStyle="Italic" Margin="0,4,0,0"/>
