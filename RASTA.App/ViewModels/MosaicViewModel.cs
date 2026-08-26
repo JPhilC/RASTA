@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Helpers;
+using RASTA.Core.Astro;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Dsp;
@@ -9,6 +10,7 @@ using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Mosaic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace RASTA.App.ViewModels;
@@ -56,6 +58,40 @@ public class MosaicHeatmapDisplay
 }
 
 /// <summary>
+/// One captured position rendered onto the zenith-dome view (see MosaicViewModel.RenderDome) -
+/// its live Az/El at whatever DomeTimeUtc currently is, projected to a pixel and colour. Points
+/// below the horizon at that moment are never created in the first place (see RenderDome), so
+/// every DomeMarker that exists is actually visible in the sky right now.
+/// </summary>
+public record DomeMarker(string Label, double X, double Y, double Value, double ElevationDeg, double AzimuthDeg, Color Color, string Tooltip);
+
+/// <summary>One concentric altitude ring on the dome, precomputed to a Canvas-friendly bounding box.</summary>
+public record DomeRing(double Left, double Top, double Diameter);
+
+/// <summary>One compass-rose label (N/NE/E/... ) on the dome, at its own pixel position.</summary>
+public record DomeLabel(string Text, double X, double Y);
+
+/// <summary>
+/// Rendered state for the "Zenith Dome" tab - a from-here-right-now view, distinct from the
+/// "Sky Mosaic" tab's persistent full-sky RA/Dec canvas (see MosaicViewModel.RenderDome for why
+/// the two can't be the same view). Always a square canvas; markers/rings/spokes/labels are all
+/// already in that same fixed pixel space, same convention MosaicHeatmapDisplay uses for the 2D
+/// heatmap's own overlay.
+/// </summary>
+public class MosaicDomeDisplay
+{
+    public double CanvasSize { get; init; }
+    public IReadOnlyList<DomeMarker> Markers { get; init; } = Array.Empty<DomeMarker>();
+    public IReadOnlyList<DomeRing> AltitudeRings { get; init; } = Array.Empty<DomeRing>();
+    public IReadOnlyList<AxisGridLine> AzimuthSpokes { get; init; } = Array.Empty<AxisGridLine>();
+    public IReadOnlyList<DomeLabel> CompassLabels { get; init; } = Array.Empty<DomeLabel>();
+    public string LegendMinText { get; init; } = string.Empty;
+    public string LegendMaxText { get; init; } = string.Empty;
+    public BitmapSource? LegendImage { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>
 /// Backs the "Mosaic" tab in Visualise: points at a session folder (one baseline + many
 /// dwell-point capture groups across positions), runs every position through the same
 /// HiStreamingPipeline VisualiseViewModel.ProcessHiCore uses for a single file (via
@@ -90,14 +126,49 @@ public class MosaicHeatmapDisplay
 public partial class MosaicViewModel : ObservableObject
 {
     private readonly MosaicProcessor _mosaicProcessor;
+    private readonly LabSurveyMosaicProcessor _labSurveyMosaicProcessor;
     private readonly GridBuilder _gridBuilder;
     private readonly StatusBarViewModel _statusBar;
+    private readonly TelescopeState _telescopeState;
+
+    // The raw per-position list behind whichever grids are currently displayed - kept
+    // separately from _lastStrengthGrid/_lastVelocityGrid because RenderDome needs each
+    // position's own RA/Dec (or Az/El) to re-project it live, not a pre-binned RA/Dec cell.
+    private IReadOnlyList<MosaicPosition>? _lastPositions;
 
     [ObservableProperty]
     private string? captureFolder;
 
     [ObservableProperty]
     private string? baselineFile;
+
+    // Set by SelectFolder (a cheap extension/signature sniff - see MosaicFolderFormatDetector),
+    // not by GenerateMosaicAsync itself - picking the folder just says what's in it; clicking
+    // Generate Mosaic is still the thing that actually kicks off processing, same as before.
+    // GenerateMosaicAsync branches on this to decide which processor to run (MosaicProcessor for
+    // RastaFits, LabSurveyMosaicProcessor for LabSurveyText), so the exact same GridBuilder/
+    // HeatmapImageBuilder/MosaicSurfaceView code downstream gets exercised either way.
+    [ObservableProperty]
+    private MosaicFolderFormat detectedFormat = MosaicFolderFormat.Empty;
+
+    [ObservableProperty]
+    private string detectedFormatDescription = string.Empty;
+
+    /// <summary>
+    /// True once a LAB Survey session is selected - hides the (not applicable) Baseline File
+    /// row in MosaicView.xaml and switches the strength legend/unit text over to Kelvin (see
+    /// StrengthUnitLabel) instead of dB.
+    /// </summary>
+    public bool IsLabSurveySource => DetectedFormat == MosaicFolderFormat.LabSurveyText;
+
+    /// <summary>
+    /// LineStrengthDb is a reused field for a LAB-sourced session - it holds a peak brightness
+    /// temperature in Kelvin, not a true dB-relative-to-baseline figure (there's no baseline
+    /// division for already-calibrated survey data - see LabSurveyMosaicProcessor's remarks).
+    /// RenderSkyHeatmap/RenderSurface use this for the legend text so that distinction is
+    /// visible rather than silently mislabelling Kelvin readings as dB.
+    /// </summary>
+    public string StrengthUnitLabel => IsLabSurveySource ? "K" : "dB";
 
     // Mirrored from VisualiseViewModel.TargetFftSize/SmoothingKind/SmoothingWindow/
     // DespikeEnabled/DespikeThresholdSigma (see their On...Changed partials) - deliberately
@@ -170,6 +241,13 @@ public partial class MosaicViewModel : ObservableObject
 
     public bool BaselineAvailable => BaselineFile is not null;
 
+    /// <summary>
+    /// The "Select Baseline FIT" button only makes sense for a RASTA FITS session - hidden for
+    /// a LAB Survey (or empty/unrecognised) folder, same as the rest of the Baseline File row
+    /// (see IsLabSurveySource), on top of its existing BaselineAvailable condition.
+    /// </summary>
+    public bool ShowSelectBaselineButton => !IsLabSurveySource && !BaselineAvailable;
+
     [ObservableProperty]
     private MosaicHeatmapDisplay skyHeatmap = new();
 
@@ -205,6 +283,24 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private IReadOnlyList<AxisTick> surfaceYTicks = Array.Empty<AxisTick>();
 
+    // ---------------------------------------------------------
+    // Zenith Dome tab - a from-here-right-now Alt/Az view (see RenderDome), distinct from the
+    // Sky Mosaic tab's persistent full-sky RA/Dec canvas above. DomeTimeUtc defaults to "now"
+    // at construction and drives every position's live Az/El - editable so you can also see
+    // what the sky looked like at an arbitrary moment, not just this instant.
+    // ---------------------------------------------------------
+
+    [ObservableProperty]
+    private DateTime domeTimeUtc = DateTime.UtcNow;
+
+    [ObservableProperty]
+    private MosaicDomeDisplay skyDome = new();
+
+    partial void OnDomeTimeUtcChanged(DateTime value) => RenderDome();
+
+    [RelayCommand]
+    private void SetDomeTimeNow() => DomeTimeUtc = DateTime.UtcNow;
+
     public ObservableCollection<MosaicPositionSummary> Positions { get; } = new();
 
     // Own progress/busy/status state for GenerateMosaicAsync, deliberately separate from
@@ -232,11 +328,18 @@ public partial class MosaicViewModel : ObservableObject
     // its own (checked once per position), so no change was needed there.
     private CancellationTokenSource? _generateCts;
 
-    public MosaicViewModel(MosaicProcessor mosaicProcessor, GridBuilder gridBuilder, StatusBarViewModel statusBar)
+    public MosaicViewModel(
+        MosaicProcessor mosaicProcessor,
+        LabSurveyMosaicProcessor labSurveyMosaicProcessor,
+        GridBuilder gridBuilder,
+        StatusBarViewModel statusBar,
+        TelescopeState telescopeState)
     {
         _mosaicProcessor = mosaicProcessor;
+        _labSurveyMosaicProcessor = labSurveyMosaicProcessor;
         _gridBuilder = gridBuilder;
         _statusBar = statusBar;
+        _telescopeState = telescopeState;
     }
 
     // ---------------------------------------------------------
@@ -271,7 +374,31 @@ public partial class MosaicViewModel : ObservableObject
             return;
 
         CaptureFolder = dlg.FolderName;
-        AutoDetectBaseline();
+
+        // A cheap sniff only - deciding what to actually do with the folder's contents still
+        // happens when Generate Mosaic is clicked (GenerateMosaicAsync), not here.
+        DetectedFormat = MosaicFolderFormatDetector.Detect(CaptureFolder);
+        UpdateDetectedFormatDescription();
+
+        if (DetectedFormat == MosaicFolderFormat.RastaFits)
+            AutoDetectBaseline();
+        else
+            BaselineFile = null; // not applicable/meaningless for a non-FITS or empty folder
+    }
+
+    private void UpdateDetectedFormatDescription()
+    {
+        DetectedFormatDescription = DetectedFormat switch
+        {
+            MosaicFolderFormat.RastaFits => "Detected: RASTA FITS captures.",
+            MosaicFolderFormat.LabSurveyText =>
+                "Detected: LAB Survey profile files (test data - no baseline needed; strength shown in Kelvin, not dB).",
+            MosaicFolderFormat.Empty => "No .fits or LAB Survey .txt files found in this folder.",
+            _ => "Folder contents not recognised as either RASTA FITS captures or LAB Survey profile files."
+        };
+        OnPropertyChanged(nameof(IsLabSurveySource));
+        OnPropertyChanged(nameof(StrengthUnitLabel));
+        OnPropertyChanged(nameof(ShowSelectBaselineButton));
     }
 
     /// <summary>
@@ -316,7 +443,11 @@ public partial class MosaicViewModel : ObservableObject
         BaselineFile = null;
     }
 
-    partial void OnBaselineFileChanged(string? value) => OnPropertyChanged(nameof(BaselineAvailable));
+    partial void OnBaselineFileChanged(string? value)
+    {
+        OnPropertyChanged(nameof(BaselineAvailable));
+        OnPropertyChanged(nameof(ShowSelectBaselineButton));
+    }
 
     partial void OnUseSmoothBlendChanged(bool value)
     {
@@ -334,7 +465,11 @@ public partial class MosaicViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanGenerateMosaic))]
     private async Task GenerateMosaicAsync()
     {
-        if (CaptureFolder is null || BaselineFile is null)
+        if (CaptureFolder is null)
+            return;
+        if (DetectedFormat == MosaicFolderFormat.RastaFits && BaselineFile is null)
+            return;
+        if (DetectedFormat is not (MosaicFolderFormat.RastaFits or MosaicFolderFormat.LabSurveyText))
             return;
 
         _generateCts = new CancellationTokenSource();
@@ -343,21 +478,36 @@ public partial class MosaicViewModel : ObservableObject
         BeginProgress("Processing mosaic…");
         try
         {
-            var result = await _mosaicProcessor.ProcessFolderAsync(
-                CaptureFolder,
-                BaselineFile,
-                TargetFftSize,
-                IntegratedWindowKmPerSec,
-                (status, fraction) =>
-                {
-                    GenerationStatus = status;
-                    ReportProgress(fraction);
-                },
-                despike: DespikeEnabled,
-                despikeThresholdSigma: DespikeThresholdSigma,
-                smoothing: SmoothingKind,
-                smoothingWindow: SmoothingWindow,
-                ct: _generateCts.Token);
+            void OnProgress(string status, double fraction)
+            {
+                GenerationStatus = status;
+                ReportProgress(fraction);
+            }
+
+            // Same MosaicResult/MosaicPosition shape either way - everything downstream
+            // (BuildGrids/BuildPositionsSummary and the GridBuilder/HeatmapImageBuilder/
+            // MosaicSurfaceView code they feed) is identical regardless of which processor
+            // actually produced it. That's the point: a LAB Survey session exercises the same
+            // Sky Mosaic/3D Surface pipeline a real RASTA capture session would.
+            var result = DetectedFormat == MosaicFolderFormat.LabSurveyText
+                ? await _labSurveyMosaicProcessor.ProcessFolderAsync(
+                    CaptureFolder,
+                    IntegratedWindowKmPerSec,
+                    OnProgress,
+                    smoothing: SmoothingKind,
+                    smoothingWindow: SmoothingWindow,
+                    ct: _generateCts.Token)
+                : await _mosaicProcessor.ProcessFolderAsync(
+                    CaptureFolder,
+                    BaselineFile!,
+                    TargetFftSize,
+                    IntegratedWindowKmPerSec,
+                    OnProgress,
+                    despike: DespikeEnabled,
+                    despikeThresholdSigma: DespikeThresholdSigma,
+                    smoothing: SmoothingKind,
+                    smoothingWindow: SmoothingWindow,
+                    ct: _generateCts.Token);
 
             BuildGrids(result);
             BuildPositionsSummary(result);
@@ -400,8 +550,136 @@ public partial class MosaicViewModel : ObservableObject
     {
         _lastStrengthGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.LineStrengthDb);
         _lastVelocityGrid = _gridBuilder.BuildGrid(result.Positions, SkyCellSizeDeg, p => p.PeakVelocityKmPerSec);
+        _lastPositions = result.Positions;
         RenderSkyHeatmap(_lastStrengthGrid);
         RenderSurface();
+        RenderDome();
+    }
+
+    /// <summary>
+    /// Renders the "Zenith Dome" tab: every position's live Az/El at DomeTimeUtc, from the
+    /// site recorded on TelescopeState (the same site the app already tracks for the connected
+    /// mount - see SettingsViewModel), projected onto a zenith-centered dome and coloured the
+    /// same LineStrengthDb/StrengthUnitLabel ramp the 2D heatmap uses (HeatmapImageBuilder.Ramp).
+    ///
+    /// Deliberately NOT built from _lastStrengthGrid/GridBuilder - unlike the Sky Mosaic tab's
+    /// persistent "coverage so far" RA/Dec canvas, an Az/El dome is only valid at one instant
+    /// (the same RA/Dec sits at a different Az/El an hour later), so there's no meaningful sense
+    /// in which it could accumulate across sessions - each position is re-projected fresh from
+    /// its own stored RA/Dec (or, for an AltAz-mode session, its already-fixed Az/El) every time
+    /// this runs, whether that's after a fresh Generate Mosaic or just DomeTimeUtc changing.
+    ///
+    /// Compass orientation matches how a naked-eye sky chart (e.g. Cartes du Ciel's Alt/Az
+    /// view) is drawn, not a ground map: N up, S down, E LEFT, W RIGHT - looking up at the
+    /// inside of the sky's dome mirrors east/west relative to looking down at a map. Derived by
+    /// projecting azimuth clockwise-negated (screenTheta = -azimuth) so Az=90 (E) lands left of
+    /// centre and Az=270 (W) lands right - see the pixel formula below.
+    ///
+    /// Only positions currently above the horizon (ElevationDeg >= 0) are plotted at all - a
+    /// position below the horizon right now genuinely isn't part of "the sky as it looks from
+    /// here right now", the dome's whole premise, rather than something to grey out.
+    /// </summary>
+    private void RenderDome()
+    {
+        if (_lastPositions is null || _lastPositions.Count == 0)
+        {
+            SkyDome = new MosaicDomeDisplay { StatusText = "No mosaic processed yet." };
+            return;
+        }
+
+        const double canvasSize = 640;
+        const double margin = 50; // room for compass labels outside the dome circle
+        double cx = canvasSize / 2.0;
+        double cy = canvasSize / 2.0;
+        double domeRadius = canvasSize / 2.0 - margin;
+
+        double siteLatDeg = _telescopeState.SiteLatitudeDeg;
+        double siteLonDeg = _telescopeState.SiteLongitudeDeg;
+
+        (double x, double y) Project(double azDeg, double elDeg)
+        {
+            double r = Math.Clamp((90.0 - elDeg) / 90.0, 0.0, 1.0) * domeRadius;
+            double azRad = azDeg * Math.PI / 180.0;
+            return (cx - r * Math.Sin(azRad), cy - r * Math.Cos(azRad));
+        }
+
+        var raw = new List<(string label, double x, double y, double value, double elDeg, double azDeg)>();
+        foreach (var p in _lastPositions)
+        {
+            if (double.IsNaN(p.LineStrengthDb))
+                continue;
+
+            double azDeg, elDeg;
+            if (p.Mode == CoordinateMode.Equatorial && p.RaHours.HasValue && p.DecDeg.HasValue)
+            {
+                (azDeg, elDeg) = AstronomyUtils.EquatorialToHorizontal(p.RaHours.Value, p.DecDeg.Value, DomeTimeUtc, siteLatDeg, siteLonDeg);
+            }
+            else if (p.Mode == CoordinateMode.AltAz && p.AzDeg.HasValue && p.AltDeg.HasValue)
+            {
+                azDeg = p.AzDeg.Value;
+                elDeg = p.AltDeg.Value;
+            }
+            else
+            {
+                continue;
+            }
+
+            if (elDeg < 0)
+                continue; // below the horizon right now - not part of "the sky, from here, now"
+
+            var (x, y) = Project(azDeg, elDeg);
+            raw.Add((p.Label, x, y, p.LineStrengthDb, elDeg, azDeg));
+        }
+
+        double min = raw.Count > 0 ? raw.Min(m => m.value) : 0;
+        double max = raw.Count > 0 ? raw.Max(m => m.value) : 1;
+        double range = Math.Max(max - min, 1e-9);
+
+        var markers = raw.Select(m =>
+        {
+            var (r, g, b) = HeatmapImageBuilder.Ramp((m.value - min) / range);
+            string tooltip = $"{m.label}\nAz {m.azDeg:F1}°  El {m.elDeg:F1}°\n{m.value:F1} {StrengthUnitLabel}";
+            return new DomeMarker(m.label, m.x, m.y, m.value, m.elDeg, m.azDeg, Color.FromRgb(r, g, b), tooltip);
+        }).ToList();
+
+        var rings = new List<DomeRing>();
+        for (double el = 0; el < 90; el += 15)
+        {
+            double r = (90.0 - el) / 90.0 * domeRadius;
+            rings.Add(new DomeRing(cx - r, cy - r, r * 2));
+        }
+
+        var spokes = new List<AxisGridLine>();
+        var labels = new List<DomeLabel>();
+        string[] compassPoints = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+        for (int i = 0; i < 12; i++)
+        {
+            double az = i * 30.0;
+            var (ex, ey) = Project(az, 0.0);
+            spokes.Add(new AxisGridLine(cx, cy, ex, ey));
+        }
+        for (int i = 0; i < compassPoints.Length; i++)
+        {
+            double az = i * 45.0;
+            double azRad = az * Math.PI / 180.0;
+            double labelR = domeRadius + 20;
+            labels.Add(new DomeLabel(compassPoints[i], cx - labelR * Math.Sin(azRad), cy - labelR * Math.Cos(azRad)));
+        }
+
+        SkyDome = new MosaicDomeDisplay
+        {
+            CanvasSize = canvasSize,
+            Markers = markers,
+            AltitudeRings = rings,
+            AzimuthSpokes = spokes,
+            CompassLabels = labels,
+            LegendMinText = raw.Count == 0 ? "n/a" : $"{min:F1} {StrengthUnitLabel}",
+            LegendMaxText = raw.Count == 0 ? "n/a" : $"{max:F1} {StrengthUnitLabel}",
+            LegendImage = HeatmapImageBuilder.BuildLegendStrip(200),
+            StatusText = raw.Count == 0
+                ? "None of this session's positions are above the horizon at the selected time."
+                : $"{raw.Count} of {_lastPositions.Count} position(s) above the horizon at {DomeTimeUtc:yyyy-MM-dd HH:mm} UTC."
+        };
     }
 
     /// <summary>
@@ -440,8 +718,8 @@ public partial class MosaicViewModel : ObservableObject
             PixelHeight = pixelHeight,
             XAxisLabel = altAz ? "Azimuth" : "RA",
             YAxisLabel = altAz ? "Elevation" : "Dec",
-            LegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} dB",
-            LegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} dB",
+            LegendMinText = double.IsNaN(min) ? "n/a" : $"{min:F1} {StrengthUnitLabel}",
+            LegendMaxText = double.IsNaN(max) ? "n/a" : $"{max:F1} {StrengthUnitLabel}",
             LegendImage = HeatmapImageBuilder.BuildLegendStrip(200),
             GridLines = gridLines,
             XTickLabels = xLabels,
@@ -536,7 +814,7 @@ public partial class MosaicViewModel : ObservableObject
 
         bool altAz = grid.Mode == CoordinateMode.AltAz;
         var (min, max) = FindRange(grid.IntensityGrid);
-        string unit = SurfaceMetric == MosaicSurfaceMetric.Velocity ? "km/s" : "dB";
+        string unit = SurfaceMetric == MosaicSurfaceMetric.Velocity ? "km/s" : StrengthUnitLabel;
 
         SurfaceIntensityGrid = grid.IntensityGrid;
         SurfaceXValues = grid.AxisXCenters;
