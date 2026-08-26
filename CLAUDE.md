@@ -553,14 +553,15 @@ and should be skipped, not treated as 0. This grid is still a plain uniform-coor
 × Dec-degrees, or Az × El) — *not* cos(Dec)-corrected — deliberately kept that way so it stays a simple
 persistent 2D array sessions can accumulate onto over time (see "sinusoidal projection" below for where
 the cos-correction actually happens instead: display, not storage). `MosaicViewModel.BuildGrids` bins
-both metrics into `_lastStrengthGrid`/`_lastVelocityGrid` every time a session is processed, and
-`MosaicSurfaceMetric` (`Strength`/`Velocity`, radio-button toggle in `MosaicView.xaml`) picks which one
-`RenderSurface` feeds the 3D tab, independently of the 2D heatmap — which always shows `LineStrengthDb`,
-since a position-velocity map only means "toward/away from LSR" and doesn't read as a brightness scale
-the way dB does. `UseSmoothBlend` drives both the 2D heatmap's rendering mode (`HeatmapImageBuilder.
-Build` vs `BuildBlended`) and the 3D surface's own bilinear grid subdivision (`MosaicSurfaceView.
-Smooth`) — one control smooths both representations together, re-rendering the already-cached grid
-instantly rather than reprocessing the session.
+`LineStrengthDb` into `_lastStrengthGrid` every time a session is processed, feeding the 2D heatmap;
+`MosaicSurfaceMetric` (`Strength`/`Velocity`, radio-button toggle in `MosaicView.xaml`) instead picks
+which of `MosaicPosition`'s two metrics `RenderSurface` feeds the 3D Dome tab directly (no grid involved
+- see "3D Dome" below), independently of the 2D heatmap, which always shows `LineStrengthDb` since a
+position-velocity map only means "toward/away from LSR" and doesn't read as a brightness scale the way
+dB does. `UseSmoothBlend` drives only the 2D heatmap's rendering mode now (`HeatmapImageBuilder.Build`
+vs `BuildBlended`) - the 3D Dome has its own separate `FitMeshThroughPoints` toggle instead (see below),
+since a scattered live-Az/El point set has no uniform grid to bilinearly subdivide the way the old
+globe's height-field mesh did.
 
 This supersedes the old `RASTA.Processing/VisualisationData/HeatmapBuilder.cs`/`SpectrumImageBuilder.cs`
 placeholders (removed entirely), which consumed the old `ObservationRecord.AveragedSpectrum.Max()` shape
@@ -588,80 +589,69 @@ full image. Tick *label* positions are unaffected — the label strips sit in th
 outside the plot area (an axis caption, not a point on the curve), so they keep the original linear
 pixel mapping.
 
-#### 3D surface: a genuine globe, not a flat height-field
+#### 3D Dome: extruded stems on a flat dome, not a spherical globe
 
-`MosaicSurfaceView`'s mesh vertices sit on an actual sphere — RA/Az mapped to longitude, Dec/El to
-latitude, `LineStrengthDb`/`PeakVelocityKmPerSec` as a radial bump/dent from a base shell — rather
-than a flat rectangular RA-vs-Dec height-field. The grid is always a full-sky RA/Dec-or-Az/El array
-(see `GridBuilder.BuildGrid` above) and a flat plot of it carries the same equirectangular distortion
-the 2D heatmap's sinusoidal projection exists to fix — a real globe has none, by construction.
-`Direction(xVal, yVal, isAltAz)` converts axis values to a unit vector (RA×15 → degrees first; Dec/El
-already degrees; Dec/Elevation mapped to WPF's Y so the celestial pole/zenith is "up" for either
-convention), and `SpherePoint` scales that by a radius: `SphereRadius + NormHeight(v)` for a real cell,
-`SphereRadius` exactly for a NaN cell (matching the old height-field's "positions without data default
-to zero" behaviour) or for every cell when `FlattenRelief` is on (see below). The RA/Azimuth
-wraparound seam (`xValues[width-1]` back to `xValues[0]`) is explicitly stitched closed with one more
-ring of quads — without it the sphere would show a full pole-to-pole (or horizon-to-zenith) crack down
-the 24h/0h or 360°/0° line, visible even where every cell is `NaN`. The poles themselves (Dec=±90°, or
-AltAz's zenith El=90°) are *not* capped — `GridBuilder`'s cell centers stop half a cell short of them,
-so each pole is left as a small open circular gap, accepted since a UK-latitude site will rarely if
-ever populate cells that close to either pole anyway.
+`MosaicDomeSurfaceView` (the "3D Dome" tab) replaced an earlier spherical-globe design entirely (RA/Az
+mapped to longitude, Dec/El to latitude, a value as a radial bump/dent from a base shell) — the globe
+read as hard to interpret, and needing a whole three-stage camera saga (orbit-outside → stand-dead-
+center → walk-around-inside, each fixing a real problem the last exposed) to even view sensibly was
+itself a sign the shape was fighting the data rather than presenting it. The replacement instead makes
+this tab a literal 3D extension of the already-legible 2D Zenith Dome: the exact same fixed reference
+geometry (altitude rings every 15°, azimuth spokes every 30°, the 8 principal compass labels, N/S/E/W
+oriented the same "looking up, not down" way) sits flat on a Y=0 ground plane, and each of
+`MosaicViewModel.SurfacePoints`' live-Az/El positions (see `RenderSurface`/
+`ComputeVisibleDomePositions` — shared with the 2D dome, so both tabs always agree on which positions
+are actually up right now) becomes a thin cylinder "stem" standing up from that plane to a sphere
+"tip" — height *proportional to the point's own value*, not a bump/dent from a fixed base shell.
 
-**Camera: from "orbit around the outside" through "stand dead-center" to "walk around inside".**
-`MosaicSurfaceView.xaml`'s `HelixViewport3D` went through three stages this session, each fixing a
-real problem the last one exposed:
+Height and colour are both **zero-anchored/linear**, not min-max-normalized the way the old globe's
+`NormHeight`/`NormColor` were: `Height(v) = v / maxAbs * MaxHeightExtent` and `NormColorT(v) = 0.5 +
+v / (2*maxAbs)`, where `maxAbs` is the largest `|value|` in the current data. A value of exactly 0 (0
+km/s at the LSR-corrected line center, or 0 dB — no excess above the cold-sky baseline) is a real,
+physically meaningful reference in both metrics, so it belongs exactly on the ground plane and at the
+diverging ramp's neutral gray midpoint regardless of where this session's own min/max happen to fall —
+unlike a min-max remap, which could push a session with an all-positive value range toward one end of
+the colour ramp for no physical reason.
 
-1. **`CameraMode="Inspect"` (the HelixToolkit default)** orbits the camera around the *outside* of the
-   bounding box via `ZoomExtents` — correct for a terrestrial globe, backwards for a sky globe: it
-   made the mosaic look like a solid ball viewed from a distance, not a sky viewed from within it.
-2. **`CameraMode="FixedPosition"`, `Position="0,0,0"`** put the observer at the globe's exact
-   mathematical center, looking outward (`ZoomExtentsWhenLoaded="False"`, and `Rebuild` no longer
-   calls `ZoomExtents` at all — there's no "whole object" to fit into frame from outside, and
-   re-fitting on every data refresh would fight the user's own look direction). This is geometrically
-   inert from the perspective the *lighting* needs, though: **vertex normals had to be flipped inward**
-   (`Vector3D.CrossProduct(edge2, edge1)`, not `(edge1, edge2)`, plus a `-(Vector3D)positions[i]`
-   fallback for any untouched vertex) — the mesh winding was chosen for viewing from outside, so
-   without the flip the inside faces the camera now sees would light as if the light source were
-   behind them. But dead-center turned out to have its own, more fundamental problem (see next point).
-3. **From dead-center, every direction is a pure radius** — a bump can only ever be closer or farther
-   *along its own ray*, never occlude or graze against a *neighboring* ray's data, since two different
-   (RA,Dec) directions are two different rays from the same fixed point. That's what actually reads as
-   "terrain" (a hill blocking part of the view behind it, seen at an angle) — and it's unfixable by FOV
-   or bump-scale tuning alone, because it's inherent to the vantage point, not the geometry's scale.
-   `CameraMode="WalkAround"` fixes this properly: unlike `FixedPosition` (look-around only), it adds
-   real translation (arrow keys move, mouse-drag still rotates `LookDirection`), so the viewer can
-   actually steer toward a bump/dent and see it in relief with genuine parallax against what's behind
-   it — closer to "walking past hills" than "floating at a fixed point ever could be.
+Each stem/tip is a small, self-contained parametric solid (`AppendCylinder`/`AppendSphere`) always
+viewed from *outside* itself — unlike the old globe, the camera here is never inside one of these
+shapes the way it sat dead-center inside the globe's own shell — so normals are computed directly from
+each shape's own geometry (radial-from-axis for a cylinder, radial-from-center for a sphere) rather
+than by averaging face normals afterward: simpler and exact for a known parametric shape, no winding-
+direction reasoning needed. `CameraMode="Inspect"` (orbit around the *outside* of the bounding box,
+`ZoomExtents` called after every rebuild) is now the *correct* choice, not the wrong one the globe
+rejected it for — this is a flat terrain/bar-chart shape meant to be viewed from outside/above, which
+is exactly what Inspect is for; there's a well-defined "whole object" to fit into frame, unlike the
+globe's dead-center vantage where re-fitting would have fought the user's own look direction.
 
-**Scale**: `SphereRadius` was raised from 5 to 30 while `HeightExtent` (the ±half-range a data value
-bumps/dents) stayed at 3 — dropping the bump-to-radius ratio from ~30-60% down to ~10%, so peaks/
-troughs read as gentle, distant terrain relief once `WalkAround` lets you actually approach them,
-rather than looming right at the original dead-center vantage. `LabelOffset`/`LabelHeight` are derived
-as fractions of `SphereRadius` (`* 0.12`/`* 0.07`) rather than fixed literals, so retuning the radius
-again won't shrink labels to invisible specks or blow them up.
+**`FitMeshThroughPoints`** (a checkbox on the 3D Dome tab) replaces the per-point stems/dots with a
+translucent surface triangulated through each point's *own exact* extruded (x, height, z) position —
+the two are alternate readings of the same data (the mesh already passes through every stem's own
+tip), so showing both at once would mostly just double up on the same shape. Built via a hand-rolled
+2D Bowyer-Watson Delaunay triangulation
+(`RASTA.Processing/Gridding/DelaunayTriangulation.cs`, verified against known cases — a 4×4 grid's
+triangle area sums to exactly its bounding square, a square-plus-center-point produces exactly the
+2n-h-2 triangles the Euler relation predicts). This needed genuine triangulation, not a re-use of
+`GridBuilder`'s quad-mesh approach, because Zenith Dome positions (live Az/El at one instant) generally
+aren't on a uniform grid the way `GridBuilder`'s RA/Dec canvas is — plain Delaunay triangulation always
+spans the full convex hull of its input, though, which for a sparse/clustered point set would otherwise
+bridge distant, physically unrelated positions with a long, meaningless triangle; `FilterLongEdges`
+trims any triangle whose edge exceeds a multiple of the *actual* median edge length in the data, so a
+genuine gap between clusters stays a gap rather than getting papered over. Off by default: on a
+genuinely sparse session the raw triangulation can still read as a confusing web until real coverage
+exists to make the fitted surface meaningful.
 
-**`FlattenRelief`** (`MosaicViewModel.FlattenGlobeRelief`, a checkbox on the 3D Surface tab) renders
-every vertex at exactly `SphereRadius` regardless of data value — colour (`NormColor`/`texCoords`)
-still carries the data, height doesn't. This is the "true planetarium" look: a real sky has no relief
-at all from the ground, only brightness varying by direction, which is a genuinely different (and
-sometimes more legible) representation than the literal terrain-style bump/dent visualization
-`WalkAround`'s movement is otherwise meant to explore — both are offered rather than picking one.
-
-**Velocity sign/colour/geometry all agree, confirmed by tracing the actual math (not assumed):** radio
-convention (`HiStreamingPipeline.Process`) has `v > 0` = redshifted/receding, `v < 0` = blueshifted/
-approaching. `NormColor` maps the most-negative velocity to `t=0` → `HeatmapImageBuilder.
-DivergingStops[0]` = deep blue (correct astronomical convention: blue = approaching). `NormHeight` maps
-that same most-negative velocity to the *smallest* radius — physically nearer the camera, which sits
-at/near the globe's center. So a blueshifted patch is rendered both blue *and* pulled inward toward
-the viewer, while a redshifted patch is red and pushed outward away — colour and bump direction agree
-with each other and with reality, which falls out correctly from the existing sign conventions rather
-than needing a deliberate fix.
+Reuses every hard-won HelixToolkit lesson the old globe surfaced (see the next section) — explicit
+per-vertex `Normals`, a vector `LinearGradientBrush` material rather than a raster `ImageBrush`,
+`TextCreator` for labels, a translucent material (`BackMaterial` set to the same brush) since the Y=0
+reference grid can sit through rather than under data whose range straddles zero.
 
 **Longer-term, parked goal**: overlay the heatmap on a lightweight background star/constellation map,
-similar to Cartes du Ciel. The Alt/Az stereographic dome projection itself is now built (see "Zenith
-Dome" below) — what's still not started is the star/constellation-line layer on top of it, which would
-need a lightweight star catalog/constellation-line dataset plus rendering it into the same dome
-projection. Deliberately not Stellarium-grade realism — just enough context to orient the heatmap.
+similar to Cartes du Ciel. The Alt/Az dome projection itself is now built (shared by both the 2D Zenith
+Dome and this 3D extrusion) — what's still not started is the star/constellation-line layer on top of
+it, which would need a lightweight star catalog/constellation-line dataset plus rendering it into the
+same dome projection. Deliberately not Stellarium-grade realism — just enough context to orient the
+heatmap.
 
 #### Zenith Dome: a from-here-right-now Alt/Az view, alongside the persistent Sky Mosaic canvas
 
@@ -709,8 +699,8 @@ folder of plain-text profiles downloaded from the AIfA EU-HOU LABprofile service
 Survey) is detected via a cheap `.txt`/`%%LAB`-marker sniff (`LabSurveyProfileParser.LooksLikeLabProfile`)
 and routed to `LabSurveyMosaicProcessor` instead of `MosaicProcessor`, producing the exact same
 `MosaicResult`/`MosaicPosition` shape either way so `GridBuilder`/`HeatmapImageBuilder`/
-`MosaicSurfaceView`/the Zenith Dome all exercise identically regardless of source — letting the Sky
-Mosaic/3D Surface/Zenith Dome pipelines be validated against real, richly-varying sky data without
+`MosaicDomeSurfaceView`/the Zenith Dome all exercise identically regardless of source — letting the Sky
+Mosaic/3D Dome/Zenith Dome pipelines be validated against real, richly-varying sky data without
 needing actual observing time. `Generate Mosaic` is still what triggers processing; `Select Folder` only
 detects the format and shows it (`DetectedFormatDescription`), hiding the Baseline File row entirely for
 a LAB-sourced folder (`IsLabSurveySource`) since LAB brightness temperatures are already
@@ -738,31 +728,23 @@ one ever-growing dataset that `Generate Mosaic` can no longer treat as "just tha
 distinct test region is better kept in its own subfolder from the start rather than merged into a shared
 pile after the fact.
 
-#### 3D surface mesh: getting HelixToolkit to actually render on this machine
+#### Getting HelixToolkit to actually render on this machine
 
-`MosaicSurfaceView`'s mesh is built by hand from plain WPF 3D types (`Point3DCollection`/
+`MosaicDomeSurfaceView`'s meshes are built by hand from plain WPF 3D types (`Point3DCollection`/
 `Int32Collection`), not `HelixToolkit.Geometry.MeshBuilder` (works in `System.Numerics.Vector3` in this
-Helix version, its own conversion step for no real benefit here). Getting from "nothing renders" to a
-working surface took several rounds, each worth knowing about since they're generic WPF-3D traps, not
-Mosaic-specific:
+Helix version, its own conversion step for no real benefit here). This traces back to the tab's earlier
+spherical-globe design, which took several rounds to get from "nothing renders" to a working surface —
+worth knowing about since they're generic WPF-3D traps on this specific machine, not shape-specific, and
+the fixes are still exactly what the current dome+stems/optional-mesh design relies on:
 
-- **Every quad gets drawn, even where a corner is `NaN`.** The mesh originally skipped any quad
-  touching a no-data corner — reasonable-sounding, but on a sparse mosaic (a handful of scattered
-  positions on the full-sky grid, or a single-row/column sweep, where no two adjacent grid cells in
-  *both* axes ever both have data) that produced literally zero triangles: a mesh with real `Positions`
-  but nothing visible, so the viewport showed only its fixed corner overlays (coordinate triad, view
-  cube) with an empty main scene — which also makes mouse-wheel zoom look broken, since there's nothing
-  to zoom into. Every quad now draws, with NaN corners defaulting to zero height (and a neutral 0.5
-  texture coordinate) — matching what issue #13 asked for directly ("positions without data default to
-  zero").
 - **`MeshGeometry3D.Normals` needs setting explicitly.** WPF's automatic normal generation for a mesh
   that only sets `Positions`/`TriangleIndices` turned out unreliable on this specific machine's WPF 3D
   render tier — HelixToolkit's own `MeshBuilder`-based visuals always compute normals explicitly, which
   is why a `GridLinesVisual3D`/`SphereVisual3D` diagnostic added mid-investigation rendered fine while
-  the hand-built mesh stayed invisible. Fixed by averaging face normals into an explicit
-  `Vector3DCollection` (smooth per-vertex shading, matching a continuous surface). Now deliberately
-  flipped inward (see "3D surface: a genuine globe" above) rather than the outward direction this
-  averaging naturally produces from the mesh's winding.
+  a hand-built mesh with only `Positions`/`TriangleIndices` set stayed invisible. `AppendCylinder`/
+  `AppendSphere` compute each shape's own exact parametric normal per vertex (see "3D Dome" above); the
+  optional `FitMeshThroughPoints` overlay, a general irregular surface with no such formula, still uses
+  the averaged-face-normal technique the original globe mesh used.
 - **The real fix: raster `ImageBrush` materials don't render as 3D materials here, full stop.** The
   height→colour gradient was originally an `ImageBrush` wrapping a `BitmapSource` from
   `HeatmapImageBuilder.BuildLegendStrip` — swapping in a plain `Brushes.Orange` `SolidColorBrush`
@@ -770,47 +752,37 @@ Mosaic-specific:
   Neither a 1px- nor 2px-tall bitmap fixed it, so it isn't specifically an extreme-aspect-ratio/mipmap
   issue — it's that *any* raster-backed `ImageBrush` used as a 3D `DiffuseMaterial` silently fails to
   render on this machine's WPF 3D tier, while *vector* brushes (`LinearGradientBrush`,
-  `SolidColorBrush`) render fine. `BuildGradientBrush` now builds the same diverging blue-gray-red ramp
+  `SolidColorBrush`) render fine. `BuildGradientBrush` builds the same diverging blue-gray-red ramp
   (`HeatmapImageBuilder.DivergingStops`) as a `LinearGradientBrush` instead. This also ruled out
   HelixToolkit's own `TextVisual3D`/`BillboardTextVisual3D` for axis labels (both render text via
   `RenderTargetBitmap` → `ImageBrush` internally — the same failing pattern) in favour of
   `HelixToolkit.Wpf.TextCreator.CreateTextLabelModel3D`, which renders its `DiffuseMaterial` via a
   `VisualBrush` wrapping a live `TextBlock` — vector-brush family, proven to render here.
 - **`IsVisibleChanged` + a `Dispatcher.InvokeAsync(..., DispatcherPriority.Loaded)`** re-triggers a
-  full `Rebuild()` once the "3D Surface" tab is actually shown, since a `HelixViewport3D` inside a
-  never-selected `TabItem` has no layout to render into yet. `Rebuild()` used to end with
-  `Viewport.ZoomExtents(0)` to reframe the camera on new data — removed once the camera moved to
-  `FixedPosition`/`WalkAround` (see "3D surface: a genuine globe" above), since there's no longer a
-  "whole object" to fit into frame from outside, and re-fitting on every data refresh would fight the
-  user's own position/look direction.
-
-`MosaicSurfaceView.Smooth` (bound to `UseSmoothBlend`) bilinearly subdivides the grid (`
-UpsampleBilinear`, `SmoothSubdivisionFactor` = 4×) before meshing — the same NaN-dropping/renormalizing
-technique `HeatmapImageBuilder.BuildBlended` uses for the 2D heatmap's own smoothing, applied to the
-mesh's geometry instead of pixel colour. Without it, a genuinely sparse mosaic reads as sharp "pointy"
-spikes wherever an isolated measured cell sits surrounded by the zero-height NaN fallback described
-above; subdividing tapers each real measurement smoothly toward that fallback instead. Real cell centers
-always land exactly on the subdivided grid, so smoothing never moves an actual measurement.
+  full `Rebuild()` once the "3D Dome" tab is actually shown, since a `HelixViewport3D` inside a
+  never-selected `TabItem` has no layout to render into yet.
 
 The mesh material is deliberately translucent (`TranslucentGradientBrush`, alpha baked into each
-gradient stop since the brush is `Frozen`), because the reference meridian/parallel gridlines/labels
-(see below) sit at `SphereRadius` exactly — the globe's own zero reference (a real, physically
-meaningful shell in Velocity mode: 0 km/s, the LSR-corrected line center), not pinned below the data's
-own minimum — which for data straddling zero routinely sits *through* rather than under the surface (a
-bump pokes out, a dent sinks in). An opaque material would hide whatever part of the grid/labels falls
-behind it from the current view angle, or — now that the camera can be anywhere inside the globe via
-`WalkAround` — behind the surface generally.
+gradient stop since the brush is `Frozen`, `BackMaterial` set to the same brush so a triangle renders
+regardless of which side faces the camera), because the reference rings/spokes/labels sit at `Y=0`
+exactly — a real, physically meaningful reference (0 km/s, the LSR-corrected line center; or 0 dB, no
+excess above the cold-sky baseline) rather than pinned below the data's own minimum, which for a metric
+whose range straddles zero routinely sits *through* rather than under a stem/dot/fitted-mesh face.
 
-#### Axis ticks and gridlines (Sky Mosaic 2D + 3D Surface)
+#### Axis ticks and gridlines (Sky Mosaic 2D heatmap)
 
-`RASTA.App/Helpers/AxisTicks.ComputeNiceTicks` (Heckbert's "nice numbers for graph labels") is shared
-by both views, so tick values read naturally (whole/5/10-step RA hours or Dec/Az/El degrees) instead of
-raw grid-cell-center fractions like "13.333h". `RASTA.App/Helpers/AxisGridLine`/`AxisTick` are the two
-small shared record types — deliberately `Helpers`, not `MosaicViewModel`, so `MosaicSurfaceView` (a
-View) can consume tick data without depending on a ViewModel type, consistent with its other bound
-properties (`IntensityGrid`/`XValues`/`YValues`) all being plain primitives.
+`RASTA.App/Helpers/AxisTicks.ComputeNiceTicks` (Heckbert's "nice numbers for graph labels") gives the
+Sky Mosaic 2D heatmap tick values that read naturally (whole/5/10-step RA hours or Dec/Az/El degrees)
+instead of raw grid-cell-center fractions like "13.333h". `RASTA.App/Helpers/AxisGridLine`/`AxisTick`
+are the two small shared record types this and the Zenith Dome/3D Dome tabs' own gridline overlays all
+use — deliberately `Helpers`, not `MosaicViewModel`, so a View can consume this shape without depending
+on a ViewModel type. Only the Sky Mosaic tab actually computes ticks from `AxisTicks.ComputeNiceTicks`
+though — the Zenith Dome and 3D Dome tabs both use fixed conventions instead (altitude rings every 15°,
+azimuth spokes every 30°, the 8 principal compass labels), since Az/El has no equivalent of "however
+much sky this session happens to cover" the way the persistent RA/Dec canvas does; see "Zenith Dome"
+and "3D Dome" above for each tab's own version of that fixed reference geometry.
 
-On the 2D heatmap, `MosaicViewModel.BuildPixelAxisOverlay` computes tick pixel positions once (using
+`MosaicViewModel.BuildPixelAxisOverlay` computes tick pixel positions once (using
 `AxisXCenters`/`AxisYCenters`' own cell spacing to recover the plotted range's true outer edges, not
 just the cell-center range) into `MosaicHeatmapDisplay.GridLines`/`XTickLabels`/`YTickLabels`, all in
 the same fixed pixel-coordinate space as `PixelWidth`/`PixelHeight` — so `MosaicView.xaml`'s overlay
@@ -824,25 +796,15 @@ canvas's own (0,0) origin until the position was moved onto an `ItemContainerSty
 `ContentPresenter` instead. The gridlines (`Line` elements) never had this problem, since `Line`
 positions itself via its own `X1`/`Y1`/`X2`/`Y2` coordinates rather than `Canvas.Left`/`Top`.
 
-On the 3D surface, `MosaicSurfaceView.BuildAxes` draws reference **meridian and parallel great-circle
-arcs** at `XTicks`/`YTicks`' real RA/Dec(/Az/El) values, sitting on the globe's own `SphereRadius`
-shell via the same `SpherePoint`/`Direction` mapping the mesh itself uses (not a flat floor grid at
-`Y=0` — the spherical equivalent). A meridian (constant RA/Az) is a curved arc sampled across the full
-Dec/El domain (pole-to-pole for Equatorial, horizon-to-zenith for AltAz — `Direction`'s Y domain
-differs by mode); a parallel (constant Dec/El) is always a full closed loop around the RA/Az axis.
-Gridlines are one `LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed — proven-safe
-per the section above) rather than HelixToolkit's `GridLinesVisual3D`, which has no way to force its
-own gridlines onto already-computed nice-tick positions on a curved shell anyway. Both X and Y tick
-labels share one fixed `textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) — matching HelixToolkit's
-own `SurfacePlotVisual3D` reference example's convention of one consistent direction pair for every
-axis, rather than a different one per axis (which is what originally produced upside-down labels). A
-meridian label sits on the celestial equator/horizon (Dec/El=0, valid in both conventions); a parallel
-label sits at RA/Az=0; both nudged radially outward by `LabelOffset`. The label doesn't billboard to
-face the camera (this text technique has no such behaviour), so it reads best close to a top-down view
-— `HelixViewport3D`'s `ViewCube` "Top" corner gets there in one click — and can look edge-on from other
-angles now that `WalkAround` lets the camera roam freely; proper per-label tangent-plane orientation
-would fix that but is a real chunk of extra geometry work for a cosmetic-only gain, left for later if
-it turns out to matter in practice.
+On the 3D Dome, `MosaicDomeSurfaceView.BuildReferenceGrid` draws those same fixed rings/spokes as one
+`LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed — proven-safe per the section
+above) sitting flat on the `Y=0` ground plane, plus the 8 compass labels via `TextCreator`, sharing one
+fixed `textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) the same way the old globe's labels did
+(matching HelixToolkit's own `SurfacePlotVisual3D` reference example's convention of one consistent
+direction pair for every axis, rather than a different one per axis, which is what originally produced
+upside-down labels there). The label doesn't billboard to face the camera (this text technique has no
+such behaviour), so it reads best close to a top-down view — `HelixViewport3D`'s `ViewCube` "Top" corner
+gets there in one click.
 
 ### Progress reporting convention
 
