@@ -57,7 +57,7 @@
         <!--  SITE LOCATION SETTINGS   -->
         <!-- ========================= -->
         <TextBlock Grid.Column="1" Grid.Row="0"
-                       Text="Mount Details"
+                       Text="Site Settings"
                        FontSize="24"
                        FontWeight="Bold"
                        Margin="0 0 0 20"/>
