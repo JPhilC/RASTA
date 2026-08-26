@@ -40,7 +40,22 @@ namespace RASTA.Core.Astro
             double cosAz = (Math.Sin(dec) - Math.Sin(el) * Math.Sin(lat)) /
                            (Math.Cos(el) * Math.Cos(lat));
 
-            double az = Math.Acos(cosAz);
+            // Acos alone only ever returns [0,180] - it can't tell an object rising in the
+            // east from one setting in the west, which are mirror images of each other around
+            // the meridian. As the hour angle crosses 0 (transit), the true azimuth keeps
+            // climbing past 180 toward 360, but a bare Acos reflects it back down instead -
+            // this went unnoticed because every prior caller (SweepPlanner.ComputeElevationDeg)
+            // only ever read the elevation half of this tuple and discarded azimuth; the
+            // Zenith Dome view (MosaicViewModel.RenderDome) is the first to actually plot it,
+            // which is what surfaced points appearing to freeze/jump/overlap as time advanced
+            // past their transit. Disambiguated the same way HorizontalToEquatorial below
+            // already uses atan2 instead of acos for its own hour-angle recovery, for the same
+            // reason - here it's cheaper to keep the acos and just mirror the result based on
+            // the sign of sin(hour angle): positive means the object is past the meridian
+            // (west), so the true azimuth is 360-az.
+            double az = Math.Acos(Math.Clamp(cosAz, -1.0, 1.0));
+            if (Math.Sin(ha) > 0)
+                az = 2 * Math.PI - az;
 
             // Convert back to degrees
             return (az * 180.0 / Math.PI, el * 180.0 / Math.PI);
