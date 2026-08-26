@@ -25,6 +25,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="10"/>
@@ -46,20 +48,31 @@
                 Content="Select Folder…" Command="{Binding SelectFolderCommand}"
                 Padding="10,4" Width="160"/>
 
+        <!-- Baseline row is only meaningful for a RASTA FITS session - not shown at all for a
+             LAB Survey (or empty/unrecognised) folder, see MosaicViewModel.IsLabSurveySource. -->
         <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center"
-                   Text="Baseline File" FontWeight="Bold"/>
+                   Text="Baseline File" FontWeight="Bold"
+                   Visibility="{Binding IsLabSurveySource, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
         <TextBox Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="5" MinWidth="300"
                  VerticalAlignment="Center"
                  Text="{Binding BaselineFile, Mode=OneWay}" IsReadOnly="True"
-                 HorizontalAlignment="Left" Margin="0,0,5,0"/>
+                 HorizontalAlignment="Left" Margin="0,0,5,0"
+                 Visibility="{Binding IsLabSurveySource, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
         <Button Grid.Row="4" Grid.Column="8"
                 Content="Select Baseline FIT" Command="{Binding SelectBaselineFileCommand}"
-                Visibility="{Binding BaselineAvailable, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                Visibility="{Binding ShowSelectBaselineButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Padding="10,4" Width="160"/>
         <Button Grid.Row="4" Grid.Column="8"
                 Content="Clear Baseline FIT" Command="{Binding ClearBaselineFileCommand}"
                 Visibility="{Binding BaselineAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
                 Padding="10,4" Width="160"/>
+
+        <!-- Detected data-source indicator - set when Select Folder is clicked (a cheap
+             extension/signature sniff, see MosaicFolderFormatDetector); Generate Mosaic below is
+             still what actually kicks off processing. -->
+        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="7"
+                   Text="{Binding DetectedFormatDescription}"
+                   FontStyle="Italic" Opacity="0.8" VerticalAlignment="Center"/>
 
         <!-- Parameters row -->
         <!-- Target FFT Size, Smooth, Smoothing Window and Despike are deliberately NOT
@@ -68,7 +81,7 @@
              remarks), so the workflow is: dial those in on Single Capture until a file looks
              right, then Generate Mosaic reprocesses every position in the session with those
              same settings, rather than keeping a second copy of each control in sync by hand. -->
-        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="7" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
+        <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="7" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,0,10">
             <TextBlock Text="Integrated Window (km/s)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
             <TextBox Width="60" Text="{Binding IntegratedWindowKmPerSec}" VerticalAlignment="Center"/>
 
@@ -81,7 +94,7 @@
 
         </StackPanel>
         
-        <Button Grid.Row="6" Grid.Column="8"  Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
+        <Button Grid.Row="8" Grid.Column="8"  Content="Generate Mosaic" Command="{Binding GenerateMosaicCommand}"
                     Visibility="{Binding IsGenerating, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
                     Padding="10,4"  Width="160"/>
 
@@ -89,7 +102,7 @@
                  itself is the progress indicator (a green scrolling ProgressBar behind the
                  "Cancel Mosaic" caption), same pattern as Visualise's Cancel button, and
                  clicking it cancels processing. -->
-        <Button Grid.Row="6" Grid.Column="8"
+        <Button Grid.Row="8" Grid.Column="8"
                 Command="{Binding CancelMosaicCommand}"
                     Visibility="{Binding IsGenerating, Converter={StaticResource BooleanToVisibilityConverter}}"
                     ToolTip="{Binding GenerationStatus, StringFormat='Cancel mosaic processing ({0})'}"
@@ -108,7 +121,7 @@
         </Button>
 
         <!-- Results -->
-        <Grid Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="9">
+        <Grid Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="9">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="5"/>
@@ -231,6 +244,121 @@
                         </StackPanel>
                     </Grid>
                 </TabItem>
+                <TabItem Header="Zenith Dome">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- A from-here-right-now Alt/Az view (RenderDome) - NOT the same data
+                             as the Sky Mosaic tab's persistent RA/Dec canvas above, since an
+                             Az/El position is only valid at one instant. Defaults to "now";
+                             editable so you can also see what the sky looked like at an
+                             arbitrary moment. -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,8">
+                            <TextBlock Text="Time (UTC)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                            <TextBox Width="150" VerticalAlignment="Center"
+                                     Text="{Binding DomeTimeUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"/>
+                            <Button Content="Now" Command="{Binding SetDomeTimeNowCommand}"
+                                    Padding="10,2" Margin="8,0,0,0"/>
+                        </StackPanel>
+
+                        <Canvas Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Top"
+                                Width="{Binding SkyDome.CanvasSize}" Height="{Binding SkyDome.CanvasSize}">
+
+                            <!-- Concentric altitude rings, 15deg apart - the outermost (El=0) is the horizon. -->
+                            <ItemsControl ItemsSource="{Binding SkyDome.AltitudeRings}" IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding Left}"/>
+                                        <Setter Property="Canvas.Top" Value="{Binding Top}"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Ellipse Width="{Binding Diameter}" Height="{Binding Diameter}"
+                                                 Stroke="#40808080" StrokeThickness="1"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Azimuth spokes, every 30deg, from the zenith out to the horizon. -->
+                            <ItemsControl ItemsSource="{Binding SkyDome.AzimuthSpokes}" IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                              Stroke="#30808080" StrokeThickness="1"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Compass rose labels (N/NE/E/SE/S/SW/W/NW) - E left, W right, matching
+                                 how the sky's own dome looks from underneath (see RenderDome's remarks),
+                                 not a ground map. -->
+                            <ItemsControl ItemsSource="{Binding SkyDome.CompassLabels}" IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Text}" FontSize="11" FontWeight="Bold"
+                                                   Margin="-10,-8,0,0"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- One marker per position currently above the horizon, coloured by
+                                 LineStrengthDb the same ramp the 2D heatmap uses. -->
+                            <ItemsControl ItemsSource="{Binding SkyDome.Markers}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Ellipse Width="9" Height="9" Margin="-4.5,-4.5,0,0"
+                                                 Stroke="Black" StrokeThickness="0.5"
+                                                 ToolTip="{Binding Tooltip}">
+                                            <Ellipse.Fill>
+                                                <SolidColorBrush Color="{Binding Color}"/>
+                                            </Ellipse.Fill>
+                                        </Ellipse>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Canvas>
+
+                        <TextBlock Grid.Row="2" Text="{Binding SkyDome.StatusText}"
+                                   HorizontalAlignment="Center" FontStyle="Italic" Margin="0,4,0,0"/>
+
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,6">
+                            <TextBlock Text="{Binding SkyDome.LegendMinText}" VerticalAlignment="Center"/>
+                            <Image Source="{Binding SkyDome.LegendImage}" Width="200" Height="14" Margin="6,0,6,0"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <TextBlock Text="{Binding SkyDome.LegendMaxText}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
                 <TabItem Header="3D Surface">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -279,7 +407,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="*"/>
                     <DataGridTextColumn Header="Coordinates" Binding="{Binding Coordinates}" Width="2*"/>
-                    <DataGridTextColumn Header="Line Strength (dB)" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="*"/>
+                    <DataGridTextColumn Header="Line Strength" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="*"/>
                     <DataGridTextColumn Header="Velocity (km/s)" Binding="{Binding PeakVelocityKmPerSec, StringFormat=F1}" Width="*"/>
                     <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="Auto"/>
                 </DataGrid.Columns>

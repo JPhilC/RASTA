@@ -341,6 +341,25 @@ actual success, leaving a prior "Cancelled."/"Failed." status alone otherwise. `
 "Capture and FITS conventions" below) already reads `CalibrationService.CurrentCalibration.BaselineSpectrum`
 directly for its live spectrum rather than re-reading any FITS file, for both a sweep and Quick Capture.
 
+### Site settings: editable without a mount, reconciled when one connects
+
+`SettingsViewModel.SiteLatitudeDeg`/`SiteLongitudeDeg`/`SiteElevationM` (the "Site Settings" panel on
+`PrepareView` — renamed from "Mount Details", since these are RASTA's own settings now, not something
+only a connected mount can supply) are editable at any time, with or without a mount attached, and
+persisted via `UserOptionsService`/`UserOptions` so they survive an app restart instead of resetting to
+0/0/0 every launch. This matters beyond convenience: `TelescopeState`'s site fields (which
+`AstronomyUtils` calls throughout the app — LSR correction, cold-sky candidate search, the Zenith Dome
+view below — read from) are now populated from the moment the app starts, not only after a mount
+connects.
+
+`SettingsViewModel.ConnectTelescopeAsync` no longer unconditionally overwrites RASTA's site values with
+whatever the connecting mount reports — that was fine when a mount was the *only* source of site
+settings, but would now just as easily clobber a real, deliberately-entered RASTA value with a wrong
+mount setting. It compares the two (loose tolerances — ~0.01° for lat/lon, 5m for elevation — to absorb
+float/round-trip noise while still catching a genuine difference) and, only if they actually disagree,
+asks via a `MessageBox` whether to push RASTA's currently-set values to the mount or pull the mount's
+values into RASTA; if they already agree, the mount's values are used as before with no prompt.
+
 ### Sweep planning
 
 `SweepPlanner.BuildSweep` turns a `CapturePlan`'s `TargetRange` (RA/Dec or Az/El start, end, and
@@ -363,6 +382,13 @@ things worth knowing:
   step magnitude, automatically counting downward if `end < start` — so e.g. `RAStartHours=20,
   RAEndHours=4` sweeps downward through 20h→4h just as validly as the reverse. It steps by an integer
   count rather than repeated float addition, so accumulated rounding error can't drop the final point.
+  It also has **no concept of RA's 24h wraparound**: given `RAStartHours=22, RAEndHours=0` it steps
+  straight down from 22 to 0 (a 22-hour sweep spanning almost the whole circle), not through the
+  *shorter* 2-hour arc via 24h/0h that "22 to 0" might suggest — `RAEndHours=24` (not `0`) is what
+  actually produces that short arc, since 24 and 0 are the same point on the sky but different plain
+  numbers to `StepRange`. Surfaced while building `scripts/New-SweepGridPoints.ps1`, a deliberate
+  mirror of this exact function used to generate LAB Survey test grids (see "Mosaic sky-map view"
+  below) — a real `CapturePlan.TargetRange` meant to wrap through 0h RA hits the identical footgun.
 - **Points are ordered greedily by elevation, not raster order.** After the raw RA/Dec or Az/El grid
   is generated, `BuildSweep` repeatedly picks whichever *remaining* point would be highest in the sky
   at its estimated arrival time (accounting for slew time from the current position) as the next
@@ -632,11 +658,85 @@ with each other and with reality, which falls out correctly from the existing si
 than needing a deliberate fix.
 
 **Longer-term, parked goal**: overlay the heatmap on a lightweight background star/constellation map,
-similar to Cartes du Ciel — specifically its **Alt/Az stereographic dome projection centered on the
-zenith** (not an RA/Dec all-sky atlas projection like Mollweide/Aitoff), since that's the better fit
-for a from-one-site view. Deliberately not Stellarium-grade realism — just enough context (stars,
-constellation lines) to orient the heatmap. Not started; would need a lightweight star catalog/
-constellation-line dataset plus the projection math.
+similar to Cartes du Ciel. The Alt/Az stereographic dome projection itself is now built (see "Zenith
+Dome" below) — what's still not started is the star/constellation-line layer on top of it, which would
+need a lightweight star catalog/constellation-line dataset plus rendering it into the same dome
+projection. Deliberately not Stellarium-grade realism — just enough context to orient the heatmap.
+
+#### Zenith Dome: a from-here-right-now Alt/Az view, alongside the persistent Sky Mosaic canvas
+
+A third Mosaic tab, "Zenith Dome" (`MosaicViewModel.RenderDome`/`SkyDome`, `MosaicDomeDisplay`), renders
+every processed position's live Az/El at a chosen moment (`DomeTimeUtc`, defaulting to "now") as a
+zenith-centered dome — N at top, S at bottom, **E at left, W at right**, matching how a naked-eye sky
+chart (Cartes du Ciel's own Alt/Az view) is drawn, not a ground map: looking up at the inside of the
+sky's dome mirrors east/west relative to looking down at a map. This is deliberately *not* built from
+`GridBuilder`'s RA/Dec grid the Sky Mosaic tab uses — an Az/El position is only valid at one instant
+(the same RA/Dec sits at a different Az/El an hour later), so unlike the Sky Mosaic tab's persistent
+"coverage so far" canvas, there's no meaningful sense in which a dome view could accumulate across
+sessions. `MosaicViewModel` keeps the raw per-position list from the last processed session
+(`_lastPositions`) alongside the pre-binned grids specifically so `RenderDome` can re-project every
+position fresh from its own stored RA/Dec (via `AstronomyUtils.EquatorialToHorizontal`, using the site
+lat/lon from `TelescopeState` — see "Site settings" above) or, for an AltAz-mode session, its
+already-fixed Az/El, whenever `DomeTimeUtc` changes or a fresh mosaic is generated — without
+reprocessing the FITS/LAB files themselves. Positions below the horizon at that moment aren't drawn at
+all — the dome's whole premise is "the sky as it looks from here, right now", not a grayed-out
+placeholder for what isn't up. Markers are plain scattered dots (not a binned grid), coloured by the
+same `HeatmapImageBuilder.Ramp` the 2D heatmap uses; only the projection/compass framing (altitude
+rings every 15°, azimuth spokes every 30°, the 8 principal compass labels) is new.
+
+Building this surfaced a real, previously-invisible bug in `AstronomyUtils.EquatorialToHorizontal`: its
+azimuth formula used a bare `Math.Acos`, which only ever returns 0-180° and can't distinguish an object
+rising in the east from one setting in the west (mirror images around the meridian) — as an object's
+hour angle crosses zero at transit, the true azimuth keeps climbing past 180° toward 360°, but Acos
+alone reflected it back down instead. This was invisible before now because the only existing caller,
+`SweepPlanner.ComputeElevationDeg`, discards the azimuth half of the returned tuple and only ever reads
+elevation; the Zenith Dome is the first caller to actually plot azimuth, which is what surfaced markers
+appearing to jump/freeze/overlap each other as `DomeTimeUtc` was moved across a position's own transit.
+Fixed by disambiguating with the sign of sin(hour angle) — the same underlying issue
+`HorizontalToEquatorial` (immediately below it in the same file) already sidesteps by using `atan2`
+instead of `acos` for its own hour-angle recovery, for exactly this reason.
+
+Not yet implemented: zooming in to switch from the dome projection to a pannable Mercator view (a
+genuine interactive-viewer feature — hit-testing, drag/zoom state, a second projection and a transition
+between them — rather than an extension of the static dome above), parked as a distinct follow-up.
+
+#### Feeding real HI-survey data through the pipeline as synthetic test data
+
+`MosaicViewModel.SelectFolder` sniffs the chosen folder's contents (`MosaicFolderFormatDetector.Detect`,
+`RASTA.Processing/Mosaic/MosaicFolderFormat.cs`) rather than assuming it holds RASTA FITS captures: a
+folder of plain-text profiles downloaded from the AIfA EU-HOU LABprofile service
+(https://www.astro.uni-bonn.de/hisurvey/euhou/LABprofile/ — the Leiden/Argentine/Bonn Galactic HI
+Survey) is detected via a cheap `.txt`/`%%LAB`-marker sniff (`LabSurveyProfileParser.LooksLikeLabProfile`)
+and routed to `LabSurveyMosaicProcessor` instead of `MosaicProcessor`, producing the exact same
+`MosaicResult`/`MosaicPosition` shape either way so `GridBuilder`/`HeatmapImageBuilder`/
+`MosaicSurfaceView`/the Zenith Dome all exercise identically regardless of source — letting the Sky
+Mosaic/3D Surface/Zenith Dome pipelines be validated against real, richly-varying sky data without
+needing actual observing time. `Generate Mosaic` is still what triggers processing; `Select Folder` only
+detects the format and shows it (`DetectedFormatDescription`), hiding the Baseline File row entirely for
+a LAB-sourced folder (`IsLabSurveySource`) since LAB brightness temperatures are already
+background-corrected by the survey itself — there's no baseline-division step the way a raw RTL-SDR
+capture needs. `MosaicPosition.LineStrengthDb` is a reused field in this case, holding a peak brightness
+temperature in **Kelvin**, not a true dB-relative-to-baseline figure; `MosaicViewModel.StrengthUnitLabel`
+("K" vs "dB") is what the 2D heatmap/3D surface legends actually read from to avoid mislabelling one as
+the other.
+
+`scripts/Fetch-LabSurveyGrid.ps1` (+ `scripts/New-SweepGridPoints.ps1` for an equatorial RA/Dec box,
+`scripts/New-GalacticStripGridPoints.ps1` for a strip along the Galactic plane) automate pulling a grid
+of these profiles: the two `New-*GridPoints.ps1` generators mirror `SweepPlanner`'s own row-by-row
+cos(dec)-corrected spacing (or the Galactic-latitude equivalent), so the resulting test grid matches how
+a real sweep would actually be spaced, and `Fetch-LabSurveyGrid.ps1` downloads one profile per grid point
+(rate-limited via `-DelaySeconds`, resumable — an already-downloaded file is skipped, safe to re-run).
+The download URL's `csys` parameter selects coordinate system (`-1` = equatorial degrees, `0` = Galactic
+degrees, confirmed by probing the service directly) and `ral`/`decb` are always degrees regardless of
+`csys` — the web form's own RA input expects hours, a source of real confusion when hand-entering a
+query ("20" in that field is 20 hours = 300 degrees, not 20 degrees).
+
+Because `MosaicProcessor`/`LabSurveyMosaicProcessor` process every matching file in the selected folder
+as a single combined session with no per-file provenance, repeatedly fetching different regions into one
+shared folder (which `Fetch-LabSurveyGrid.ps1`'s own resumability actively encourages) accumulates into
+one ever-growing dataset that `Generate Mosaic` can no longer treat as "just that one region" — each
+distinct test region is better kept in its own subfolder from the start rather than merged into a shared
+pile after the fact.
 
 #### 3D surface mesh: getting HelixToolkit to actually render on this machine
 

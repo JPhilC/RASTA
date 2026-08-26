@@ -19,5 +19,19 @@ namespace RASTA.Core.Config
         [ObservableProperty]
         private int defaultFftSize = 4096;
 
+        // Site settings are now editable in SettingsViewModel without a mount attached (see
+        // its remarks on reconciling against a connected mount's own values) - persisted here
+        // so RASTA remembers the last-confirmed site across app restarts instead of resetting
+        // to 0/0/0 every launch, which would otherwise make the mount-vs-RASTA reconciliation
+        // prompt fire on every single connect regardless of whether anything actually changed.
+        [ObservableProperty]
+        private double siteLatitudeDeg;
+
+        [ObservableProperty]
+        private double siteLongitudeDeg;
+
+        [ObservableProperty]
+        private double siteElevationM;
+
     }
 }

@@ -141,6 +141,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             services.AddSingleton<GridBuilder>();
             services.AddSingleton<MosaicProcessor>();
+            services.AddSingleton<LabSurveyMosaicProcessor>();
 
             // ---------------------------------------------------------
             // ViewModels

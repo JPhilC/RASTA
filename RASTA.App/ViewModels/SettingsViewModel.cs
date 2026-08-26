@@ -28,6 +28,14 @@ namespace RASTA.App.ViewModels
             CalibrationFrequencyHz = _optionsService.Options.DefaultCentreFrequencyHz;
             SampleRateHz = _optionsService.Options.DefaultBandwidthHz;
             FftSize = _optionsService.Options.DefaultFftSize;
+
+            // Site settings are editable independently of a mount connection (see the Site
+            // Settings region below) and persisted across restarts, so the last-confirmed
+            // value is already in TelescopeState (and available to e.g. Mosaic's Zenith Dome
+            // view) even before any mount is ever connected this session.
+            SiteLatitudeDeg = _optionsService.Options.SiteLatitudeDeg;
+            SiteLongitudeDeg = _optionsService.Options.SiteLongitudeDeg;
+            SiteElevationM = _optionsService.Options.SiteElevationM;
         }
 
         // -------------------------------
@@ -56,7 +64,13 @@ namespace RASTA.App.ViewModels
         private bool isConnected;
 
         // -------------------------------
-        // Site Settings (session-specific)
+        // Site Settings
+        // -------------------------------
+        // Editable at any time, with or without a mount attached - e.g. to set up a real
+        // site for Mosaic's Zenith Dome view before ever connecting hardware. Persisted via
+        // UserOptionsService (see the constructor) so they survive an app restart rather than
+        // resetting to 0/0/0. See ConnectTelescopeAsync for what happens when a mount that
+        // reports a *different* site actually connects.
         // -------------------------------
 
         [ObservableProperty]
@@ -71,6 +85,8 @@ namespace RASTA.App.ViewModels
 
         partial void OnSiteLatitudeDegChanged(double value)
         {
+            _optionsService.Options.SiteLatitudeDeg = value;
+
             if (_mountIsInitialising)
                 return;
 
@@ -82,6 +98,8 @@ namespace RASTA.App.ViewModels
 
         partial void OnSiteLongitudeDegChanged(double value)
         {
+            _optionsService.Options.SiteLongitudeDeg = value;
+
             if (_mountIsInitialising)
                 return;
 
@@ -93,6 +111,8 @@ namespace RASTA.App.ViewModels
 
         partial void OnSiteElevationMChanged(double value)
         {
+            _optionsService.Options.SiteElevationM = value;
+
             if (_mountIsInitialising)
                 return;
 
@@ -210,13 +230,63 @@ namespace RASTA.App.ViewModels
                 }
 
                 // ---------------------------------------------------------
-                // Pull site values from mount
+                // Reconcile site values: RASTA's site settings can now be entered and used
+                // (e.g. by Mosaic's Zenith Dome view) before any mount is ever connected, so a
+                // connecting mount's own site settings can no longer just be pulled in
+                // unconditionally - that would silently overwrite a real, deliberately-entered
+                // RASTA value with whatever the mount happens to report, and the reverse
+                // (always pushing RASTA's value to the mount) would just as wrongly stomp a
+                // mount that's genuinely set up correctly for a different location. Compare the
+                // two and ask only when they actually disagree.
                 // ---------------------------------------------------------
+                double mountLat = _mount.SiteLatitudeDeg;
+                double mountLon = _mount.SiteLongitudeDeg;
+                double mountElevM = _mount.SiteElevationM;
+
+                // Loose enough to absorb float/round-trip noise, tight enough that a genuinely
+                // different site (or a mistyped value) still trips it.
+                const double latLonToleranceDeg = 0.01;  // ~1 km at the equator
+                const double elevationToleranceM = 5.0;
+
+                bool sitesDiffer =
+                    Math.Abs(mountLat - SiteLatitudeDeg) > latLonToleranceDeg ||
+                    Math.Abs(mountLon - SiteLongitudeDeg) > latLonToleranceDeg ||
+                    Math.Abs(mountElevM - SiteElevationM) > elevationToleranceM;
+
+                bool pullFromMount = true;
+                if (sitesDiffer)
+                {
+                    string message =
+                        "The connected mount's site settings differ from what's currently set in RASTA:\n\n" +
+                        $"              RASTA          Mount\n" +
+                        $"Latitude:   {SiteLatitudeDeg,9:F5}°   {mountLat,9:F5}°\n" +
+                        $"Longitude:  {SiteLongitudeDeg,9:F5}°   {mountLon,9:F5}°\n" +
+                        $"Elevation:  {SiteElevationM,9:F1} m   {mountElevM,9:F1} m\n\n" +
+                        "Update the MOUNT to match RASTA (Yes), or update RASTA to match the MOUNT (No)?";
+
+                    var siteResult = MessageBox.Show(
+                        message,
+                        "Site Settings Differ",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Question);
+
+                    pullFromMount = siteResult == MessageBoxResult.No;
+                }
+
                 _mountIsInitialising = true;
 
-                SiteLatitudeDeg = _mount.SiteLatitudeDeg;
-                SiteLongitudeDeg = _mount.SiteLongitudeDeg;
-                SiteElevationM = _mount.SiteElevationM;
+                if (pullFromMount)
+                {
+                    SiteLatitudeDeg = mountLat;
+                    SiteLongitudeDeg = mountLon;
+                    SiteElevationM = mountElevM;
+                }
+                else
+                {
+                    await _mount.SetSiteLatitudeAsync(SiteLatitudeDeg);
+                    await _mount.SetSiteLongitudeAsync(SiteLongitudeDeg);
+                    await _mount.SetSiteElevationAsync(SiteElevationM);
+                }
 
                 _state.SiteLatitudeDeg = SiteLatitudeDeg;
                 _state.SiteLongitudeDeg = SiteLongitudeDeg;
