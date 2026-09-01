@@ -55,6 +55,11 @@ namespace RASTA.App.ViewModels
     /// rebuild (e.g. every SelectedPlan/plan switch) - a known WPF trap for a bound Freezable
     /// sharing a template with named-target triggers. A Frozen brush has no inheritance-context
     /// to lose in the first place.
+    ///
+    /// DiameterPx is the dot's beamwidth-derived size in pixels (see PlanViewModel.ProjectPoints) -
+    /// everything below is computed from it rather than stored, so an animated point's "current"
+    /// enlarged size/margin stay correct through the `p with { IsCurrent = ... }` pattern
+    /// PlanViewModel.RefreshVisiblePoints uses without needing its own constructor args.
     /// </summary>
     public record PlanMapPoint(
         int SequenceIndex,
@@ -65,7 +70,21 @@ namespace RASTA.App.ViewModels
         Brush Fill,
         bool AboveHorizon,
         bool IsCurrent,
-        string Tooltip);
+        string Tooltip,
+        double DiameterPx)
+    {
+        public Thickness DotMargin => new Thickness(-DiameterPx / 2, -DiameterPx / 2, 0, 0);
+        public double HaloDiameterPx => DiameterPx + 2;
+        public Thickness HaloMargin => new Thickness(-HaloDiameterPx / 2, -HaloDiameterPx / 2, 0, 0);
+
+        // Modest highlight for the actively-animated point, not a doubling - the old fixed
+        // 9px->16px ratio (~1.78x) read as roughly twice the size once applied on top of a
+        // beamwidth-derived base rather than a fixed one, so this is toned down to ~1.35x.
+        public double CurrentDiameterPx => DiameterPx * 1.35;
+        public Thickness CurrentDotMargin => new Thickness(-CurrentDiameterPx / 2, -CurrentDiameterPx / 2, 0, 0);
+        public double CurrentHaloDiameterPx => CurrentDiameterPx + 4;
+        public Thickness CurrentHaloMargin => new Thickness(-CurrentHaloDiameterPx / 2, -CurrentHaloDiameterPx / 2, 0, 0);
+    }
 
     /// <summary>
     /// Rendered state for the Plan view's sky map - background, reference geometry, and
@@ -694,6 +713,8 @@ namespace RASTA.App.ViewModels
             if (result.Success)
             {
                 statusText = $"{result.Points.Count} point(s). Estimated completion: {result.EstimatedCompletionUtc:yyyy-MM-dd HH:mm} UTC (from {MapTimeUtc:yyyy-MM-dd HH:mm} UTC start).";
+                if (result.Warning != null)
+                    statusText += $" {result.Warning}";
                 return ProjectPoints(result.Points, allAboveHorizon: true);
             }
 
@@ -704,10 +725,23 @@ namespace RASTA.App.ViewModels
             return ProjectPoints(rawPoints, allAboveHorizon: false);
         }
 
+        // Floor so a tight beamwidth (high frequency / large dish) never collapses to a
+        // sub-pixel, effectively invisible dot - see [[plan-sky-map-beamwidth-dots]].
+        private const double MinDotDiameterPx = 6.0;
+
         private List<PlanMapPoint> ProjectPoints(IReadOnlyList<TargetPoint> points, bool allAboveHorizon)
         {
             var result = new List<PlanMapPoint>(points.Count);
             int n = points.Count;
+
+            // Dot size represents the antenna's actual sky footprint: beamwidth in degrees
+            // converted to pixels via the dome projector's constant radial scale
+            // (r = (90-el)/90 * Radius, so pixels-per-degree = Radius/90 everywhere - see
+            // DomeProjector). Same beamwidth estimate ComputeDefaultAngularSeparationDeg already
+            // uses, evaluated at this plan's own CenterFrequency.
+            double beamwidthDeg = AntennaUtils.ComputeBeamwidthDeg(Settings.DishDiameterM, CenterFrequency);
+            double pxPerDeg = _projector.Radius / 90.0;
+            double dotDiameterPx = Math.Max(beamwidthDeg * pxPerDeg, MinDotDiameterPx);
 
             for (int i = 0; i < n; i++)
             {
@@ -749,7 +783,7 @@ namespace RASTA.App.ViewModels
                 string tooltip = $"#{i + 1}\n{coordText}\nAz {azDeg:F1}°  El {elDeg:F1}°" +
                     (aboveHorizon ? string.Empty : "\n(below horizon limit)");
 
-                result.Add(new PlanMapPoint(i, x, y, azDeg, elDeg, fill, aboveHorizon, false, tooltip));
+                result.Add(new PlanMapPoint(i, x, y, azDeg, elDeg, fill, aboveHorizon, false, tooltip, dotDiameterPx));
             }
 
             return result;
@@ -768,9 +802,14 @@ namespace RASTA.App.ViewModels
             if (PointDisplayMode == PlanMapDisplayMode.Animate)
             {
                 int count = Math.Max(AnimationCurrentIndex + 1, 0);
+                // The final point never gets the enlarged "current" treatment: reaching it is
+                // always the end of the run (Play pauses itself the tick after arriving there,
+                // Step simply can't advance further), so without this it was left stuck enlarged
+                // indefinitely once the animation finished instead of matching the other points.
+                bool isFinalPoint = AnimationCurrentIndex >= _cachedPoints.Count - 1;
                 visible = _cachedPoints
                     .Take(count)
-                    .Select((p, i) => p with { IsCurrent = i == AnimationCurrentIndex })
+                    .Select((p, i) => p with { IsCurrent = i == AnimationCurrentIndex && !isFinalPoint })
                     .ToList();
             }
             else

@@ -11,7 +11,7 @@ namespace RASTA.Core.Config
         private string plansFolder = "C:\\RAW\\RASTA\\Plans";
 
         [ObservableProperty]
-        private double defaultCentreFrequencyHz = 1_420_700_000;
+        private double defaultCentreFrequencyHz = 1_420_405_800;
 
         [ObservableProperty]
         private double defaultBandwidthHz = 2_400_000;

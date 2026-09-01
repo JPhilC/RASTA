@@ -9,6 +9,19 @@ namespace RASTA.Processing.Planning
     {
         public bool Success { get; }
         public string? ErrorMessage { get; }
+
+        /// <summary>
+        /// Non-fatal, success-path message - currently only set when one or more points at the
+        /// tail of the sweep were dropped because they (and every other point still remaining at
+        /// that point in the schedule - see BuildSweepFromPoints' horizon-skip handling) never
+        /// clear the horizon limit for their own dwell. Null whenever nothing was skipped.
+        /// </summary>
+        public string? Warning { get; }
+
+        /// <summary>How many of the plan's points were dropped for the reason described by
+        /// Warning. 0 when nothing was skipped.</summary>
+        public int SkippedPointCount { get; }
+
         public IReadOnlyList<TargetPoint> Points { get; }
 
         /// <summary>
@@ -21,19 +34,23 @@ namespace RASTA.Processing.Planning
         /// </summary>
         public DateTime? EstimatedCompletionUtc { get; }
 
-        private SweepPlanResult(bool success, string? error, IReadOnlyList<TargetPoint> points, DateTime? estimatedCompletionUtc)
+        private SweepPlanResult(bool success, string? error, string? warning, int skippedPointCount,
+            IReadOnlyList<TargetPoint> points, DateTime? estimatedCompletionUtc)
         {
             Success = success;
             ErrorMessage = error;
+            Warning = warning;
+            SkippedPointCount = skippedPointCount;
             Points = points;
             EstimatedCompletionUtc = estimatedCompletionUtc;
         }
 
-        public static SweepPlanResult Ok(IReadOnlyList<TargetPoint> points, DateTime estimatedCompletionUtc)
-            => new SweepPlanResult(true, null, points, estimatedCompletionUtc);
+        public static SweepPlanResult Ok(IReadOnlyList<TargetPoint> points, DateTime estimatedCompletionUtc,
+            int skippedPointCount = 0, string? warning = null)
+            => new SweepPlanResult(true, null, warning, skippedPointCount, points, estimatedCompletionUtc);
 
         public static SweepPlanResult Fail(string error)
-            => new SweepPlanResult(false, error, Array.Empty<TargetPoint>(), null);
+            => new SweepPlanResult(false, error, null, 0, Array.Empty<TargetPoint>(), null);
     }
 
     public class SweepPlanner
@@ -112,18 +129,26 @@ namespace RASTA.Processing.Planning
             double minElevationDeg,
             double slewRateDegPerSec)
         {
-            // Greedily order the sweep to keep the scope as high above the horizon as
-            // possible throughout: at each step, visit whichever remaining point would
-            // be highest in the sky at its estimated arrival time (accounting for the
-            // slew from wherever the mount currently is). For AltAz plans elevation
-            // doesn't depend on time, so this simply visits the highest-elevation points
-            // first; for Equatorial plans it also accounts for targets rising/setting as
-            // the sweep runs. This prioritises staying high over minimising total slew
-            // distance - if the plan only gets partway through before running out of
-            // time or hitting the horizon limit, the best-positioned targets are captured
-            // first rather than whatever came next in raster order.
+            // Greedily order the sweep by urgency, not raw elevation: at each step, visit
+            // whichever remaining point is closest to dropping below the horizon limit at its
+            // estimated arrival time (accounting for slew from wherever the mount currently is),
+            // working through the sweep in that order - effectively chasing the setting wave
+            // from most-imminent target to least, against the sky's own apparent east-to-west
+            // drift, rather than simply visiting whatever happens to be highest right now. A
+            // target sitting comfortably near culmination can safely wait; one about to set
+            // can't, even if something else is currently a few degrees higher in the sky - the
+            // old "highest elevation first" rule could starve a slowly-setting target behind a
+            // string of higher-but-not-urgent ones and lose it before its turn came round.
+            // AstronomyUtils.SecondsUntilElevationDropsBelow does the actual urgency estimate
+            // for an Equatorial point (closed-form from the elevation identity, hemisphere-
+            // agnostic - a southern site's negative latitude needs no special-casing); an AltAz
+            // point's elevation is time-invariant (no setting to estimate), and a circumpolar
+            // Equatorial point never crosses the limit at this latitude/declination either, so
+            // both are treated as infinitely non-urgent and only then broken by elevation - the
+            // same "stay as high as possible" tie-break the old rule always applied.
             var remaining = rawPoints.ToList();
             var validated = new List<TargetPoint>();
+            int skippedCount = 0;
 
             TargetPoint? previous = null;
             double accumulatedSlewSeconds = 0;
@@ -132,9 +157,10 @@ namespace RASTA.Processing.Planning
             while (remaining.Count > 0)
             {
                 TargetPoint? best = null;
+                double bestUrgencySeconds = double.PositiveInfinity;
                 double bestElevationDeg = double.NegativeInfinity;
                 double bestSlewSeconds = 0;
-                DateTime bestArrivalTime = startTimeUtc;
+                bool anyValid = false;
 
                 foreach (var candidate in remaining)
                 {
@@ -150,27 +176,46 @@ namespace RASTA.Processing.Planning
                         TimeSpan.FromTicks(dwell.Ticks * index) +
                         TimeSpan.FromSeconds(accumulatedSlewSeconds + slewSeconds);
 
-                    double elDeg = ComputeElevationDeg(candidate, arrivalTime, siteLatitudeDeg, siteLongitudeDeg);
+                    double elAtArrival = ComputeElevationDeg(candidate, arrivalTime, siteLatitudeDeg, siteLongitudeDeg);
+                    if (elAtArrival < minElevationDeg)
+                        continue; // already below the limit at this arrival time - not a candidate this round
 
-                    if (elDeg > bestElevationDeg)
+                    double urgencySeconds = candidate.Mode == CoordinateMode.AltAz
+                        ? double.PositiveInfinity
+                        : AstronomyUtils.SecondsUntilElevationDropsBelow(
+                            candidate.RightAscensionHours, candidate.DeclinationDeg, arrivalTime,
+                            siteLatitudeDeg, siteLongitudeDeg, minElevationDeg);
+
+                    // Must stay above the limit for the candidate's whole dwell, not just the
+                    // instant of arrival - otherwise a setting target could start a capture that
+                    // runs (partly) below the limit. Elevation only ever declines monotonically
+                    // from here to the next horizon crossing, so this single comparison is
+                    // exactly equivalent to separately checking the elevation at dwell's end.
+                    if (urgencySeconds < dwell.TotalSeconds)
+                        continue;
+
+                    anyValid = true;
+
+                    bool better = urgencySeconds < bestUrgencySeconds ||
+                        (urgencySeconds == bestUrgencySeconds && elAtArrival > bestElevationDeg);
+
+                    if (better)
                     {
-                        bestElevationDeg = elDeg;
+                        bestUrgencySeconds = urgencySeconds;
+                        bestElevationDeg = elAtArrival;
                         best = candidate;
                         bestSlewSeconds = slewSeconds;
-                        bestArrivalTime = arrivalTime;
                     }
                 }
 
-                // 'best' is the highest-elevation option available at this step - if even
-                // that one is below the horizon limit, every remaining candidate is too.
-                if (bestElevationDeg < minElevationDeg)
+                // No remaining candidate can be captured next (each was individually checked
+                // above) - nothing further can be scheduled from here regardless of order.
+                // Rather than cancelling the whole plan, stop here and report the remainder as
+                // skipped - whatever was already validated above still runs.
+                if (!anyValid)
                 {
-                    string msg =
-                        $"Sweep cancelled: point {index + 1} would be below the horizon.\n" +
-                        $"Best remaining elevation = {bestElevationDeg:F1}°, limit = {minElevationDeg:F1}°.\n" +
-                        $"Arrival time = {bestArrivalTime:HH:mm:ss} UTC.";
-
-                    return SweepPlanResult.Fail(msg);
+                    skippedCount = remaining.Count;
+                    break;
                 }
 
                 accumulatedSlewSeconds += bestSlewSeconds;
@@ -180,6 +225,13 @@ namespace RASTA.Processing.Planning
                 index++;
             }
 
+            if (validated.Count == 0)
+            {
+                return SweepPlanResult.Fail(
+                    $"No points are above the horizon limit ({minElevationDeg:F1}°) at the selected start time " +
+                    $"({startTimeUtc:HH:mm:ss} UTC).");
+            }
+
             // Nominal completion estimate: every point gets the full planned dwell, plus
             // the total slew/settle overhead accumulated while ordering the sweep above.
             DateTime estimatedCompletionUtc =
@@ -187,7 +239,11 @@ namespace RASTA.Processing.Planning
                 TimeSpan.FromTicks(dwell.Ticks * validated.Count) +
                 TimeSpan.FromSeconds(accumulatedSlewSeconds);
 
-            return SweepPlanResult.Ok(validated, estimatedCompletionUtc);
+            string? warning = skippedCount > 0
+                ? $"{skippedCount} point(s) will be skipped - below the horizon limit ({minElevationDeg:F1}°) for their whole dwell."
+                : null;
+
+            return SweepPlanResult.Ok(validated, estimatedCompletionUtc, skippedCount, warning);
         }
 
         private static double ComputeElevationDeg(

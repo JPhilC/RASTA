@@ -214,23 +214,25 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid ToolTip="{Binding Tooltip}">
-                                    <Ellipse x:Name="Halo" Width="11" Height="11" Margin="-5.5,-5.5,0,0"
+                                    <Ellipse x:Name="Halo" Width="{Binding HaloDiameterPx}" Height="{Binding HaloDiameterPx}"
+                                             Margin="{Binding HaloMargin}"
                                              Stroke="White" StrokeThickness="1.5" Fill="Transparent"
                                              IsHitTestVisible="False"/>
-                                    <Ellipse x:Name="Dot" Width="9" Height="9" Margin="-4.5,-4.5,0,0"
+                                    <Ellipse x:Name="Dot" Width="{Binding DiameterPx}" Height="{Binding DiameterPx}"
+                                             Margin="{Binding DotMargin}"
                                              Stroke="Black" StrokeThickness="0.75" Fill="{Binding Fill}"
                                              IsHitTestVisible="False"/>
                                 </Grid>
                                 <DataTemplate.Triggers>
                                     <DataTrigger Binding="{Binding IsCurrent}" Value="True">
-                                        <Setter TargetName="Halo" Property="Width" Value="20"/>
-                                        <Setter TargetName="Halo" Property="Height" Value="20"/>
-                                        <Setter TargetName="Halo" Property="Margin" Value="-10,-10,0,0"/>
+                                        <Setter TargetName="Halo" Property="Width" Value="{Binding CurrentHaloDiameterPx}"/>
+                                        <Setter TargetName="Halo" Property="Height" Value="{Binding CurrentHaloDiameterPx}"/>
+                                        <Setter TargetName="Halo" Property="Margin" Value="{Binding CurrentHaloMargin}"/>
                                         <Setter TargetName="Halo" Property="Stroke" Value="Black"/>
                                         <Setter TargetName="Halo" Property="StrokeThickness" Value="2"/>
-                                        <Setter TargetName="Dot" Property="Width" Value="16"/>
-                                        <Setter TargetName="Dot" Property="Height" Value="16"/>
-                                        <Setter TargetName="Dot" Property="Margin" Value="-8,-8,0,0"/>
+                                        <Setter TargetName="Dot" Property="Width" Value="{Binding CurrentDiameterPx}"/>
+                                        <Setter TargetName="Dot" Property="Height" Value="{Binding CurrentDiameterPx}"/>
+                                        <Setter TargetName="Dot" Property="Margin" Value="{Binding CurrentDotMargin}"/>
                                         <Setter TargetName="Dot" Property="Stroke" Value="White"/>
                                         <Setter TargetName="Dot" Property="StrokeThickness" Value="2"/>
                                     </DataTrigger>

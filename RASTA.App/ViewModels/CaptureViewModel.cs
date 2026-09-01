@@ -419,6 +419,14 @@ public partial class CaptureViewModel : ObservableObject
             return;
         }
 
+        // Non-fatal: some points at the tail of the sweep never clear the horizon limit for
+        // their own dwell and were dropped rather than cancelling the whole sweep (see
+        // SweepPlanner.BuildSweepFromPoints) - let the user know before it actually runs.
+        if (sweepPlanResult.Warning != null)
+        {
+            MessageBox.Show(sweepPlanResult.Warning, "Sweep plan warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
         // Initial estimate from the plan's nominal dwell/slew figures - refined below
         // against real measured per-point timing as the sweep actually runs.
         EstimatedCompletionTime = sweepPlanResult.EstimatedCompletionUtc?.ToLocalTime();

@@ -448,18 +448,43 @@ Several things worth knowing:
   region up to a few tens of degrees across; distortion grows for a much larger region, but that's
   still a vastly better regime than the previous approach's complete failure near the pole for even a
   modest one.
-- **Points are ordered greedily by elevation, not raster order.** After the raw RA/Dec or Az/El grid
-  is generated (by either `BuildRawPoints` path above), `BuildSweepFromPoints` repeatedly picks
-  whichever *remaining* point would be highest in the sky at its estimated arrival time (accounting
-  for slew time from the current position) as the next
-  target — not simply the next one in scan order. For AltAz plans elevation is time-invariant, so this
-  reduces to visiting highest-elevation points first; for Equatorial plans it also accounts for
-  targets rising/setting as the sweep runs long enough for LST to move. This deliberately prioritises
-  staying high over minimising total slew distance: if a plan only gets partway through before hitting
-  the horizon limit or running out of time, the best-positioned targets are the ones already captured.
-  The horizon-limit failure check is evaluated against the *best* remaining candidate each step, so a
-  plan only ever fails once every remaining point is below the limit, not just the next one in scan
-  order (which the old raster-order implementation could fail on prematurely).
+- **Points are ordered greedily by urgency, not raster order or raw elevation.** After the raw
+  RA/Dec or Az/El grid is generated (by either `BuildRawPoints` path above), `BuildSweepFromPoints`
+  repeatedly picks whichever *remaining* point is closest to dropping below the horizon limit at its
+  estimated arrival time (accounting for slew time from the current position) as the next target —
+  not simply the next one in scan order, and not just whichever happens to be highest right now.
+  `AstronomyUtils.SecondsUntilElevationDropsBelow` estimates that urgency for an Equatorial point in
+  closed form, solving the elevation identity directly for the "setting" hour angle rather than
+  stepping time forward searching for the crossing — exact under the same spherical-trig model
+  `EquatorialToHorizontal` itself uses, and hemisphere-agnostic (a southern site's negative latitude
+  flows straight through the same formula, no separate branching needed for which hemisphere the site
+  is in). This deliberately chases the setting wave from most-imminent target to least, against the
+  sky's own apparent east-to-west drift, rather than the "stay as high as possible" rule a pure
+  elevation ranking gives: the old rule could strand a slowly-setting target behind a string of
+  higher-but-not-urgent ones and lose it before its turn came round, even though visiting it first
+  would have cost nothing. An AltAz point's elevation is time-invariant (nothing to estimate — always
+  `PositiveInfinity`), and a circumpolar Equatorial point never crosses the limit at this
+  latitude/declination either (also `PositiveInfinity` — `SecondsUntilElevationDropsBelow` returns it
+  whenever the elevation identity's hour-angle solution has no real root beyond ±1), so both kinds are
+  treated as infinitely non-urgent and only then tie-broken by current elevation — recovering the old
+  "stay as high as possible" behaviour exactly for the (most common in practice) AltAz-plan case, where
+  every valid candidate ties at infinity and elevation is the only real signal. A candidate has to stay
+  above the limit for its own whole dwell, not just the instant of arrival — `urgencySeconds <
+  dwell.TotalSeconds` is the check, exactly equivalent to separately testing elevation at dwell's end
+  since elevation only ever declines monotonically from arrival to the next horizon crossing.
+- **Points that never clear the horizon limit are skipped, not fatal.** Each candidate is checked
+  individually every step (elevation at arrival, then urgency vs. the dwell length) — if none remain
+  valid, nothing further can be scheduled from here regardless of order, so `BuildSweepFromPoints`
+  stops adding points rather than looping through the rest one by one. Whatever was already validated
+  up to that point still runs — the plan is failed outright (`SweepPlanResult.Fail`) only if literally
+  nothing clears the limit, i.e. the very first point. Otherwise it succeeds with the shorter point
+  list plus a non-fatal `SweepPlanResult.Warning` ("N point(s) will be skipped - below the horizon
+  limit...") that `PlanViewModel.BuildOrderedPoints` appends to the map's status text and
+  `CaptureViewModel.CaptureSweepAsync` surfaces via a `MessageBox` before the sweep actually starts —
+  replacing what used to be an unconditional "Sweep cancelled: point N would be below the horizon"
+  hard failure for the whole plan over what's typically just its tail (e.g. a Region/Range plan whose
+  grid reaches declinations this site's latitude can never see above the horizon limit, or a late-night
+  start where some targets have already set by the time the schedule reaches them).
 
 ### Plan view sky map
 
@@ -549,8 +574,11 @@ recomputed.
 - **Capture points run through the real `SweepPlanner` pipeline**, not just a raw grid —
   `BuildOrderedPoints` calls `_planner.BuildSweep(plan, MapTimeUtc, ...)` treating `MapTimeUtc` as the
   plan's prospective start time, so the map shows the actual execution order, horizon-limit outcome,
-  and ETA a real sweep would produce. On failure (e.g. a point below the horizon limit) it falls back
-  to `SweepPlanner.BuildRawPoints`' raw, unordered grid, colour-coding each point by its own elevation
+  and ETA a real sweep would produce. A plan whose grid partly dips below the horizon limit no longer
+  counts as a failure here (see "Points that never clear the horizon limit are skipped, not fatal"
+  above) — it still shows every capturable point plus the appended skip warning in `statusText`. On
+  the rarer *total* failure (nothing in the plan ever clears the limit) it falls back to
+  `SweepPlanner.BuildRawPoints`' raw, unordered grid, colour-coding each point by its own elevation
   at `MapTimeUtc` against `Settings.HorizonLimitDeg` — so a failing plan is still diagnosable on the
   map, not just an error message. Points are sequence-coloured start→end via `HeatmapImageBuilder.Ramp`
   (order, not a measured value) — each dot's `PlanView.xaml` template also carries a white outer ring
@@ -559,7 +587,26 @@ recomputed.
   with, a single stroke colour always has some patch of real HI4PI background it can blend into (a
   dot was reported vanishing against a closely-matching background pixel) — pairing white with black
   guarantees at least one of the two contrasts with whatever's underneath, verified against the exact
-  background pixel colour at several points. `PlanViewModel.PointDisplayMode` (`All`/`Animate`,
+  background pixel colour at several points. Each dot's diameter is the antenna's actual beamwidth
+  rather than a fixed pixel size — `PlanViewModel.ProjectPoints` computes it once per refresh from
+  `AntennaUtils.ComputeBeamwidthDeg(Settings.DishDiameterM, CenterFrequency)` (the same estimate
+  `ComputeDefaultAngularSeparationDeg` uses, see "Site settings" above) converted to pixels via
+  `DomeProjector`'s constant radial scale (`Radius / 90` px/degree, true everywhere since
+  `Project`'s `r = (90-el)/90 * Radius`), floored at `MinDotDiameterPx` (6px) so a tight beamwidth at
+  high frequency/large dish never collapses to a sub-pixel dot. `PlanMapPoint.DiameterPx` carries this
+  through; `HaloDiameterPx`/`DotMargin`/`HaloMargin` and their `Current*` counterparts (a modest
+  ~1.35x enlargement for the actively-animated point — the old fixed 9px→16px ratio, ~1.78x, read as
+  roughly double once applied on top of a beamwidth-derived base instead of a fixed one) are computed
+  properties on the record itself, not stored fields, so the `p with { IsCurrent = ... }` pattern
+  `RefreshVisiblePoints` uses for animation keeps deriving correct sizes with no extra constructor
+  args. `RefreshVisiblePoints` also never applies that enlargement to the sequence's final point:
+  reaching it always means the run is done (`PlayAnimation`'s timer pauses itself the tick after
+  arriving there; `StepAnimation` simply can't advance further), so without this exclusion the last
+  point used to stay enlarged indefinitely once the animation finished instead of matching the rest.
+  The map isn't conformal, so a true circular footprint would be slightly elongated
+  in azimuth near the horizon (constant radial scale, growing tangential scale away from zenith) — a
+  plain circle from the radial scale is treated as a fine approximation, not corrected to an ellipse.
+  `PlanViewModel.PointDisplayMode` (`All`/`Animate`,
   toolbar radio pair) switches between showing every point at once and stepping through them one at a
   time (`PlayAnimationCommand`/`Pause`/`Step`/`Reset`, a `DispatcherTimer` at a fixed, user-adjustable
   seconds-per-point — not scaled to the plan's real dwell time, kept simple since the real ETA is

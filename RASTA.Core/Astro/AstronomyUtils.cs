@@ -340,6 +340,79 @@ namespace RASTA.Core.Astro
             return Math.Sqrt(dRa * dRa + dDec * dDec);
         }
 
+        // Mean sidereal rate: a sidereal day (360°) is ~3m56s shorter than a mean solar day
+        // (86400s) - 360.985647° of sky rotation per 86400 real seconds, not a flat 360°/86400s.
+        // Used by SecondsUntilElevationDropsBelow below; same low-precision-analytic spirit as
+        // the rest of this file (LocalSiderealTimeDegrees' own GMST formula already bakes in
+        // the equivalent creep, this is just its per-second rate for a short time-delta estimate).
+        private const double SiderealDegreesPerSecond = 360.985647 / 86400.0;
+
+        /// <summary>
+        /// Estimates how many seconds from <paramref name="atUtc"/> until this RA/Dec target's
+        /// elevation next drops below <paramref name="minElevationDeg"/> - used by
+        /// SweepPlanner.BuildSweepFromPoints to order a sweep by urgency (soonest-to-set first)
+        /// rather than by current elevation alone, so a target that's about to be lost gets
+        /// visited before one that merely happens to be lower right now but has plenty of time
+        /// left before it sets.
+        ///
+        /// Solves the elevation identity for the "setting" hour angle directly (the positive
+        /// root of cos(H) = (sin(minEl) - sin(dec)sin(lat)) / (cos(dec)cos(lat))) rather than
+        /// stepping time forward searching for the crossing - closed-form, and exact under the
+        /// same spherical-trig model EquatorialToHorizontal itself uses. Hemisphere-agnostic: a
+        /// southern site's negative latitude flows straight through the same formula (sin/cos of
+        /// a negative angle are already correct), so there's no separate branching needed for
+        /// which hemisphere the site is in.
+        ///
+        /// Returns PositiveInfinity for a target that's circumpolar at this latitude/declination
+        /// combination (its minimum altitude never dips below minElevationDeg - there's no "next"
+        /// setting event to estimate) - AltAz points are handled separately by the caller, since
+        /// their elevation doesn't depend on time at all. Assumes the target is already at or
+        /// above minElevationDeg at atUtc (SweepPlanner checks this itself first); calling this on
+        /// an already-set target isn't meaningful and the clamp below just floors the result at 0
+        /// rather than returning a stale/negative value from the previous cycle's crossing.
+        /// </summary>
+        public static double SecondsUntilElevationDropsBelow(
+            double raHours,
+            double decDeg,
+            DateTime atUtc,
+            double latDeg,
+            double lonDeg,
+            double minElevationDeg)
+        {
+            double decRad = decDeg * Math.PI / 180.0;
+            double latRad = latDeg * Math.PI / 180.0;
+            double minElRad = minElevationDeg * Math.PI / 180.0;
+
+            double cosDecLat = Math.Cos(decRad) * Math.Cos(latRad);
+            if (Math.Abs(cosDecLat) < 1e-9)
+                return double.PositiveInfinity; // dec/lat pathologically near a pole - treat as never-setting rather than divide by ~zero
+
+            double cosHLimit = (Math.Sin(minElRad) - Math.Sin(decRad) * Math.Sin(latRad)) / cosDecLat;
+
+            if (cosHLimit <= -1.0)
+                return double.PositiveInfinity; // circumpolar at this limit - max altitude never dips below it
+            if (cosHLimit >= 1.0)
+                return 0.0; // never actually reaches the limit - shouldn't happen for an already-visible target; treat as maximally urgent rather than throw
+
+            double hLimitDeg = Math.Acos(cosHLimit) * 180.0 / Math.PI; // the setting-side hour angle, in (0,180)
+
+            double raDeg = raHours * 15.0;
+            double lstDeg = LocalSiderealTimeDegrees(atUtc, lonDeg);
+            double hNowDeg = WrapDegrees180(lstDeg - raDeg);
+
+            double deltaDeg = Math.Max(0.0, hLimitDeg - hNowDeg);
+            return deltaDeg / SiderealDegreesPerSecond;
+        }
+
+        /// <summary>Wraps a degree value into (-180, 180].</summary>
+        private static double WrapDegrees180(double deg)
+        {
+            double d = deg % 360.0;
+            if (d < 0) d += 360.0; // now [0, 360)
+            if (d > 180.0) d -= 360.0; // now (-180, 180]
+            return d;
+        }
+
     }
 
 
