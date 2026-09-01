@@ -45,6 +45,16 @@ namespace RASTA.App.ViewModels
     /// HeatmapImageBuilder.Ramp (order, not a measured value) unless AboveHorizon is false, in
     /// which case it's drawn dimmed/red regardless of sequence - see
     /// PlanViewModel.BuildOrderedPoints' horizon-limit fallback path.
+    ///
+    /// Fill is a pre-built, Frozen SolidColorBrush (not a bare Color left for the view to wrap in
+    /// its own inline "SolidColorBrush Color={Binding}") - PlanView.xaml's point template binds
+    /// Ellipse.Fill straight to it as a plain attribute. A Color bound through a nested
+    /// SolidColorBrush element is itself a Freezable with its own binding, and once the point
+    /// template picked up DataTemplate.Triggers (for the two-tone halo) that combination started
+    /// throwing "Cannot find governing FrameworkElement" data-binding errors on every Points
+    /// rebuild (e.g. every SelectedPlan/plan switch) - a known WPF trap for a bound Freezable
+    /// sharing a template with named-target triggers. A Frozen brush has no inheritance-context
+    /// to lose in the first place.
     /// </summary>
     public record PlanMapPoint(
         int SequenceIndex,
@@ -52,7 +62,7 @@ namespace RASTA.App.ViewModels
         double Y,
         double AzDeg,
         double ElDeg,
-        Color Color,
+        Brush Fill,
         bool AboveHorizon,
         bool IsCurrent,
         string Tooltip);
@@ -733,11 +743,13 @@ namespace RASTA.App.ViewModels
                 {
                     color = Color.FromRgb(0x99, 0x33, 0x33); // dimmed red - below the horizon limit at MapTimeUtc
                 }
+                var fill = new SolidColorBrush(color);
+                fill.Freeze();
 
                 string tooltip = $"#{i + 1}\n{coordText}\nAz {azDeg:F1}°  El {elDeg:F1}°" +
                     (aboveHorizon ? string.Empty : "\n(below horizon limit)");
 
-                result.Add(new PlanMapPoint(i, x, y, azDeg, elDeg, color, aboveHorizon, false, tooltip));
+                result.Add(new PlanMapPoint(i, x, y, azDeg, elDeg, fill, aboveHorizon, false, tooltip));
             }
 
             return result;

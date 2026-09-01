@@ -218,12 +218,8 @@
                                              Stroke="White" StrokeThickness="1.5" Fill="Transparent"
                                              IsHitTestVisible="False"/>
                                     <Ellipse x:Name="Dot" Width="9" Height="9" Margin="-4.5,-4.5,0,0"
-                                             Stroke="Black" StrokeThickness="0.75"
-                                             IsHitTestVisible="False">
-                                        <Ellipse.Fill>
-                                            <SolidColorBrush Color="{Binding Color}"/>
-                                        </Ellipse.Fill>
-                                    </Ellipse>
+                                             Stroke="Black" StrokeThickness="0.75" Fill="{Binding Fill}"
+                                             IsHitTestVisible="False"/>
                                 </Grid>
                                 <DataTemplate.Triggers>
                                     <DataTrigger Binding="{Binding IsCurrent}" Value="True">
