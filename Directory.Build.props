@@ -2,7 +2,7 @@
 
   <!-- Central version number for all RASTA projects/assemblies. Bump this for each release. -->
   <PropertyGroup>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
   </PropertyGroup>
 
 </Project>
