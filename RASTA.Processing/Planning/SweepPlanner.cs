@@ -300,18 +300,21 @@ namespace RASTA.Processing.Planning
         /// <summary>
         /// Turns a closed loop of RA/Dec vertices (traced on the Plan view's sky map - see
         /// TargetRange.RegionVertices) into a coverage grid, the region-mode counterpart to
-        /// BuildEquatorialSweep's Start/End-box grid. Walks the same cos(Dec)-corrected
-        /// row/column grid as BuildEquatorialSweep, but over the vertices' own RA/Dec bounding
-        /// box rather than a typed range, keeping only grid points that actually fall inside
-        /// the polygon (standard ray-casting point-in-polygon test on the RA-hours x Dec-degrees
-        /// plane).
+        /// BuildEquatorialSweep's Start/End-box grid.
+        ///
+        /// Unlike BuildEquatorialSweep, this does its point-in-polygon test and grid generation
+        /// in a local GnomonicProjection tangent-plane centered on the vertices' own pole-safe
+        /// centroid, not raw RA-hours x Dec-degrees - see GnomonicProjection's own remarks for
+        /// why: near the celestial pole (very natural to trace a region near, drawing close to
+        /// due-North from a mid/high-latitude site), a compact patch of real sky maps to a
+        /// wildly distorted, sometimes self-intersecting shape in plain RA/Dec, which used to
+        /// scatter grid points far outside the actually-drawn region and blow the bounding box
+        /// out to nearly the whole 24h RA range. The tangent plane's xi/eta axes are already
+        /// locally equal-scale near the tangent point, so - unlike BuildEquatorialSweep's RA
+        /// axis - neither needs a separate cos(Dec)-style row correction here.
         ///
         /// Equatorial only - a region drawn on the map is captured as fixed RA/Dec (see
-        /// PlanViewModel), the same way any other Equatorial plan point is. Like StepRange
-        /// elsewhere in this file, this has no concept of RA's 24h wraparound: a region whose
-        /// bounding box would need to cross the 24h/0h seam produces a bounding box spanning
-        /// almost the whole circle instead of the short arc actually enclosed - draw a region
-        /// that doesn't straddle RA=0h/24h.
+        /// PlanViewModel), the same way any other Equatorial plan point is.
         /// </summary>
         public static IReadOnlyList<TargetPoint> BuildRegionGrid(
             IReadOnlyList<RegionVertex> vertices,
@@ -324,22 +327,28 @@ namespace RASTA.Processing.Planning
             if (separationDeg <= 0)
                 return Array.Empty<TargetPoint>();
 
-            double minDec = vertices.Min(v => v.DecDeg);
-            double maxDec = vertices.Max(v => v.DecDeg);
-            double minRa = vertices.Min(v => v.RaHours);
-            double maxRa = vertices.Max(v => v.RaHours);
+            var (centerRa, centerDec) = GnomonicProjection.ComputeCentroid(
+                vertices.Select(v => (v.RaHours, v.DecDeg)));
+            var projection = new GnomonicProjection(centerRa, centerDec);
 
-            var polygon = vertices.Select(v => (x: v.RaHours, y: v.DecDeg)).ToList();
+            var polygon = vertices.Select(v => projection.Project(v.RaHours, v.DecDeg)).ToList();
+
+            double minXi = polygon.Min(p => p.xi);
+            double maxXi = polygon.Max(p => p.xi);
+            double minEta = polygon.Min(p => p.eta);
+            double maxEta = polygon.Max(p => p.eta);
+            double stepRad = separationDeg * Math.PI / 180.0;
 
             var points = new List<TargetPoint>();
-            foreach (double dec in StepRange(minDec, maxDec, separationDeg))
+            foreach (double eta in StepRange(minEta, maxEta, stepRad))
             {
-                double raStepHours = DegreesToHours(RowStepDeg(separationDeg, dec));
-
-                foreach (double ra in StepRange(minRa, maxRa, raStepHours))
+                foreach (double xi in StepRange(minXi, maxXi, stepRad))
                 {
-                    if (IsPointInPolygon(ra, dec, polygon))
+                    if (IsPointInPolygon(xi, eta, polygon))
+                    {
+                        var (ra, dec) = projection.Unproject(xi, eta);
                         points.Add(TargetPoint.FromRaDec(ra, dec));
+                    }
                 }
             }
 

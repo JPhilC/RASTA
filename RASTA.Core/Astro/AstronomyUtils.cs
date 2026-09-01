@@ -80,11 +80,29 @@ namespace RASTA.Core.Astro
 
             double sinDec = Math.Sin(el) * Math.Sin(lat) + Math.Cos(el) * Math.Cos(lat) * Math.Cos(az);
             double dec = Math.Asin(sinDec);
+            double cosDec = Math.Cos(dec);
 
             // atan2 (not acos, unlike EquatorialToHorizontal above) so the hour angle
             // comes out over the full -180..+180 range instead of folding east/west.
-            double sinHa = -Math.Sin(az) * Math.Cos(el);
-            double cosHa = (Math.Sin(el) - Math.Sin(lat) * sinDec) / (Math.Cos(lat) * Math.Cos(dec));
+            //
+            // Both components atan2 takes must be the SAME multiple of the true sin(HA)/cos(HA)
+            // (any shared positive scale is fine - atan2 is scale-invariant - but the two can't
+            // be scaled *differently* from each other). cosHa below is the true cos(HA) at scale
+            // 1, straight from solving sinEl = sinDec*sinLat + cosDec*cosLat*cosHA for cosHA. The
+            // matching sinHa, by the spherical law of sines (sin(HA)/sin(90-El) = sin(Az)/sin(90-Dec)),
+            // is cosEl*sinAz/cosDec at that same scale - the /cosDec was missing here (this line
+            // used to just be "-Math.Sin(az) * Math.Cos(el)"), leaving sinHa scaled by an extra
+            // -cosDec relative to cosHa. atan2 of two differently-scaled components isn't the
+            // true angle at all except where the mismatch happens to vanish - sinHa=0 (on the
+            // meridian, Az/HA = 0 or 180) or cosDec=1 (Dec=0) - which is exactly why this was easy
+            // to miss: those are also the only points a quick visual check tends to land on.
+            // Everywhere else it was off by several degrees to tens of degrees, which is what
+            // made a region traced on the Plan view's map draw its lines away from the actual
+            // clicked points - see PlanViewModel.HandleMapLeftClick, which round-trips a click's
+            // Az/El through this function and then back through EquatorialToHorizontal to render
+            // the drawing preview polyline.
+            double sinHa = -Math.Sin(az) * Math.Cos(el) / cosDec;
+            double cosHa = (Math.Sin(el) - Math.Sin(lat) * sinDec) / (Math.Cos(lat) * cosDec);
             double ha = Math.Atan2(sinHa, cosHa);
 
             double lstDeg = LocalSiderealTimeDegrees(utc, lonDeg);

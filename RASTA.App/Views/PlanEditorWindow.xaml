@@ -50,7 +50,7 @@
 
                 <StackPanel Orientation="Horizontal"
                             Margin="0 5 0 0"
-                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                            Visibility="{Binding IsRangeGeometry, Converter={StaticResource BooleanToVisibilityConverter}}">
 
                     <!-- RA/Dec -->
                     <StackPanel Margin="0 5 20 0">
@@ -66,7 +66,7 @@
 
                 <StackPanel Orientation="Horizontal"
                             Margin="0 5 0 0"
-                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                            Visibility="{Binding IsRangeGeometry, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <StackPanel Margin="0 0 20 0">
                         <TextBlock Text="Dec Start (deg)"/>
                         <TextBox Width="120" Text="{Binding Range.DecStartDeg}"/>
@@ -77,6 +77,16 @@
                         <TextBox Width="120" Text="{Binding Range.DecEndDeg}"/>
                     </StackPanel>
                 </StackPanel>
+
+                <!-- Region summary - the region itself is drawn on the Plan view's map (Draw
+                     Region toolbar button there), not typed here; this just reflects how many
+                     vertices are currently defined. -->
+                <StackPanel Margin="0 5 0 0"
+                            Visibility="{Binding IsRegionGeometry, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock FontStyle="Italic" TextWrapping="Wrap"
+                               Text="{Binding Range.RegionVertices.Count, StringFormat='Region drawn on the map ({0} vertices) - use Draw Region / Clear Region on the Plan view to edit it.'}"/>
+                </StackPanel>
+
                 <!-- Az/El -->
                 <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
                             Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">

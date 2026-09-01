@@ -384,9 +384,10 @@ silently fails to bind (a real mistake made and fixed while building this).
 
 `PlanViewModel.ComputeDefaultAngularSeparationDeg` (half of `BeamwidthDeg`, evaluated at the *plan's
 own* `CenterFrequency` rather than the app-wide default) seeds a brand new plan's
-`TargetRange.AngularSeparationDeg` — applied at `PlanViewModel` construction and by `NewPlanCommand` —
-in place of the unhelpful `0` a fresh `TargetRange` used to start with. `LoadPlan`/`CopyPlan` never
-touch it, always preserving whatever separation a saved plan already specifies.
+`TargetRange.AngularSeparationDeg` — applied at `PlanViewModel` construction and by
+`NewRangePlanCommand`/`NewRegionPlanCommand` — in place of the unhelpful `0` a fresh `TargetRange`
+used to start with. `LoadPlan`/`CopyPlan` never touch it, always preserving whatever separation a
+saved plan already specifies.
 
 ### Sweep planning
 
@@ -426,11 +427,27 @@ Several things worth knowing:
   below) — a real `CapturePlan.TargetRange` meant to wrap through 0h RA hits the identical footgun.
 - **`SweepPlanner.BuildRegionGrid`** is the region-mode counterpart to the `TargetRange` Start/End
   grid above: given a closed loop of `RegionVertex` (RA/Dec) points traced on the Plan view's sky map
-  (`TargetRange.RegionVertices`, only meaningful when `TargetRange.GeometryMode == Region`), it walks
-  the same cos(Dec)-corrected row/column grid over the vertices' own RA/Dec bounding box, keeping only
-  grid points that fall inside the polygon (a standard ray-casting point-in-polygon test on the
-  RA-hours × Dec-degrees plane). Equatorial-only, and shares `StepRange`'s RA-wraparound limitation — a
-  region can't usefully straddle the 24h/0h seam.
+  (`TargetRange.RegionVertices`, only meaningful when `TargetRange.GeometryMode == Region`), it fills
+  the polygon with a grid of `TargetPoint`s at `AngularSeparationDeg` spacing. Equatorial-only.
+  Originally did this directly in RA-hours × Dec-degrees (a bounding box plus a standard ray-casting
+  point-in-polygon test) — that broke down badly for a region traced anywhere near the celestial
+  pole, which for a mid/high-latitude site means *any* region drawn near due-North on the Plan view's
+  map (a very natural, common thing to want to do, not a rare edge case): near the pole a compact
+  patch of real sky maps to a wildly distorted, sometimes self-intersecting shape in plain RA/Dec (a
+  ~60°×25° wedge near due-North was measured spanning RA 1.9h–11.4h), which scattered generated grid
+  points far outside the region actually drawn and blew the RA bounding box out to nearly the whole
+  24h range — the flip side of the same coordinate degeneracy `StepRange`'s RA-wraparound limitation
+  above is a milder symptom of. Now uses `GnomonicProjection` (`RASTA.Processing/Planning/
+  GnomonicProjection.cs`) instead: a standard astrometric tangent-plane ("standard coordinates" /
+  FITS WCS TAN) projection centered on a pole-safe centroid of the vertices (`ComputeCentroid` —
+  the mean of their unit vectors, re-normalized, not a naive RA-hours average, since that's itself
+  meaningless near the pole/24h seam). The polygon and grid-fill both happen in that local (ξ, η)
+  tangent plane, which is already locally equal-scale near its own center (no separate cos(Dec) row
+  correction needed there, unlike the Start/End grid above), and the surviving grid points are
+  projected back to RA/Dec at the end. Exact at the tangent point and a good approximation for a
+  region up to a few tens of degrees across; distortion grows for a much larger region, but that's
+  still a vastly better regime than the previous approach's complete failure near the pole for even a
+  modest one.
 - **Points are ordered greedily by elevation, not raster order.** After the raw RA/Dec or Az/El grid
   is generated (by either `BuildRawPoints` path above), `BuildSweepFromPoints` repeatedly picks
   whichever *remaining* point would be highest in the sky at its estimated arrival time (accounting
@@ -464,7 +481,8 @@ non-blank name and wraps the actual write in try/catch rather than failing silen
 `PlanViewModel.RefreshMapDisplay` recomputes the map's background/geometry/points and is wired up
 from every property that can change what the map should show — `PlanType`, `MapTimeUtc`,
 `MapGridMode`, and `Range` plus everything inside it (`Range.PropertyChanged` is subscribed/
-resubscribed whenever `Range` itself is reassigned wholesale, e.g. by `LoadPlan`/`NewPlan` — see
+resubscribed whenever `Range` itself is reassigned wholesale, e.g. by `LoadPlan`/`NewRangePlan`/
+`NewRegionPlan` — see
 `OnRangeChanged`, since the existing Range Start/End `TextBox`es bind directly to `Range.RAStartHours`
 etc., not through a `PlanViewModel`-level proxy). `RefreshVisiblePoints` is the cheaper half, called
 on its own by mode/animation-step changes that don't need the background/geometry/ordering
@@ -535,19 +553,37 @@ recomputed.
   to `SweepPlanner.BuildRawPoints`' raw, unordered grid, colour-coding each point by its own elevation
   at `MapTimeUtc` against `Settings.HorizonLimitDeg` — so a failing plan is still diagnosable on the
   map, not just an error message. Points are sequence-coloured start→end via `HeatmapImageBuilder.Ramp`
-  (order, not a measured value). `PlanViewModel.PointDisplayMode` (`All`/`Animate`, toolbar radio pair)
-  switches between showing every point at once and stepping through them one at a time
-  (`PlayAnimationCommand`/`Pause`/`Step`/`Reset`, a `DispatcherTimer` at a fixed, user-adjustable
+  (order, not a measured value) — each dot's `PlanView.xaml` template also carries a white outer ring
+  behind its own black-stroked fill, a two-tone halo rather than a single stroke colour: since a
+  point's fill comes from the same blue-to-red spectrum the Milky Way background itself is coloured
+  with, a single stroke colour always has some patch of real HI4PI background it can blend into (a
+  dot was reported vanishing against a closely-matching background pixel) — pairing white with black
+  guarantees at least one of the two contrasts with whatever's underneath, verified against the exact
+  background pixel colour at several points. `PlanViewModel.PointDisplayMode` (`All`/`Animate`,
+  toolbar radio pair) switches between showing every point at once and stepping through them one at a
+  time (`PlayAnimationCommand`/`Pause`/`Step`/`Reset`, a `DispatcherTimer` at a fixed, user-adjustable
   seconds-per-point — not scaled to the plan's real dwell time, kept simple since the real ETA is
   already shown as text); animation shows a trail of already-visited points dimmed alongside the
-  current one enlarged, rather than one dot in isolation.
+  current one enlarged (both rings grow, and swap colours - black outer/white inner - to stay visually
+  distinct from the regular trail), rather than one dot in isolation.
 - **Freeform region drawing** (Equatorial plans only) — `PlanViewModel.StartDrawRegionCommand` begins
   capturing left-clicks on the map as `RegionVertex` (RA/Dec) points; `FinishRegionCommand` closes the
   loop into `TargetRange.RegionVertices`/`GeometryMode = Region` (see `SweepPlanner.BuildRegionGrid`
   above); `ClearRegionCommand` (`CanClearRegion` = drawing in progress *or* a region already committed)
   clears both the in-progress drawing and any already-finished region, resetting `GeometryMode` back to
   `Range` — the button used to only ever clear the in-progress drawing, so a *finished* region had no
-  way to be removed short of drawing a new one over it.
+  way to be removed short of drawing a new one over it. `PlanViewModel.NewRangePlanCommand`/
+  `NewRegionPlanCommand` ("New Range"/"New Region" on `PlanView.xaml`'s Saved Plans panel, renamed/
+  added from a single "New Plan" button) start a plan with its intended `GeometryMode` already set
+  rather than leaving it to be picked, or left hazy, afterward — `NewRegionPlan` forces
+  `PlanType = Equatorial` (Region is Equatorial-only) and sets `GeometryMode = Region` up front with
+  empty `RegionVertices`, ready for `Draw Region` to populate. `PlanViewModel.IsRangeGeometry`/
+  `IsRegionGeometry` (`PlanType == Equatorial` combined with `Range.GeometryMode`, kept in sync via
+  `OnPlanTypeChanged`/`OnRangeChanged`/`Range_PropertyChanged`) drive which fields
+  `PlanEditorWindow.xaml` actually shows: the RA/Dec Start/End boxes only for `IsRangeGeometry`, and a
+  short "Region drawn on the map (N vertices) - use Draw Region / Clear Region on the Plan view to
+  edit it" summary for `IsRegionGeometry`, instead of the RA/Dec boxes staying visible (and editable,
+  though meaningless) regardless of which geometry mode a plan was actually in.
 - **Right-click "Slew & Capture Here"** — `PlanViewModel.HandleMapRightClick` (called from
   `PlanView.xaml.cs`'s `PreviewMouseRightButtonDown`, before the `ContextMenu` itself opens) computes
   the sky point under the cursor in whichever coordinate mode the connected mount is actually in
@@ -561,15 +597,16 @@ recomputed.
   everything else in the tree does.
 
 **The Saved Plans list** (`PlanView.xaml`'s right-hand panel — `SavedPlans`/`SelectedPlan`/`LoadPlan`/
-`CopyPlan`/`DeletePlan`/`NewPlan`) opens with a sensible plan already loaded rather than blank:
-`PlanViewModel.SelectInitialPlan`, run once in the constructor (this view model is effectively a
-singleton for the app's lifetime — one `ServiceCollection` built once, no scopes created afterward, see
-"Project layering" above — so "when Plan is first opened" and "when this constructor runs" are the same
-moment), picks whichever saved plan was most recently used or modified — its `.json` file's own
-last-write time, touched by `SavePlan` — falling back to the first plan in `SavedPlans`' own folder-scan
-order when file times are equal/unreadable (`OrderByDescending` is a stable sort, so that fallback falls
-out of the same call rather than needing a separate branch), falling back to a brand new plan
-(`NewPlan()`) if nothing is saved at all. `Load`/`Copy`/`Delete` stay visible always rather than
+`CopyPlan`/`DeletePlan`/`NewRangePlan`/`NewRegionPlan`) opens with a sensible plan already loaded
+rather than blank: `PlanViewModel.SelectInitialPlan`, run once in the constructor (this view model is
+effectively a singleton for the app's lifetime — one `ServiceCollection` built once, no scopes created
+afterward, see "Project layering" above — so "when Plan is first opened" and "when this constructor
+runs" are the same moment), picks whichever saved plan was most recently used or modified — its
+`.json` file's own last-write time, touched by `SavePlan` — falling back to the first plan in
+`SavedPlans`' own folder-scan order when file times are equal/unreadable (`OrderByDescending` is a
+stable sort, so that fallback falls out of the same call rather than needing a separate branch),
+falling back to a brand new Range-geometry plan (`NewRangePlan()`) if nothing is saved at all.
+`Load`/`Copy`/`Delete` stay visible always rather than
 collapsing when nothing's selected, gated instead via `CanEditOrDeleteSelectedPlan`
 (`SelectedPlan != null`) on each command's `CanExecute` — the same disable-don't-hide convention the
 rest of the app uses (e.g. `NavigationViewModel.CanNavigateCapture`) — with `SelectedPlan`'s setter
@@ -930,6 +967,24 @@ appearing to jump/freeze/overlap each other as `DomeTimeUtc` was moved across a 
 Fixed by disambiguating with the sign of sin(hour angle) — the same underlying issue
 `HorizontalToEquatorial` (immediately below it in the same file) already sidesteps by using `atan2`
 instead of `acos` for its own hour-angle recovery, for exactly this reason.
+
+Using `atan2` there avoided the *direction*-ambiguity problem, but `HorizontalToEquatorial` had its
+own separate, previously-unnoticed bug: `atan2`'s two arguments have to be the *same* scale (any
+shared positive multiple of true `sin(HA)`/`cos(HA)` is fine, `atan2` is scale-invariant, but the two
+can't be scaled *differently* from each other) — `cosHa` was the true value at scale 1, straight from
+solving the elevation identity for `cosHA`, but `sinHa` was missing a `/cos(Dec)` factor that the
+spherical law of sines (`sin(HA)/sin(90-El) = sin(Az)/sin(90-Dec)`) says it needs to match. That
+mismatch happens to vanish exactly on the meridian (`sin(HA)=0`) and at Dec=0 (`cos(Dec)=1`) — which
+made it easy to miss on a casual check — but was off by anywhere from a few to tens of degrees
+everywhere else, confirmed by a round-trip test (`Unproject → HorizontalToEquatorial →
+EquatorialToHorizontal → Project` should return the exact input pixel; it didn't, until the missing
+`/cosDec` was added). This function is used by `PlanViewModel` (the sky map's hover readout, region-
+vertex clicks, and right-click "Slew & Capture Here"), `MilkyWayBackgroundBuilder` (the background
+itself was being sampled through this same broken conversion, so its geometry was subtly, smoothly
+warped in a way that still looked like a plausible Milky Way band), `ColdSkyLocator` (cold-sky
+candidate positions' Galactic-latitude check), and `FitsFileMetaData` (RA/Dec reconstruction for
+AltAz-mode captures, feeding the LSR velocity correction) — so the fix reaches well beyond the Plan
+view's region-drawing tool where it was first noticed (as lines drawn not matching the clicked points).
 
 Not yet implemented: zooming in to switch from the dome projection to a pannable Mercator view (a
 genuine interactive-viewer feature — hit-testing, drag/zoom state, a second projection and a transition

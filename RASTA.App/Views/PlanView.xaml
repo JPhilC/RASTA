@@ -191,7 +191,14 @@
                     <Polyline Points="{Binding MapDisplay.RegionPolyline}" Stroke="Yellow" StrokeThickness="2"
                               StrokeDashArray="4 2" IsHitTestVisible="False"/>
 
-                    <!-- Capture points (sequence-coloured; the current animated point is enlarged) -->
+                    <!-- Capture points (sequence-coloured; the current animated point is enlarged).
+                         Each dot gets a white outer ring behind its own black-stroked fill - a
+                         two-tone halo, not just a single stroke colour - since the dot's fill
+                         comes from the same blue-to-red spectrum ramp the Milky Way background
+                         itself is coloured with (HeatmapImageBuilder.Ramp), a single stroke colour
+                         will always have some patch of background it blends into; pairing white
+                         with black guarantees at least one of the two contrasts with whatever's
+                         underneath. -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.Points}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -206,26 +213,32 @@
                         </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Ellipse Width="9" Height="9" Margin="-4.5,-4.5,0,0"
-                                         Stroke="Black" StrokeThickness="0.5" ToolTip="{Binding Tooltip}"
-                                         IsHitTestVisible="False">
-                                    <Ellipse.Fill>
-                                        <SolidColorBrush Color="{Binding Color}"/>
-                                    </Ellipse.Fill>
-                                    <Ellipse.Style>
-                                        <Style TargetType="Ellipse">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
-                                                    <Setter Property="Width" Value="16"/>
-                                                    <Setter Property="Height" Value="16"/>
-                                                    <Setter Property="Margin" Value="-8,-8,0,0"/>
-                                                    <Setter Property="Stroke" Value="White"/>
-                                                    <Setter Property="StrokeThickness" Value="2"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Ellipse.Style>
-                                </Ellipse>
+                                <Grid ToolTip="{Binding Tooltip}">
+                                    <Ellipse x:Name="Halo" Width="11" Height="11" Margin="-5.5,-5.5,0,0"
+                                             Stroke="White" StrokeThickness="1.5" Fill="Transparent"
+                                             IsHitTestVisible="False"/>
+                                    <Ellipse x:Name="Dot" Width="9" Height="9" Margin="-4.5,-4.5,0,0"
+                                             Stroke="Black" StrokeThickness="0.75"
+                                             IsHitTestVisible="False">
+                                        <Ellipse.Fill>
+                                            <SolidColorBrush Color="{Binding Color}"/>
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                </Grid>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                        <Setter TargetName="Halo" Property="Width" Value="20"/>
+                                        <Setter TargetName="Halo" Property="Height" Value="20"/>
+                                        <Setter TargetName="Halo" Property="Margin" Value="-10,-10,0,0"/>
+                                        <Setter TargetName="Halo" Property="Stroke" Value="Black"/>
+                                        <Setter TargetName="Halo" Property="StrokeThickness" Value="2"/>
+                                        <Setter TargetName="Dot" Property="Width" Value="16"/>
+                                        <Setter TargetName="Dot" Property="Height" Value="16"/>
+                                        <Setter TargetName="Dot" Property="Margin" Value="-8,-8,0,0"/>
+                                        <Setter TargetName="Dot" Property="Stroke" Value="White"/>
+                                        <Setter TargetName="Dot" Property="StrokeThickness" Value="2"/>
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -279,10 +292,22 @@
                         Width="80" Margin="10 0 0 0"/>
                 </StackPanel>
 
-                <Button Content="New Plan"
-                    Command="{Binding NewPlanCommand}"
+                <!-- New Range starts a plan with the original typed Start/End box geometry; New
+                     Region starts one already set to the drawn-region geometry instead (see
+                     PlanViewModel.NewRangePlan/NewRegionPlan and IsRangeGeometry/IsRegionGeometry)
+                     - both set GeometryMode up front rather than leaving it to be picked, or left
+                     hazy, in the editor afterward. -->
+                <Button Content="New Range"
+                    Command="{Binding NewRangePlanCommand}"
                     Width="200"
-                    Margin="0 20 0 0"/>
+                    Margin="0 20 0 0"
+                    ToolTip="Start a new plan with typed RA/Dec (or Az/El) start/end limits."/>
+
+                <Button Content="New Region"
+                    Command="{Binding NewRegionPlanCommand}"
+                    Width="200"
+                    Margin="0 6 0 0"
+                    ToolTip="Start a new Equatorial plan whose coverage is traced as a region on the map, instead of typed start/end limits."/>
 
             </StackPanel>
         </ScrollViewer>

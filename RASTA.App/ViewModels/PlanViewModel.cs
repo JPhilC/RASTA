@@ -128,6 +128,8 @@ namespace RASTA.App.ViewModels
         partial void OnPlanTypeChanged(PlanType value)
         {
             OnPropertyChanged(nameof(CanDrawRegion));
+            OnPropertyChanged(nameof(IsRangeGeometry));
+            OnPropertyChanged(nameof(IsRegionGeometry));
             RefreshMapDisplay();
         }
 
@@ -142,11 +144,37 @@ namespace RASTA.App.ViewModels
             if (oldValue != null)
                 oldValue.PropertyChanged -= Range_PropertyChanged;
             newValue.PropertyChanged += Range_PropertyChanged;
+            OnPropertyChanged(nameof(IsRangeGeometry));
+            OnPropertyChanged(nameof(IsRegionGeometry));
             RefreshMapDisplay();
         }
 
-        private void Range_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) =>
+        private void Range_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(TargetRange.GeometryMode))
+            {
+                OnPropertyChanged(nameof(IsRangeGeometry));
+                OnPropertyChanged(nameof(IsRegionGeometry));
+            }
             RefreshMapDisplay();
+        }
+
+        /// <summary>
+        /// Whether the Plan Editor's Equatorial RA/Dec Start/End boxes should show - Equatorial
+        /// AND GeometryMode == Range. Bundles PlanType and Range.GeometryMode into one binding
+        /// rather than needing a MultiBinding in PlanEditorWindow.xaml. AltAz's own Az/El
+        /// Start/End boxes are unaffected by this - AltAz has no Region concept (see
+        /// TargetRange.GeometryMode's own remarks) so they stay gated on PlanType alone.
+        /// </summary>
+        public bool IsRangeGeometry => PlanType == PlanType.Equatorial && Range.GeometryMode == SweepGeometryMode.Range;
+
+        /// <summary>
+        /// Whether the Plan Editor should show Region-mode content instead of Start/End boxes -
+        /// Equatorial-only (see CanDrawRegion). The region itself is defined by drawing on the
+        /// Plan view's map (StartDrawRegionCommand/FinishRegionCommand), not by typed fields, so
+        /// this gates a short "drawn on the map" summary rather than input boxes.
+        /// </summary>
+        public bool IsRegionGeometry => PlanType == PlanType.Equatorial && Range.GeometryMode == SweepGeometryMode.Region;
 
         [ObservableProperty] private List<TargetPoint>? plannedPoints;
 
@@ -229,7 +257,7 @@ namespace RASTA.App.ViewModels
         {
             if (SavedPlans.Count == 0)
             {
-                NewPlan();
+                NewRangePlan();
                 return;
             }
 
@@ -249,8 +277,8 @@ namespace RASTA.App.ViewModels
         /// at this plan's own CenterFrequency - a sensible Nyquist-ish default point spacing for
         /// a brand new plan's sweep/region grid, used in place of the unhelpful 0 a fresh
         /// TargetRange starts with. Only applied where there's nothing to preserve (the initial
-        /// state here, and NewPlanCommand) - LoadPlan/CopyPlan always keep whatever separation
-        /// the saved plan already specifies.
+        /// state here, and NewRangePlanCommand/NewRegionPlanCommand) - LoadPlan/CopyPlan always
+        /// keep whatever separation the saved plan already specifies.
         /// </summary>
         private double ComputeDefaultAngularSeparationDeg() =>
             AntennaUtils.ComputeBeamwidthDeg(Settings.DishDiameterM, CenterFrequency) * 0.5;
@@ -351,13 +379,34 @@ namespace RASTA.App.ViewModels
 
         }
 
-        // New plan
+        // New plan - Range geometry (the original "type numeric start/end boxes" definition,
+        // and the only geometry AltAz plans support). Renamed from NewPlan/"New Plan" now that
+        // NewRegionPlan/"New Region" exists alongside it - both create a plan with its intended
+        // GeometryMode already set, rather than leaving it to be chosen (or left hazy) afterward.
         [RelayCommand]
-        private void NewPlan()
+        private void NewRangePlan()
         {
             FriendlyName = "New Plan";
             PlanType = PlanType.Equatorial;
             Range = new TargetRange { AngularSeparationDeg = ComputeDefaultAngularSeparationDeg() };
+            PlannedPoints = null;
+        }
+
+        // New plan - Region geometry. Equatorial-only (see CanDrawRegion), so PlanType is forced
+        // to Equatorial the same as NewRangePlan; GeometryMode is set to Region up front so the
+        // editor's fields already reflect it (see IsRangeGeometry/IsRegionGeometry) even before
+        // any vertices exist - RegionVertices stays empty until StartDrawRegionCommand/
+        // FinishRegionCommand actually trace the loop on the map.
+        [RelayCommand]
+        private void NewRegionPlan()
+        {
+            FriendlyName = "New Plan";
+            PlanType = PlanType.Equatorial;
+            Range = new TargetRange
+            {
+                AngularSeparationDeg = ComputeDefaultAngularSeparationDeg(),
+                GeometryMode = SweepGeometryMode.Region
+            };
             PlannedPoints = null;
         }
 
