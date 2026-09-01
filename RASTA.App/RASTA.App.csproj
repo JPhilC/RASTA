@@ -34,6 +34,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Downgraded HI4PI all-sky HI column-density grid (see MilkyWayBackgroundBuilder /
+         Hi4PiSkyMap and CLAUDE.md "Plan view sky map") - EmbeddedResource rather than the WPF
+         Resource build action above, since this is read as a plain byte stream via
+         Assembly.GetManifestResourceStream, not through a pack URI. -->
+    <EmbeddedResource Include="Resources\Data\hi4pi_nhi_grid.bin" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="HelixToolkit.Wpf" Version="3.1.2" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.5" />

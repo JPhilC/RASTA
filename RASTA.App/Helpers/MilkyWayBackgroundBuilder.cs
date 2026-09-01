@@ -6,16 +6,15 @@ using RASTA.Core.Astro;
 namespace RASTA.App.Helpers
 {
     /// <summary>
-    /// Renders an analytic Milky Way "glow band" as a dome background BitmapSource for
-    /// PlanViewModel's sky map. RASTA has no real star/sky catalog (see the parked
-    /// "overlay a lightweight star/constellation map" goal noted elsewhere) - this approximates
-    /// the Galactic plane's location and rough brightness from AstronomyUtils.EquatorialToGalactic
-    /// alone (Gaussian falloff from Galactic latitude b=0, gently brighter toward the Galactic
-    /// center l=0 than the anticenter, echoing how a real radio-continuum sky brightens toward
-    /// Sgr A), coloured with the same visible-spectrum ramp used throughout the app
-    /// (HeatmapImageBuilder.Ramp). It is explicitly not real sky data - just enough visual
-    /// context to orient the map, in the same spirit as the rest of the app's low-precision
-    /// analytic astronomy helpers (e.g. AstronomyUtils.ComputeLsrCorrectionKmPerSec).
+    /// Renders a Milky Way dome background BitmapSource for PlanViewModel's sky map from real
+    /// HI4PI all-sky HI column-density data (see Hi4PiSkyMap for the survey/attribution/downgrade
+    /// details) - Galactic longitude/latitude from AstronomyUtils.EquatorialToGalactic, N_HI
+    /// bilinearly sampled from the embedded grid and normalized to [0,1], coloured with the same
+    /// visible-spectrum ramp used throughout the app (HeatmapImageBuilder.Ramp). RASTA has no
+    /// real star/constellation catalog on top of this (see the parked "overlay a lightweight
+    /// star/constellation map" goal noted elsewhere) - this is still just orientation context for
+    /// the sky map, now driven by a real survey rather than the earlier Gaussian-glow
+    /// approximation it replaced.
     ///
     /// Builds its own DomeProjector sized to pixelSize rather than taking one in, so the caller
     /// can render this at a lower internal resolution than the on-screen canvas (several trig
@@ -56,7 +55,7 @@ namespace RASTA.App.Helpers
                         azDeg, elDeg, utcTime, siteLatitudeDeg, siteLongitudeDeg);
                     var (lDeg, bDeg) = AstronomyUtils.EquatorialToGalactic(raHours, decDeg);
 
-                    double brightness = MilkyWayBrightness(lDeg, bDeg);
+                    double brightness = Hi4PiSkyMap.SampleBrightness(lDeg, bDeg);
                     var (r, g, b) = HeatmapImageBuilder.Ramp(brightness);
 
                     pixels[idx + 0] = b;
@@ -72,23 +71,6 @@ namespace RASTA.App.Helpers
             var bmp = BitmapSource.Create(pixelSize, pixelSize, 96, 96, PixelFormats.Bgra32, null, pixels, pixelSize * 4);
             bmp.Freeze();
             return bmp;
-        }
-
-        /// <summary>
-        /// Analytic brightness in [0, 1] for a given Galactic longitude/latitude. Not derived
-        /// from any survey - a Gaussian falloff from the plane (b=0) with a gentle longitude
-        /// boost toward the Galactic center (l=0), purely to give the dome map a recognisable
-        /// Milky Way band rather than a blank sky.
-        /// </summary>
-        private static double MilkyWayBrightness(double lDeg, double bDeg)
-        {
-            const double bSigmaDeg = 8.0;
-            double planeGlow = Math.Exp(-(bDeg * bDeg) / (2 * bSigmaDeg * bSigmaDeg));
-
-            double lRad = lDeg * Math.PI / 180.0;
-            double centerBoost = 0.5 + 0.5 * Math.Cos(lRad); // 1.0 at l=0 (center), 0.0 at l=180 (anticenter)
-
-            return Math.Clamp(planeGlow * (0.4 + 0.6 * centerBoost), 0.0, 1.0);
         }
     }
 }

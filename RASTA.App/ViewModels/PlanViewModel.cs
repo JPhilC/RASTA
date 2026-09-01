@@ -66,6 +66,9 @@ namespace RASTA.App.ViewModels
     public class PlanMapDisplay
     {
         public double CanvasSize { get; init; }
+        public double DomeLeft { get; init; }
+        public double DomeTop { get; init; }
+        public double DomeDiameter { get; init; }
         public BitmapSource? Background { get; init; }
         public IReadOnlyList<DomeRingGeometry> AltitudeRings { get; init; } = Array.Empty<DomeRingGeometry>();
         public IReadOnlyList<AxisGridLine> AzimuthSpokes { get; init; } = Array.Empty<AxisGridLine>();
@@ -103,9 +106,20 @@ namespace RASTA.App.ViewModels
                 if (SetProperty(ref selectedPlan, value))
                 {
                     System.Diagnostics.Debug.WriteLine($"SelectedPlan changed to: {selectedPlan?.FriendlyName}");
+                    LoadPlanCommand.NotifyCanExecuteChanged();
+                    DeletePlanCommand.NotifyCanExecuteChanged();
+                    CopyPlanCommand.NotifyCanExecuteChanged();
                 }
             }
         }
+
+        /// <summary>
+        /// Gates Load/Copy/Delete (see PlanView.xaml's saved-plans list) - all three stay visible
+        /// always, just disabled via CanExecute rather than collapsed, the same convention the
+        /// rest of the app uses (e.g. NavigationViewModel.CanNavigateCapture) rather than a
+        /// Visibility binding.
+        /// </summary>
+        private bool CanEditOrDeleteSelectedPlan => SelectedPlan != null;
 
         // Currently edited plan
         [ObservableProperty]
@@ -193,7 +207,41 @@ namespace RASTA.App.ViewModels
             FftBins = _userOptionsService.Options.DefaultFftSize;
             Range.AngularSeparationDeg = ComputeDefaultAngularSeparationDeg();
 
+            SelectInitialPlan();
+
             RefreshMapDisplay();
+        }
+
+        /// <summary>
+        /// Run once at startup - this view model is effectively a singleton for the app's lifetime
+        /// (see CLAUDE.md "Project layering": one ServiceCollection built once, no scopes created
+        /// afterward), so "when Plan is first opened" and "when this constructor runs" are the same
+        /// moment. Opens the plan most recently used or modified - its saved file's own last-write
+        /// time, touched by SavePlan (so this covers "edited and saved"; merely loading/selecting a
+        /// plan doesn't itself write anything, so "used" and "modified" collapse to the same signal
+        /// here) - falling back to the first plan in SavedPlans (ListPlans' own folder-scan order)
+        /// if no file times differ, or to a brand new plan if none are saved at all. OrderByDescending
+        /// is a stable sort, so when every plan's file time is equal (or all missing/unreadable,
+        /// DateTime.MinValue) the fallback to "first in the list" falls out of the same call rather
+        /// than needing a separate branch.
+        /// </summary>
+        private void SelectInitialPlan()
+        {
+            if (SavedPlans.Count == 0)
+            {
+                NewPlan();
+                return;
+            }
+
+            var mostRecent = SavedPlans.OrderByDescending(GetPlanFileLastWriteTimeUtc).First();
+            SelectedPlan = mostRecent;
+            LoadPlan(mostRecent);
+        }
+
+        private DateTime GetPlanFileLastWriteTimeUtc(CapturePlan plan)
+        {
+            var path = Path.Combine(_userOptionsService.Options.PlansFolder, plan.FriendlyName + ".json");
+            return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
         }
 
         /// <summary>
@@ -275,7 +323,7 @@ namespace RASTA.App.ViewModels
         }
 
         // Load plan into editor
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanEditOrDeleteSelectedPlan))]
         private void LoadPlan(CapturePlan? plan)
         {
             if (plan == null)
@@ -314,7 +362,7 @@ namespace RASTA.App.ViewModels
         }
 
         // Copy plan
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanEditOrDeleteSelectedPlan))]
         private void CopyPlan(CapturePlan? plan)
         {
             if (plan == null)
@@ -346,16 +394,27 @@ namespace RASTA.App.ViewModels
         }
 
         // Delete plan
-        [RelayCommand]
-        private void DeletePlan(CapturePlan plan)
+        [RelayCommand(CanExecute = nameof(CanEditOrDeleteSelectedPlan))]
+        private void DeletePlan(CapturePlan? plan)
         {
+            if (plan == null)
+                return;
+
             var fileName = plan.FriendlyName + ".json";
             var path = Path.Combine(_userOptionsService.Options.PlansFolder, fileName);
 
             if (File.Exists(path))
                 File.Delete(path);
 
+            // Re-select a neighbour rather than leaving the list with nothing selected: the plan
+            // that follows the deleted one (which, after reload, has shifted down into the deleted
+            // one's old index), or the previous one if the deleted plan was last in the list.
+            int deletedIndex = SavedPlans.IndexOf(plan);
             LoadSavedPlans();
+
+            SelectedPlan = SavedPlans.Count == 0
+                ? null
+                : SavedPlans[Math.Clamp(deletedIndex, 0, SavedPlans.Count - 1)];
         }
 
         // =====================================================================================
@@ -364,7 +423,13 @@ namespace RASTA.App.ViewModels
 
         private const double MapCanvasSize = 640;
         private const double MapMarginPx = 50;
-        private const int BackgroundPixelSize = 240;
+        // 512, not the on-screen canvas's own 640 - the Milky Way background is now real HI4PI
+        // survey structure (see Hi4PiSkyMap) rather than a smooth analytic Gaussian, so it holds
+        // up much better under zoom/inspection at higher internal resolution than the original
+        // 240 chosen for the old approximation; still deliberately short of 640 so there's some
+        // margin left for the Image control's own bilinear upscale to smooth over, rather than
+        // rendering pixel-for-pixel and then downscaling for nothing.
+        private const int BackgroundPixelSize = 512;
 
         private readonly DomeProjector _projector = new(MapCanvasSize, MapMarginPx);
 
@@ -657,6 +722,9 @@ namespace RASTA.App.ViewModels
             MapDisplay = new PlanMapDisplay
             {
                 CanvasSize = MapCanvasSize,
+                DomeLeft = _projector.CenterX - _projector.Radius,
+                DomeTop = _projector.CenterY - _projector.Radius,
+                DomeDiameter = _projector.Radius * 2,
                 Background = _cachedBackground,
                 AltitudeRings = altAz ? _cachedAltAzRings : Array.Empty<DomeRingGeometry>(),
                 AzimuthSpokes = altAz ? _cachedAltAzSpokes : Array.Empty<AxisGridLine>(),

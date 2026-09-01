@@ -18,10 +18,14 @@
             <ColumnDefinition Width="10"/>
             <ColumnDefinition Width="1*"/>
         </Grid.ColumnDefinitions>
-
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
         <!-- LEFT SIDE: SKY MAP -->
-        <Grid Grid.Column="0">
+        <Grid Grid.Column="0" Grid.RowSpan="2">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -54,6 +58,8 @@
                 <RadioButton Content="RA/Dec" GroupName="MapGridMode" VerticalAlignment="Center" Margin="0,0,16,4"
                              IsChecked="{Binding MapGridMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Equatorial}"/>
 
+            </WrapPanel>
+            <WrapPanel Grid.Row="2">
                 <StackPanel Orientation="Horizontal"
                             Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}"
                             Margin="0,0,16,4">
@@ -79,7 +85,7 @@
             </WrapPanel>
 
             <!-- Dome map -->
-            <Viewbox Grid.Row="2" Stretch="Uniform">
+            <Viewbox Grid.Row="3" Stretch="Uniform">
                 <Canvas x:Name="MapCanvas"
                         Width="{Binding MapDisplay.CanvasSize}" Height="{Binding MapDisplay.CanvasSize}"
                         Background="Transparent"
@@ -93,7 +99,17 @@
                         </ContextMenu>
                     </Canvas.ContextMenu>
 
-                    <!-- Analytic Milky Way background - see MilkyWayBackgroundBuilder. -->
+                    <!-- Dark night-sky backdrop, sized to the dome circle itself (not the whole
+                         square canvas) - the Milky Way background's faint/high-latitude pixels
+                         fade toward transparent (see MilkyWayBackgroundBuilder), so without this
+                         they read as washed-out pale blue/white against the app's own light theme
+                         instead of a dark sky. -->
+                    <Ellipse Canvas.Left="{Binding MapDisplay.DomeLeft}" Canvas.Top="{Binding MapDisplay.DomeTop}"
+                             Width="{Binding MapDisplay.DomeDiameter}" Height="{Binding MapDisplay.DomeDiameter}"
+                             Fill="#0B0B18" IsHitTestVisible="False"/>
+
+                    <!-- Milky Way background, sampled from real HI4PI survey data - see
+                         MilkyWayBackgroundBuilder/Hi4PiSkyMap. -->
                     <Image Source="{Binding MapDisplay.Background}"
                            Width="{Binding MapDisplay.CanvasSize}" Height="{Binding MapDisplay.CanvasSize}"
                            Stretch="Fill" RenderOptions.BitmapScalingMode="Linear" IsHitTestVisible="False"/>
@@ -101,7 +117,9 @@
                     <!-- Altitude rings -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.AltitudeRings}" IsHitTestVisible="False">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
@@ -120,7 +138,9 @@
                     <!-- Azimuth spokes -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.AzimuthSpokes}" IsHitTestVisible="False">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -135,7 +155,9 @@
                          invisible, in Alt/Az mode. -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.EquatorialGridLines}" IsHitTestVisible="False">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -148,7 +170,9 @@
                          MapDisplay.CompassLabels binding either way, see RefreshVisiblePoints. -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.CompassLabels}" IsHitTestVisible="False">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
@@ -170,7 +194,9 @@
                     <!-- Capture points (sequence-coloured; the current animated point is enlarged) -->
                     <ItemsControl ItemsSource="{Binding MapDisplay.Points}">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
@@ -206,7 +232,7 @@
                 </Canvas>
             </Viewbox>
 
-            <StackPanel Grid.Row="3" Margin="0 6 0 0">
+            <StackPanel Grid.Row="4" Margin="0 6 0 0">
                 <TextBlock Text="{Binding HoverReadoutText}" FontFamily="Consolas"/>
                 <TextBlock Text="{Binding MapDisplay.StatusText}" FontStyle="Italic" TextWrapping="Wrap"/>
             </StackPanel>
@@ -260,5 +286,13 @@
 
             </StackPanel>
         </ScrollViewer>
+        <!-- Required attribution for the Milky Way background - see Hi4PiSkyMap/
+             MilkyWayBackgroundBuilder. Short line here; full citation/acknowledgement/licence
+             text in the tooltip (the implicit ToolTip style in Styles.xaml wraps it to a
+             sensible width). -->
+        <TextBlock Grid.Column="2" Grid.Row="1" Margin="0 10 0 0"
+                   Text="Sky map background: HI4PI Survey (2016)"
+                   FontSize="10" Foreground="Gray" TextWrapping="Wrap"
+                   ToolTip="The Plan sky map's Milky Way background is rendered from the HI4PI all-sky neutral hydrogen (HI) column density survey, downgraded from its native HEALPix grid (12.6 million points) to a compact 720&#215;360 lookup table embedded in RASTA. It's orientation context for the map, not scientific data.&#x0a;&#x0a;Citation: HI4PI Collaboration et al., A&amp;A 594, A116, 2016.&#x0a;&#x0a;Acknowledgement (as required by the data source): &quot;The Parkes Radio Telescope is part of the Australia Telescope National Facility which is funded by the Australian Government for operation as a National Facility managed by CSIRO. The EBHIS data are based on observations performed with the 100-m telescope of the MPIfR at Effelsberg. EBHIS was funded by the Deutsche Forschungsgemeinschaft (DFG) under the grants KE757/7-1 to 7-3.&quot;&#x0a;&#x0a;Distributed via NASA's LAMBDA archive (lambda.gsfc.nasa.gov) under: &quot;Permission is granted for publication and reproduction of this material for scientific and educational purposes.&quot;"/>
     </Grid>
 </UserControl>

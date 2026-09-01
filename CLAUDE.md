@@ -470,17 +470,42 @@ etc., not through a `PlanViewModel`-level proxy). `RefreshVisiblePoints` is the 
 on its own by mode/animation-step changes that don't need the background/geometry/ordering
 recomputed.
 
-- **Analytic Milky Way background** (`RASTA.App/Helpers/MilkyWayBackgroundBuilder`) — RASTA has no
-  real star/sky catalog, so this approximates the Galactic plane's location and rough brightness from
-  `AstronomyUtils.EquatorialToGalactic` alone (a Gaussian falloff from Galactic latitude b=0, gently
-  brighter toward the Galactic center l=0 than the anticenter, echoing how a real radio-continuum sky
-  brightens toward Sgr A), coloured with the same visible-spectrum ramp used throughout the app
-  (`HeatmapImageBuilder.Ramp`). Explicitly not real sky data — just enough visual context to orient the
-  map, the same "not Stellarium-grade" spirit as the parked star/constellation-overlay goal noted under
-  Mosaic below. Rendered at a lower internal resolution (240px) than the on-screen 640px canvas and
-  bilinear-stretched, since it's several trig calls per pixel; rebuilt whenever `MapTimeUtc` or the site
-  lat/lon changes (`RefreshBackgroundIfNeeded`, rounded to the minute to avoid rebuilding on every
-  unrelated `RefreshMapDisplay` call).
+- **Milky Way background from real HI4PI survey data** (`RASTA.App/Helpers/MilkyWayBackgroundBuilder`,
+  `Hi4PiSkyMap`) — this used to be a purely analytic Gaussian falloff from Galactic latitude b=0 (RASTA
+  has no real star/sky catalog); it's now sampled from the actual HI4PI all-sky neutral-hydrogen (HI)
+  column-density survey (HI4PI Collaboration 2016, *A&A* 594, A116 — the Effelsberg-Bonn HI Survey +
+  Galactic All-Sky Survey combined), still coloured with the same visible-spectrum ramp used throughout
+  the app (`HeatmapImageBuilder.Ramp`). The survey's own distribution (NASA LAMBDA) is a HEALPix
+  Nside=1024 FITS table — 12,582,912 points, ~577 MB — far too large/fine to ship with the app or fetch
+  at runtime (Plan needs to stay usable fully offline, see "Navigation" above), so it's downgraded once,
+  offline (Python/astropy, not healpy — healpy has no Windows wheels and needs the HEALPix C++/cfitsio
+  libraries to build from source, which isn't viable here; the source FITS's own explicit GLON/GLAT/NHI
+  columns make a HEALPix-aware library unnecessary anyway — it's a straight per-cell average onto a
+  plain Galactic lon/lat grid) to a 720×360 (0.5°) grid, embedded as a ~1 MB resource
+  (`Resources/Data/hi4pi_nhi_grid.bin`) and loaded via `Hi4PiSkyMap` (bilinear sampling, wrapping in
+  longitude/clamping at the poles; N_HI is normalized to brightness via the grid's own 1st/99th log10
+  percentile range, computed once at load rather than hardcoded, so a future regrid picks up its own
+  range automatically). 0.5° is still coarser than the survey's native 0.27° (16.2 arcmin) resolution,
+  deliberately — this is background/orientation context for the map, not survey-grade imaging — but a
+  real step up from an initial 1° cut, which visibly under-resolved the plane's own filament structure.
+  Rendered at `PlanViewModel.BackgroundPixelSize` (512px — bumped up from an original 240px chosen for
+  the old cheap analytic version, since real HI4PI structure holds up far better under
+  zoom/inspection than a smooth Gaussian did) and bilinear-stretched onto the on-screen canvas by the
+  `Image` control itself; rebuilt whenever `MapTimeUtc` or the site lat/lon changes
+  (`RefreshBackgroundIfNeeded`, rounded to the minute to avoid rebuilding on every unrelated
+  `RefreshMapDisplay` call). A dark night-sky backdrop `Ellipse` (`#0B0B18`, sized to the dome circle
+  itself via `PlanMapDisplay.DomeLeft`/`DomeTop`/`DomeDiameter` — not the whole square canvas, so the
+  rest of the panel stays consistent with the app's light theme) sits behind the background `Image` in
+  `PlanView.xaml`: the background's faint/high-latitude pixels fade toward transparent by design (alpha
+  follows brightness, same as before), and without a dark backdrop behind them they read as washed-out
+  pale blue/white against the app's own light window chrome instead of a night sky. `PlanView.xaml`
+  also carries the required attribution as a small caption + tooltip next to the Saved Plans list
+  (citation, the survey's verbatim required acknowledgement crediting Parkes/CSIRO/Effelsberg/DFG, and
+  the LAMBDA usage-permission line) — set as a plain `ToolTip` *string*, not a nested `TextBlock`
+  element: the latter collides with the app-wide implicit `ToolTip` style (see "Tooltips" above), whose
+  `ContentTemplate` binds `{Binding}` into a wrapping `TextBlock.Text` — when `Content` is itself a
+  `TextBlock` rather than a string, `{Binding}` resolves to that element's own `ToString()`, rendering
+  literally as `"System.Windows.Controls.TextBlock"` instead of the intended text.
 - **`RASTA.App/Helpers/DomeProjector`** is the shared Az/El ⇄ pixel math (`Project`/`Unproject`, plus
   altitude-ring/azimuth-spoke/compass-label builders) extracted from Mosaic's own dome projection —
   unlike Mosaic's read-only dome, this one also needed the *inverse* projection, to turn a mouse click/
@@ -534,6 +559,26 @@ recomputed.
   `{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}`, the standard WPF
   workaround for a `ContextMenu`/`Popup` not inheriting `DataContext` from its visual parent the way
   everything else in the tree does.
+
+**The Saved Plans list** (`PlanView.xaml`'s right-hand panel — `SavedPlans`/`SelectedPlan`/`LoadPlan`/
+`CopyPlan`/`DeletePlan`/`NewPlan`) opens with a sensible plan already loaded rather than blank:
+`PlanViewModel.SelectInitialPlan`, run once in the constructor (this view model is effectively a
+singleton for the app's lifetime — one `ServiceCollection` built once, no scopes created afterward, see
+"Project layering" above — so "when Plan is first opened" and "when this constructor runs" are the same
+moment), picks whichever saved plan was most recently used or modified — its `.json` file's own
+last-write time, touched by `SavePlan` — falling back to the first plan in `SavedPlans`' own folder-scan
+order when file times are equal/unreadable (`OrderByDescending` is a stable sort, so that fallback falls
+out of the same call rather than needing a separate branch), falling back to a brand new plan
+(`NewPlan()`) if nothing is saved at all. `Load`/`Copy`/`Delete` stay visible always rather than
+collapsing when nothing's selected, gated instead via `CanEditOrDeleteSelectedPlan`
+(`SelectedPlan != null`) on each command's `CanExecute` — the same disable-don't-hide convention the
+rest of the app uses (e.g. `NavigationViewModel.CanNavigateCapture`) — with `SelectedPlan`'s setter
+explicitly calling each command's `NotifyCanExecuteChanged()` since it's a hand-written property, not an
+`[ObservableProperty]`. `DeletePlan` re-selects a neighbour afterward rather than leaving the list with
+nothing selected: it records the deleted plan's index before reloading, then selects
+`SavedPlans[Clamp(deletedIndex, 0, Count-1)]` — the plan that shifted down into the deleted one's old
+slot (i.e. the next one in the list), or the last plan if the deleted one was itself last, or `null` if
+the list is now empty.
 
 Plans themselves are no longer tied to a specific SDR device (`CapturePlan.SdrDeviceId` removed,
 `IPlanRepository.ListPlans()` lists every plan in the folder) — this, plus the map needing only site

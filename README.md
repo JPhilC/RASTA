@@ -59,8 +59,10 @@ Whether it reaches that goal or not, RASTA is designed to be a rewarding enginee
   moment), and a 3D Dome extrusion of that same view — stems or an optional fitted mesh, clickable
   to select the matching row in the positions table, sharing a visible-spectrum colour ramp with
   the 2D heatmap throughout.
-- A Plan view built around a "Radio Sky" hemisphere map — an analytic Milky Way backdrop, a plan's
-  own capture points shown all at once or stepped through as an animation using the same ordering/
+- A Plan view built around a "Radio Sky" hemisphere map — a Milky Way backdrop rendered from real
+  HI4PI all-sky neutral-hydrogen survey data (downgraded offline to a small embedded grid, see
+  Acknowledgments below), a plan's own capture points shown all at once or stepped through as an
+  animation using the same ordering/
   horizon-validation logic a real sweep uses (so it's genuine pre-flight validation, not just a raw
   grid), a toggle between the dome's usual Alt/Az reference frame and a live RA/Dec meridian/parallel
   grid, and a freeform "trace a region on the map" alternative to typing RA/Dec limits that
@@ -88,8 +90,8 @@ obstruction check and re-pick loop).
 ### 2. Plan
 Create observation plans — equatorial or Az/Alt sweeps, a freeform region traced directly on a sky
 map, or drift scans — with configurable dwell time, files per dwell point, and settle time. A
-"Radio Sky" hemisphere map shows the plan's own capture points (all at once or animated) against an
-analytic Milky Way backdrop, in either an Alt/Az or RA/Dec grid, and lets you right-click a point to
+"Radio Sky" hemisphere map shows the plan's own capture points (all at once or animated) against a
+Milky Way backdrop rendered from real HI4PI survey data, in either an Alt/Az or RA/Dec grid, and lets you right-click a point to
 slew the mount there and jump straight into a capture. Works entirely offline — no SDR or mount
 required just to plan. Plans can be saved, loaded, and reused.
 
@@ -192,9 +194,20 @@ community:
   a whole capture into one spectrum the way `HiStreamingAccumulator` now does. Its one still-useful
   piece, the Savitzky–Golay smoothing kernel, lives on in `RASTA.Processing/Dsp` and is also used
   by `HiStreamingPipeline`'s own optional smoothing pass.
+- **[HI4PI Collaboration](https://lambda.gsfc.nasa.gov/product/foreground/fg_hi4pi_info.html)** — the
+  Plan view's sky map background is a real Milky Way, not a drawing: it's sampled from the HI4PI
+  all-sky neutral-hydrogen (HI) column-density survey (Effelsberg-Bonn HI Survey + Galactic All-Sky
+  Survey combined), downgraded offline from the full HEALPix release to a small grid embedded in the
+  app. Citation: *HI4PI Collaboration et al., A&A 594, A116, 2016*. Acknowledgement, reproduced as
+  required by the data source: "The Parkes Radio Telescope is part of the Australia Telescope National
+  Facility which is funded by the Australian Government for operation as a National Facility managed
+  by CSIRO. The EBHIS data are based on observations performed with the 100-m telescope of the MPIfR
+  at Effelsberg. EBHIS was funded by the Deutsche Forschungsgemeinschaft (DFG) under the grants
+  KE757/7-1 to 7-3." Distributed via NASA's LAMBDA archive under: "Permission is granted for
+  publication and reproduction of this material for scientific and educational purposes."
 
-Thank you both — RASTA wouldn't have gotten this far without having real reference implementations
-to learn from and check against.
+Thank you all — RASTA wouldn't have gotten this far without having real reference implementations and
+real data to learn from and check against.
 
 ---
 
