@@ -52,9 +52,22 @@ Whether it reaches that goal or not, RASTA is designed to be a rewarding enginee
   scale, and automatic combining of multi-file dwell points (`..._1of2.fits`, `..._2of2.fits`, …)
   selected from a single file.
 - A Mosaic tab that points at a whole session folder (one baseline + several multi-file dwell-point
-  captures across different pointings), reduces each position through the same HI pipeline, and
-  renders the result as both a 2D sky heatmap and a 3D height-field surface (line strength or
-  peak velocity), with nice-number axis ticks/gridlines and an optional smoothed/blended render.
+  captures across different pointings, or a folder of downloaded LAB Survey profiles), reduces each
+  position through the same HI pipeline, and renders it three ways: a 2D sinusoidal-projection sky
+  heatmap (line strength or peak velocity, nice-number axis ticks/gridlines, optional smoothed/
+  blended render), a from-here-right-now Zenith Dome (a naked-eye-style Alt/Az view at any chosen
+  moment), and a 3D Dome extrusion of that same view — stems or an optional fitted mesh, clickable
+  to select the matching row in the positions table, sharing a visible-spectrum colour ramp with
+  the 2D heatmap throughout.
+- A Plan view built around a "Radio Sky" hemisphere map — an analytic Milky Way backdrop, a plan's
+  own capture points shown all at once or stepped through as an animation using the same ordering/
+  horizon-validation logic a real sweep uses (so it's genuine pre-flight validation, not just a raw
+  grid), a toggle between the dome's usual Alt/Az reference frame and a live RA/Dec meridian/parallel
+  grid, and a freeform "trace a region on the map" alternative to typing RA/Dec limits that
+  auto-generates a coverage grid at a chosen angular spacing. Right-click any point to slew the mount
+  there and hand off straight into a Quick Capture. Needs neither an SDR nor a mount to use — planning
+  can be done fully offline — and a plan's default point spacing is suggested from the antenna's own
+  estimated beamwidth (dish diameter, set on Prepare) rather than starting at zero.
 - A Windows installer (WiX-based MSI + Burn bootstrapper) that chains in the .NET 10 Desktop
   Runtime automatically, plus a one-command release build script.
 
@@ -73,8 +86,12 @@ sweep, and capture a baseline against an automatically located cold-sky position
 obstruction check and re-pick loop).
 
 ### 2. Plan
-Create observation plans — equatorial or Az/Alt sweeps, drift scans — with configurable dwell
-time, files per dwell point, and settle time. Plans can be saved, loaded, and reused.
+Create observation plans — equatorial or Az/Alt sweeps, a freeform region traced directly on a sky
+map, or drift scans — with configurable dwell time, files per dwell point, and settle time. A
+"Radio Sky" hemisphere map shows the plan's own capture points (all at once or animated) against an
+analytic Milky Way backdrop, in either an Alt/Az or RA/Dec grid, and lets you right-click a point to
+slew the mount there and jump straight into a capture. Works entirely offline — no SDR or mount
+required just to plan. Plans can be saved, loaded, and reused.
 
 ### 3. Capture
 Execute the plan: slew and track, capture raw IQ per dwell point (optionally as multiple files),
@@ -92,7 +109,7 @@ velocity correction — or switch to the Mosaic tab to turn a whole session fold
 ## 🧱 Architecture
 
 - **RASTA.Core** — domain models, interfaces, telescope/SDR abstractions, astronomy math
-  (LST, RA/Dec ↔ Az/Alt ↔ Galactic, LSR Doppler correction)
+  (LST, RA/Dec ↔ Az/Alt ↔ Galactic, LSR Doppler correction), and antenna beamwidth estimation
 - **RASTA.Infrastructure** — ASCOM Alpaca telescope client, RTL‑SDR capture, FFT engine, JSON storage providers
 - **RASTA.Processing** — the HI reduction pipeline, calibration (including cold-sky site
   selection), sweep planning, and the Mosaic sky-map's gridding/visualisation-data builders
@@ -121,12 +138,14 @@ real, working loop end to end.
 - The app connects/disconnects to an ASCOM telescope mount via the ASCOM Remote Server, offers to
   unpark a parked mount on connect (and to re-park on disconnect), and recovers gracefully if the
   live connection to the mount is lost mid-session.
-- It responds to plugging/unplugging an RTL-SDR device. An SDR must be enumerated to unlock the
-  Plan and Capture views; a mount must also be connected to unlock Capture.
+- It responds to plugging/unplugging an RTL-SDR device. An SDR (and a connected mount) must be
+  available to unlock Capture; Plan needs neither and can be used fully offline.
 - **Prepare** runs calibration (gain sweep + cold-sky baseline capture) as three independent,
   resumable steps with their own dwell-time settings, and can reuse a previously saved
-  calibration profile.
-- **Plan** builds and saves equatorial/Az-Alt sweep or drift-scan plans.
+  calibration profile. Its Site Settings panel also takes the antenna's dish diameter and focal
+  length, used to estimate a beamwidth and suggest a default point spacing for new plans.
+- **Plan** builds and saves equatorial/Az-Alt sweep, freeform region, or drift-scan plans, previewed
+  and validated on a Radio Sky hemisphere map before ever slewing for real.
 - **Capture** runs a sweep plan, capturing raw IQ (optionally several files per dwell point) and
   showing a live HI spectrum as it goes, or a single Quick Capture at the mount's current
   position; either can be cancelled without leaving a partial file behind.

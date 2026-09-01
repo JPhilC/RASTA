@@ -69,19 +69,23 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
 There's no router/framework — `NavigationService.NavigateTo<TViewModel>()` just resolves the view
 model from the root DI container and `NavigationViewModel` (bound to `MainWindow`) swaps
 `CurrentViewModel`. The four workflow stages map 1:1 to `PrepareViewModel` / `PlanViewModel` /
-`CaptureViewModel` / `VisualiseViewModel`. `NavigatePlan` is gated on `StatusBarViewModel.SdrConnected`
-only (an SDR must be enumerated before you can move past Prepare) — Plan itself doesn't need a mount,
-since `PlanType`/`CoordinateMode` is a free choice on the Plan screen, not detected from a connected
-mount. `NavigateCapture` additionally requires `StatusBarViewModel.TelescopeConnected`, since it
-drives an actual mount slew and `CaptureViewModel.LoadAvailablePlans` filters plans by the mount's
-detected `CoordinateMode` — neither means anything without a mount attached. `CaptureViewModel` no
+`CaptureViewModel` / `VisualiseViewModel`. `NavigatePlan` is **always enabled** — Plan needs neither an
+SDR nor a mount, since `PlanType`/`CoordinateMode` is a free choice on the Plan screen, plans are no
+longer tied to a specific SDR device (see "Sweep planning" below), and the sky map (background, point
+preview, region drawing) works from site settings alone, so a plan can be fully prepared offline. The
+one thing on the Plan screen that does need a connected mount + SDR is the sky map's right-click
+"Slew & Capture Here", gated separately by `PlanViewModel.CanCaptureHere`. `NavigateCapture` still
+requires both `StatusBarViewModel.SdrConnected` and `TelescopeConnected`, since it drives an actual
+mount slew and `CaptureViewModel.LoadAvailablePlans` filters plans by the mount's detected
+`CoordinateMode` — neither means anything without a mount attached. `CaptureViewModel` no
 longer takes its plan from `PlanViewModel.SelectedPlan` on
 navigation — it builds its own `AvailablePlans` list (`LoadAvailablePlans`, using the same
-`IPlanRepository.ListPlans(sdrDeviceId)` call `PlanViewModel.LoadSavedPlans` uses) filtered to
+`IPlanRepository.ListPlans()` call `PlanViewModel.LoadSavedPlans` uses) filtered to
 whichever `PlanType` matches the connected mount's current `TelescopeState.Mode` (`PlanMatchesMountMode`
 — Equatorial/AltAz plans need the mount actually in that mode to slew correctly; Drift plans, being a
 declination-based drift scan, are offered under Equatorial). The list refreshes reactively on
-`SdrState.SelectedDevice`/`TelescopeState.Mode`/`IsConnected` changes, and `NavigateCapture` also
+`TelescopeState.Mode`/`IsConnected` changes (and, incidentally, on `SdrState.SelectedDevice` too, though
+that no longer changes which plans are offered — see "Sweep planning" below), and `NavigateCapture` also
 calls it explicitly so edits made on the Plan screen show up immediately. Because `ListPlans`
 deserializes fresh `CapturePlan` instances on every call, `LoadAvailablePlans` re-resolves the current
 selection by `FriendlyName` against the newly loaded instances rather than relying on reference
@@ -360,12 +364,43 @@ float/round-trip noise while still catching a genuine difference) and, only if t
 asks via a `MessageBox` whether to push RASTA's currently-set values to the mount or pull the mount's
 values into RASTA; if they already agree, the mount's values are used as before with no prompt.
 
+The same panel also carries two antenna fields, `DishDiameterM` (default 1.4, RASTA's own reference
+dish) and `FocalLengthM` (default 0.56, i.e. f/D = 0.4) — persisted the same "no mount needed" way.
+`SettingsViewModel.BeamwidthDeg` (`RASTA.Core/Antenna/AntennaUtils.ComputeBeamwidthDeg`) estimates the
+dish's half-power beamwidth from `DishDiameterM` alone via the standard amateur-radio-astronomy
+approximation `70 * wavelength / diameter` (wavelength from `UserOptions.DefaultCentreFrequencyHz`) —
+deliberately *not* a function of focal length too: the "70" constant already stands in for a *typical*
+edge illumination taper (roughly what a well-matched feed gives), and refining that per-dish from f/D
+alone, without the feed's own illumination pattern, isn't something this can do rigorously, so it isn't
+attempted. `FocalLengthM` is instead surfaced as `SettingsViewModel.FocalRatio` (f/D) purely as context
+next to `BeamwidthDeg` — a value near the ~0.35–0.5 range the approximation assumes (RASTA's own 1.4m/
+f0.4 dish sits right in the middle of it) means the beamwidth estimate is on solid ground; well outside
+it, treat the figure more loosely — and is reserved for a future antenna-gain estimate, which *does*
+need f/D directly. `PrepareViewModel` proxies all four of these (`DishDiameterM`/`FocalLengthM`/
+`BeamwidthDeg`/`FocalRatio`) property-by-property from `SettingsViewModel`, the same pattern the site
+lat/lon/elevation fields already use (see `PrepareViewModel.SettingsPropertyChanged`) — `PrepareView.xaml`
+binds directly to `PrepareViewModel`, not `SettingsViewModel`, so a property added only to the latter
+silently fails to bind (a real mistake made and fixed while building this).
+
+`PlanViewModel.ComputeDefaultAngularSeparationDeg` (half of `BeamwidthDeg`, evaluated at the *plan's
+own* `CenterFrequency` rather than the app-wide default) seeds a brand new plan's
+`TargetRange.AngularSeparationDeg` — applied at `PlanViewModel` construction and by `NewPlanCommand` —
+in place of the unhelpful `0` a fresh `TargetRange` used to start with. `LoadPlan`/`CopyPlan` never
+touch it, always preserving whatever separation a saved plan already specifies.
+
 ### Sweep planning
 
 `SweepPlanner.BuildSweep` turns a `CapturePlan`'s `TargetRange` (RA/Dec or Az/El start, end, and
-angular separation — whichever pair applies is picked from `plan.PlanType`, which in turn follows the
-connected mount's own coordinate mode, not a user toggle) into an ordered `List<TargetPoint>`. Three
-things worth knowing:
+angular separation, or — for an Equatorial plan in `SweepGeometryMode.Region` — a drawn region's
+generated grid; see "Plan view sky map" below) into an ordered `List<TargetPoint>`. Internally this is
+two composable halves: `BuildRawPoints(plan)` turns the plan's geometry into an unordered/unvalidated
+candidate point list (also called directly by `PlanViewModel`'s map preview when the ordered/validated
+path fails, so a plan that dips below the horizon is still diagnosable on the map rather than just an
+error message), and `BuildSweepFromPoints(rawPoints, ...)` is the greedy elevation-ordering/horizon-
+validation pass described below, extracted so both a `TargetRange`-derived and a region-derived point
+list go through identical validation. Whichever pair of Start/End fields applies is picked from
+`plan.PlanType`, which in turn follows the connected mount's own coordinate mode, not a user toggle.
+Several things worth knowing:
 
 - **`TargetRange.AngularSeparationDeg`** (renamed from `StepDeg`) is the true angular separation
   wanted *on the sky* between adjacent dwell points, not a raw per-axis coordinate step. Dec/Elevation
@@ -389,9 +424,17 @@ things worth knowing:
   numbers to `StepRange`. Surfaced while building `scripts/New-SweepGridPoints.ps1`, a deliberate
   mirror of this exact function used to generate LAB Survey test grids (see "Mosaic sky-map view"
   below) — a real `CapturePlan.TargetRange` meant to wrap through 0h RA hits the identical footgun.
+- **`SweepPlanner.BuildRegionGrid`** is the region-mode counterpart to the `TargetRange` Start/End
+  grid above: given a closed loop of `RegionVertex` (RA/Dec) points traced on the Plan view's sky map
+  (`TargetRange.RegionVertices`, only meaningful when `TargetRange.GeometryMode == Region`), it walks
+  the same cos(Dec)-corrected row/column grid over the vertices' own RA/Dec bounding box, keeping only
+  grid points that fall inside the polygon (a standard ray-casting point-in-polygon test on the
+  RA-hours × Dec-degrees plane). Equatorial-only, and shares `StepRange`'s RA-wraparound limitation — a
+  region can't usefully straddle the 24h/0h seam.
 - **Points are ordered greedily by elevation, not raster order.** After the raw RA/Dec or Az/El grid
-  is generated, `BuildSweep` repeatedly picks whichever *remaining* point would be highest in the sky
-  at its estimated arrival time (accounting for slew time from the current position) as the next
+  is generated (by either `BuildRawPoints` path above), `BuildSweepFromPoints` repeatedly picks
+  whichever *remaining* point would be highest in the sky at its estimated arrival time (accounting
+  for slew time from the current position) as the next
   target — not simply the next one in scan order. For AltAz plans elevation is time-invariant, so this
   reduces to visiting highest-elevation points first; for Equatorial plans it also accounts for
   targets rising/setting as the sweep runs long enough for LST to move. This deliberately prioritises
@@ -400,6 +443,103 @@ things worth knowing:
   The horizon-limit failure check is evaluated against the *best* remaining candidate each step, so a
   plan only ever fails once every remaining point is below the limit, not just the next one in scan
   order (which the old raster-order implementation could fail on prematurely).
+
+### Plan view sky map
+
+`PlanView` is now built around a "Radio Sky"-style hemisphere map rather than a plain form — a
+zenith-centered Alt/Az dome (the same projection style as Mosaic's Zenith Dome, see below, but a
+separate, standalone implementation — deliberately not a refactor of `MosaicViewModel`, to keep this
+feature's blast radius off a working, already-documented one) that lets a plan be *seen* and validated
+before it's ever run for real. The plan's own numeric fields (Friendly Name, Plan Type, Range/Region
+geometry mode, Capture/Telescope/Output parameters, Save Plan) live in a separate modeless
+`PlanEditorWindow` (opened via `PlanViewModel.OpenPlanEditorCommand` → `IPlanEditorWindowService`,
+which shows/activates a single instance rather than spawning duplicates) bound to the *same*
+`PlanViewModel` instance `PlanView` itself is bound to — both stay in sync automatically since it's
+literally one shared VM, no extra plumbing needed. `PlanView.xaml`'s own toolbar also carries a
+Friendly Name box + Save Plan button directly (with `PlanViewModel.SaveStatusText` reporting success/
+failure next to it, mirrored into the editor window too) — added after the editor-window split made
+saving a just-drawn region feel disconnected from where it was drawn; `SavePlan` itself validates a
+non-blank name and wraps the actual write in try/catch rather than failing silently.
+
+`PlanViewModel.RefreshMapDisplay` recomputes the map's background/geometry/points and is wired up
+from every property that can change what the map should show — `PlanType`, `MapTimeUtc`,
+`MapGridMode`, and `Range` plus everything inside it (`Range.PropertyChanged` is subscribed/
+resubscribed whenever `Range` itself is reassigned wholesale, e.g. by `LoadPlan`/`NewPlan` — see
+`OnRangeChanged`, since the existing Range Start/End `TextBox`es bind directly to `Range.RAStartHours`
+etc., not through a `PlanViewModel`-level proxy). `RefreshVisiblePoints` is the cheaper half, called
+on its own by mode/animation-step changes that don't need the background/geometry/ordering
+recomputed.
+
+- **Analytic Milky Way background** (`RASTA.App/Helpers/MilkyWayBackgroundBuilder`) — RASTA has no
+  real star/sky catalog, so this approximates the Galactic plane's location and rough brightness from
+  `AstronomyUtils.EquatorialToGalactic` alone (a Gaussian falloff from Galactic latitude b=0, gently
+  brighter toward the Galactic center l=0 than the anticenter, echoing how a real radio-continuum sky
+  brightens toward Sgr A), coloured with the same visible-spectrum ramp used throughout the app
+  (`HeatmapImageBuilder.Ramp`). Explicitly not real sky data — just enough visual context to orient the
+  map, the same "not Stellarium-grade" spirit as the parked star/constellation-overlay goal noted under
+  Mosaic below. Rendered at a lower internal resolution (240px) than the on-screen 640px canvas and
+  bilinear-stretched, since it's several trig calls per pixel; rebuilt whenever `MapTimeUtc` or the site
+  lat/lon changes (`RefreshBackgroundIfNeeded`, rounded to the minute to avoid rebuilding on every
+  unrelated `RefreshMapDisplay` call).
+- **`RASTA.App/Helpers/DomeProjector`** is the shared Az/El ⇄ pixel math (`Project`/`Unproject`, plus
+  altitude-ring/azimuth-spoke/compass-label builders) extracted from Mosaic's own dome projection —
+  unlike Mosaic's read-only dome, this one also needed the *inverse* projection, to turn a mouse click/
+  hover back into sky coordinates.
+- **Alt/Az ⇄ RA/Dec grid toggle** (`PlanViewModel.MapGridMode`, a toolbar radio pair) — Alt/Az mode
+  shows the dome's usual fixed altitude-rings/azimuth-spokes/compass-label reference frame (cached
+  once, since it's time-invariant); RA/Dec mode instead shows RA meridians/Dec parallels
+  (`RASTA.App/Helpers/EquatorialGridBuilder`, every 2h/15°) projected fresh onto the dome at
+  `MapTimeUtc` — each line sampled across the other coordinate and broken into separate polyline
+  segments wherever it dips below the horizon, rather than distorting across the disk. Both modes
+  reuse the same `CompassLabels` display slot (compass points in one, RA/Dec labels in the other) so
+  the view doesn't need mode-specific bindings. The RA/Dec grid is deliberately rebuilt unconditionally
+  on every relevant refresh (no "did anything actually change" cache guard, unlike the background) —
+  an earlier cached version had a real bug where changing `MapTimeUtc` while already in RA/Dec mode
+  left the grid stale until toggling modes forced a rebuild; rather than keep chasing the exact stale-
+  cache edge case, the guard was just removed (a couple of thousand trig calls per refresh is cheap).
+  Relatedly, `PlanViewModel.MapTimeUtc` is a hand-written property (not `[ObservableProperty]`) that
+  normalizes every set to `DateTimeKind.Utc` (relabelled, not shifted) — WPF's default `DateTimeConverter`
+  parses plain typed text as `DateTimeKind.Unspecified`, and `AstronomyUtils`' helpers treat an
+  Unspecified `DateTime` as *local system time*, silently shifting it via `ToUniversalTime()`; normalizing
+  once at the property means every reader (point projection, hover/click handling, the grid/background
+  builders) agrees on what moment a typed time actually means.
+- **Capture points run through the real `SweepPlanner` pipeline**, not just a raw grid —
+  `BuildOrderedPoints` calls `_planner.BuildSweep(plan, MapTimeUtc, ...)` treating `MapTimeUtc` as the
+  plan's prospective start time, so the map shows the actual execution order, horizon-limit outcome,
+  and ETA a real sweep would produce. On failure (e.g. a point below the horizon limit) it falls back
+  to `SweepPlanner.BuildRawPoints`' raw, unordered grid, colour-coding each point by its own elevation
+  at `MapTimeUtc` against `Settings.HorizonLimitDeg` — so a failing plan is still diagnosable on the
+  map, not just an error message. Points are sequence-coloured start→end via `HeatmapImageBuilder.Ramp`
+  (order, not a measured value). `PlanViewModel.PointDisplayMode` (`All`/`Animate`, toolbar radio pair)
+  switches between showing every point at once and stepping through them one at a time
+  (`PlayAnimationCommand`/`Pause`/`Step`/`Reset`, a `DispatcherTimer` at a fixed, user-adjustable
+  seconds-per-point — not scaled to the plan's real dwell time, kept simple since the real ETA is
+  already shown as text); animation shows a trail of already-visited points dimmed alongside the
+  current one enlarged, rather than one dot in isolation.
+- **Freeform region drawing** (Equatorial plans only) — `PlanViewModel.StartDrawRegionCommand` begins
+  capturing left-clicks on the map as `RegionVertex` (RA/Dec) points; `FinishRegionCommand` closes the
+  loop into `TargetRange.RegionVertices`/`GeometryMode = Region` (see `SweepPlanner.BuildRegionGrid`
+  above); `ClearRegionCommand` (`CanClearRegion` = drawing in progress *or* a region already committed)
+  clears both the in-progress drawing and any already-finished region, resetting `GeometryMode` back to
+  `Range` — the button used to only ever clear the in-progress drawing, so a *finished* region had no
+  way to be removed short of drawing a new one over it.
+- **Right-click "Slew & Capture Here"** — `PlanViewModel.HandleMapRightClick` (called from
+  `PlanView.xaml.cs`'s `PreviewMouseRightButtonDown`, before the `ContextMenu` itself opens) computes
+  the sky point under the cursor in whichever coordinate mode the connected mount is actually in
+  (`TelescopeState.Mode`, since the resulting `TargetPoint` feeds a real slew) and stashes it into
+  `ContextTargetPoint`, so the menu's `CanExecute` (gated on `StatusBarViewModel.TelescopeConnected`/
+  `SdrConnected`) is already current by the time it shows. `CaptureHereCommand` sets
+  `CaptureViewModel.PendingQuickCaptureTarget` and navigates to Capture — see "Capture and FITS
+  conventions" below for what happens there. The `ContextMenu`'s `DataContext` is rebound via
+  `{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}`, the standard WPF
+  workaround for a `ContextMenu`/`Popup` not inheriting `DataContext` from its visual parent the way
+  everything else in the tree does.
+
+Plans themselves are no longer tied to a specific SDR device (`CapturePlan.SdrDeviceId` removed,
+`IPlanRepository.ListPlans()` lists every plan in the folder) — this, plus the map needing only site
+settings rather than a connected mount, is what lets `NavigationViewModel.NavigatePlan` be unconditionally
+enabled (see "Navigation" above): planning can now be done fully offline, before any hardware is ever
+plugged in.
 
 ### Capture and FITS conventions
 
@@ -444,6 +584,15 @@ Its capture parameters (center frequency, sample rate, gain, FFT size) come from
 `CalibrationProfile`, not from a `CapturePlan`, so `CanQuickCapture` requires only a loaded
 calibration plus a connected mount/SDR — no plan needs to be selected. Dwell period is its own
 `QuickCaptureDwellSeconds` (default 30s), independent of any plan's `DwellTime`.
+
+`CaptureViewModel.PendingQuickCaptureTarget` (`TargetPoint?`) is the hand-off point for the Plan
+view's sky map (see "Plan view sky map" above): when set, `QuickCaptureAsync` slews there first
+(switching tracking on if needed, the same "this mount's ASCOM driver rejects a slew while tracking
+is off" handling `CaptureSweepAsync` already needs — see below) before capturing, uses that target
+directly rather than re-reading `TelescopeState` (avoiding a race with `TelescopeService`'s poll
+loop, which is what actually refreshes it), then clears the field — so the *next* Quick Capture, with
+no fresh hand-off, reverts to "wherever pointed" automatically. `QuickCaptureTargetLabel` (shown next
+to the Quick Capture button) reflects whether a pending target is currently set.
 
 `VisualiseViewModel` auto-combines these multi-file dwell points: selecting *any one* file matching
 `..._{n}of{total}.fits` (`ResolveRelatedCaptureFiles`/`ReadCombinedCaptureRawIq`) pulls in every
@@ -598,7 +747,7 @@ center → walk-around-inside, each fixing a real problem the last exposed) to e
 itself a sign the shape was fighting the data rather than presenting it. The replacement instead makes
 this tab a literal 3D extension of the already-legible 2D Zenith Dome: the exact same fixed reference
 geometry (altitude rings every 15°, azimuth spokes every 30°, the 8 principal compass labels, N/S/E/W
-oriented the same "looking up, not down" way) sits flat on a Y=0 ground plane, and each of
+oriented the same "looking up, not down" way) sits flat on a Z=0 ground plane, and each of
 `MosaicViewModel.SurfacePoints`' live-Az/El positions (see `RenderSurface`/
 `ComputeVisibleDomePositions` — shared with the 2D dome, so both tabs always agree on which positions
 are actually up right now) becomes a thin cylinder "stem" standing up from that plane to a sphere
@@ -608,21 +757,72 @@ Height and colour are both **zero-anchored/linear**, not min-max-normalized the 
 `NormHeight`/`NormColor` were: `Height(v) = v / maxAbs * MaxHeightExtent` and `NormColorT(v) = 0.5 +
 v / (2*maxAbs)`, where `maxAbs` is the largest `|value|` in the current data. A value of exactly 0 (0
 km/s at the LSR-corrected line center, or 0 dB — no excess above the cold-sky baseline) is a real,
-physically meaningful reference in both metrics, so it belongs exactly on the ground plane and at the
-diverging ramp's neutral gray midpoint regardless of where this session's own min/max happen to fall —
-unlike a min-max remap, which could push a session with an all-positive value range toward one end of
-the colour ramp for no physical reason.
+physically meaningful reference in both metrics, so it belongs exactly on the ground plane regardless
+of where this session's own min/max happen to fall — unlike a min-max remap, which could push a
+session with an all-positive value range toward one end of the colour ramp for no physical reason. On
+`HeatmapImageBuilder`'s current visible-spectrum ramp (`SpectrumStops`, see "Getting HelixToolkit to
+actually render on this machine" below) that zero point lands
+on the ramp's own green/yellow midpoint, not a neutral gray the way the earlier diverging ramp made
+it — still the same zero-anchored math, just no longer a visually "neutral" colour at that point.
+
+`MosaicViewModel.RenderSurface` also builds `SurfaceLegendImage` (the strip shown under the 3D Dome
+tab, same `HeatmapImageBuilder.BuildLegendStrip` the Sky Mosaic/Zenith Dome legends use) from this
+same zero-anchoring: because the ramp is a straight sweep across `[-maxAbs, +maxAbs]`, the strip's own
+endpoints are labelled `-maxAbs`/`+maxAbs` (with 0 implicitly at its center), not the session's actual
+observed min/max the way `SkyHeatmap`/`SkyDome`'s legends are — labelling it with the real min/max
+instead would pair the wrong colours with those numbers, since the observed range is usually a
+sub-portion of the full `±maxAbs` span the 3D view's colours actually draw from.
 
 Each stem/tip is a small, self-contained parametric solid (`AppendCylinder`/`AppendSphere`) always
 viewed from *outside* itself — unlike the old globe, the camera here is never inside one of these
 shapes the way it sat dead-center inside the globe's own shell — so normals are computed directly from
 each shape's own geometry (radial-from-axis for a cylinder, radial-from-center for a sphere) rather
 than by averaging face normals afterward: simpler and exact for a known parametric shape, no winding-
-direction reasoning needed. `CameraMode="Inspect"` (orbit around the *outside* of the bounding box,
-`ZoomExtents` called after every rebuild) is now the *correct* choice, not the wrong one the globe
-rejected it for — this is a flat terrain/bar-chart shape meant to be viewed from outside/above, which
-is exactly what Inspect is for; there's a well-defined "whole object" to fit into frame, unlike the
-globe's dead-center vantage where re-fitting would have fought the user's own look direction.
+direction reasoning needed. `CameraMode="Inspect"` (orbit around the *outside* of the bounding box) is
+now the *correct* choice, not the wrong one the globe rejected it for — this is a flat terrain/bar-chart
+shape meant to be viewed from outside/above, which is exactly what Inspect is for; there's a well-defined
+"whole object" to fit into frame, unlike the globe's dead-center vantage where re-fitting would have
+fought the user's own look direction.
+
+`Rebuild`'s own `Viewport.ZoomExtents(0)` call is no longer unconditional, though: it only re-fits the
+camera when the incoming `Points`' own *Label set* differs from the previous rebuild's (`_lastLabels`),
+not on every rebuild regardless of cause. Toggling `FitMeshThroughPoints` or `SurfaceMetric` (Strength/
+Velocity) both re-run `Rebuild` over the exact same positions — a different drawing mode or a different
+field read from the same points, not new data — so the Label set is unchanged and the user's current
+orbit/zoom is left exactly where they put it. A genuinely new `Points` list (a fresh mosaic, or
+`DomeTimeUtc` moving which positions are above the horizon) does change the Label set, which is exactly
+when the old framing may no longer suit the new spread and a re-fit earns its keep. One Label-set
+comparison covers every trigger this way, present or future, without each needing its own "does this
+one reset the camera?" callback.
+
+**Click-to-select** links a stem/tip (or, with `FitMeshThroughPoints` on, a face of the fitted mesh)
+back to its row in the Positions `DataGrid` (`MosaicView.xaml`'s Positions grid, shared with the Sky
+Mosaic tab). `Viewport.MouseLeftButtonDown`/`MouseLeftButtonUp` track the screen position at down and
+up so a genuine click (≤4px of movement) can be told apart from `CameraMode="Inspect"`'s own left-button
+orbit-drag; a real click hit-tests via `Viewport3DHelper.FindHits` filtered to `PointsVisual`/
+`MeshVisual` (never the reference rings/spokes/compass labels in `AxisVisual`). Because every point's
+stem+tip is merged into one mesh for a single draw call (see above), a raw hit carries no per-vertex
+point identity to read back directly — so `Rebuild` caches each point's own extruded (x, y, height)
+center (`_pointPositions`), and a click resolves to whichever cached point is nearest the actual hit
+location, reliable since points are normally spread far apart relative to a stem's own
+`StemRadius`/`TipRadius`. The resolved Label flows out via `SelectedLabel` (`MosaicDomeSurfaceView`'s
+own dependency property, bound `OneWayToSource` to `MosaicViewModel.DomeSelectedLabel`), which looks
+the Label up in `Positions` and sets `SelectedPosition` — bound to the `DataGrid`'s own `SelectedItem`.
+`MosaicView.xaml.cs` then calls `PositionsDataGrid.ScrollIntoView(...)` on that same property change,
+since a bound `SelectedItem` alone doesn't auto-scroll a `DataGrid` into view.
+
+The selected row's own colour is overridden to match the nav sidebar's "selected section" accent
+(`MainWindow.xaml`'s Prepare/Plan/Capture/Visualise/Options highlight, `Styles.xaml`'s
+`NavSelectedAccentColor`/`NavSelectedAccentBrush`) rather than the OS default blue — a genuine WPF
+`DataGrid` gotcha worth knowing about elsewhere in the app: a plain `RowStyle`/`CellStyle` trigger on
+`Background` for `IsSelected="True"` has **no visible effect**, because the default `DataGridCell`
+template's own internal `ControlTemplate.Triggers` sets its Border's background directly from a
+`DynamicResource` lookup of `SystemColors.HighlightBrushKey` (and the `InactiveSelectionHighlight...`
+pair when the grid doesn't have keyboard focus — the state right after a 3D Dome click, since focus
+stays in the viewport) — and a template trigger outranks a Style trigger for the same property in WPF's
+value-precedence order. The only reliable fix short of fully retemplating `DataGridCell` is overriding
+those exact resource keys, scoped to just the one `DataGrid` via its own `Resources` (`MosaicView.xaml`)
+so nothing else in the app is affected.
 
 **`FitMeshThroughPoints`** (a checkbox on the 3D Dome tab) replaces the per-point stems/dots with a
 translucent surface triangulated through each point's *own exact* extruded (x, height, z) position —
@@ -643,7 +843,7 @@ exists to make the fitted surface meaningful.
 
 Reuses every hard-won HelixToolkit lesson the old globe surfaced (see the next section) — explicit
 per-vertex `Normals`, a vector `LinearGradientBrush` material rather than a raster `ImageBrush`,
-`TextCreator` for labels, a translucent material (`BackMaterial` set to the same brush) since the Y=0
+`TextCreator` for labels, a translucent material (`BackMaterial` set to the same brush) since the Z=0
 reference grid can sit through rather than under data whose range straddles zero.
 
 **Longer-term, parked goal**: overlay the heatmap on a lightweight background star/constellation map,
@@ -752,8 +952,10 @@ the fixes are still exactly what the current dome+stems/optional-mesh design rel
   Neither a 1px- nor 2px-tall bitmap fixed it, so it isn't specifically an extreme-aspect-ratio/mipmap
   issue — it's that *any* raster-backed `ImageBrush` used as a 3D `DiffuseMaterial` silently fails to
   render on this machine's WPF 3D tier, while *vector* brushes (`LinearGradientBrush`,
-  `SolidColorBrush`) render fine. `BuildGradientBrush` builds the same diverging blue-gray-red ramp
-  (`HeatmapImageBuilder.DivergingStops`) as a `LinearGradientBrush` instead. This also ruled out
+  `SolidColorBrush`) render fine. `BuildGradientBrush` builds the same visible-spectrum ramp
+  (`HeatmapImageBuilder.SpectrumStops` — deep blue through cyan/green/yellow/orange to deep red,
+  matching the Radio Eyes-style false-colour convention rather than a diverging blue-gray-red one)
+  as a `LinearGradientBrush` instead. This also ruled out
   HelixToolkit's own `TextVisual3D`/`BillboardTextVisual3D` for axis labels (both render text via
   `RenderTargetBitmap` → `ImageBrush` internally — the same failing pattern) in favour of
   `HelixToolkit.Wpf.TextCreator.CreateTextLabelModel3D`, which renders its `DiffuseMaterial` via a
@@ -764,7 +966,7 @@ the fixes are still exactly what the current dome+stems/optional-mesh design rel
 
 The mesh material is deliberately translucent (`TranslucentGradientBrush`, alpha baked into each
 gradient stop since the brush is `Frozen`, `BackMaterial` set to the same brush so a triangle renders
-regardless of which side faces the camera), because the reference rings/spokes/labels sit at `Y=0`
+regardless of which side faces the camera), because the reference rings/spokes/labels sit at `Z=0`
 exactly — a real, physically meaningful reference (0 km/s, the LSR-corrected line center; or 0 dB, no
 excess above the cold-sky baseline) rather than pinned below the data's own minimum, which for a metric
 whose range straddles zero routinely sits *through* rather than under a stem/dot/fitted-mesh face.
@@ -798,7 +1000,7 @@ positions itself via its own `X1`/`Y1`/`X2`/`Y2` coordinates rather than `Canvas
 
 On the 3D Dome, `MosaicDomeSurfaceView.BuildReferenceGrid` draws those same fixed rings/spokes as one
 `LinesVisual3D` (screen-space-constant-width, `SolidColorBrush`-backed — proven-safe per the section
-above) sitting flat on the `Y=0` ground plane, plus the 8 compass labels via `TextCreator`, sharing one
+above) sitting flat on the `Z=0` ground plane, plus the 8 compass labels via `TextCreator`, sharing one
 fixed `textDirection`/`updirection` (`(1,0,0)`/`(0,0,1)`) the same way the old globe's labels did
 (matching HelixToolkit's own `SurfacePlotVisual3D` reference example's convention of one consistent
 direction pair for every axis, rather than a different one per axis, which is what originally produced
