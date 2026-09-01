@@ -2,6 +2,15 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:controls="clr-namespace:RASTA.App.Controls">
 
+    <!-- The nav sidebar's own "selected section" accent colour (MainWindow.xaml's Prepare/Plan/
+         Capture/Visualise/Options buttons) - shared here so anything elsewhere in the app that
+         wants to visually agree with "this is the selected/current thing" (e.g. MosaicView's
+         Positions DataGrid selected-row colour) can reference the same colour instead of a second
+         hardcoded hex copy that could drift out of sync. Kept as a Color (not just a Brush) since
+         a SystemColors brush-key override needs a Color-typed source, not a Brush one.-->
+    <Color x:Key="NavSelectedAccentColor">#4FC3F7</Color>
+    <SolidColorBrush x:Key="NavSelectedAccentBrush" Color="{StaticResource NavSelectedAccentColor}"/>
+
     <!-- Default template for ZoomAndPanControl: a clipped Border hosting the
          ContentPresenter the control's code-behind looks up as "PART_Content" and
          applies its Scale/Translate render transform to. Background must stay

@@ -23,21 +23,28 @@ namespace RASTA.App.Helpers
     /// </summary>
     public static class HeatmapImageBuilder
     {
-        // Diverging blue-gray-red ramp (dataviz skill's diverging formula: two hues + a
-        // neutral gray midpoint) - kept in one place, reused by MosaicSurfaceView's 3D
-        // texture too so the sky heatmap and the 3D surface colour identically.
-        public static readonly (byte r, byte g, byte b)[] DivergingStops =
+        // "Visible spectrum" style ramp (deep blue -> blue -> cyan -> green -> yellow -> orange
+        // -> deep red) - matches the false-colour convention Radio Eyes/most radio-astronomy sky
+        // maps use, rather than the dataviz skill's usual two-hue-plus-neutral-midpoint diverging
+        // formula this replaced. Kept in one place, reused by MosaicDomeSurfaceView's 3D texture
+        // too so the sky heatmap and the 3D dome/mesh colour identically. Not zero-anchored in
+        // any special way - MosaicDomeSurfaceView.NormColorT still maps a value of 0 to t=0.5,
+        // which now lands on this ramp's green/yellow midpoint rather than a neutral gray, but
+        // that's just where 0 happens to fall on the spectrum, not a deliberately neutral colour.
+        public static readonly (byte r, byte g, byte b)[] SpectrumStops =
         {
-            (0x10, 0x42, 0x81), // deep blue
-            (0x39, 0x87, 0xE5), // blue
-            (0xF0, 0xEF, 0xEC), // neutral gray midpoint
-            (0xE3, 0x49, 0x48), // red
-            (0xA5, 0x30, 0x2F), // deep red
+            (0x00, 0x00, 0x80), // deep blue (low)
+            (0x00, 0x00, 0xFF), // blue
+            (0x00, 0xFF, 0xFF), // cyan
+            (0x00, 0xFF, 0x00), // green
+            (0xFF, 0xFF, 0x00), // yellow
+            (0xFF, 0x80, 0x00), // orange
+            (0x80, 0x00, 0x00), // deep red (high)
         };
 
-        // Flat, desaturated fill for "no data" cells - visually distinct from the ramp's own
-        // (very slightly warm) gray midpoint so "nothing measured here" doesn't read as
-        // "measured, and it was zero".
+        // Flat, desaturated fill for "no data" cells - a mid gray that isn't a colour the ramp
+        // itself ever produces, so "nothing measured here" doesn't read as "measured, and it
+        // came out somewhere on the spectrum".
         private static readonly (byte r, byte g, byte b) NoDataColor = (0xC8, 0xC8, 0xC8);
 
         /// <summary>
@@ -265,14 +272,14 @@ namespace RASTA.App.Helpers
 
         public static (byte r, byte g, byte b) Ramp(double t)
         {
-            t = Math.Clamp(t, 0, 1) * (DivergingStops.Length - 1);
+            t = Math.Clamp(t, 0, 1) * (SpectrumStops.Length - 1);
             int i0 = (int)Math.Floor(t);
-            int i1 = Math.Min(i0 + 1, DivergingStops.Length - 1);
+            int i1 = Math.Min(i0 + 1, SpectrumStops.Length - 1);
             double frac = t - i0;
 
             byte Lerp(byte a, byte b) => (byte)(a + (b - a) * frac);
-            var s0 = DivergingStops[i0];
-            var s1 = DivergingStops[i1];
+            var s0 = SpectrumStops[i0];
+            var s1 = SpectrumStops[i1];
             return (Lerp(s0.r, s1.r), Lerp(s0.g, s1.g), Lerp(s0.b, s1.b));
         }
     }

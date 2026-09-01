@@ -274,6 +274,12 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private string surfaceLegendMaxText = string.Empty;
 
+    // Same HeatmapImageBuilder.Ramp strip as SkyHeatmap/SkyDome's own legend image, but labelled
+    // -maxAbs..+maxAbs rather than the session's actual observed min/max - see RenderSurface's
+    // remarks on why those are the strip's true endpoints for this tab specifically.
+    [ObservableProperty]
+    private BitmapSource? surfaceLegendImage;
+
     // ---------------------------------------------------------
     // Zenith Dome tab - a from-here-right-now Alt/Az view (see RenderDome), distinct from the
     // Sky Mosaic tab's persistent full-sky RA/Dec canvas above. DomeTimeUtc defaults to "now"
@@ -297,6 +303,26 @@ public partial class MosaicViewModel : ObservableObject
     private void SetDomeTimeNow() => DomeTimeUtc = DateTime.UtcNow;
 
     public ObservableCollection<MosaicPositionSummary> Positions { get; } = new();
+
+    // Bound to the Positions DataGrid's own SelectedItem (two-way, so a manual row click still
+    // works as before) - set programmatically from DomeSelectedLabel when a stem/tip is clicked
+    // on the 3D Dome tab.
+    [ObservableProperty]
+    private MosaicPositionSummary? selectedPosition;
+
+    // OneWayToSource target for MosaicDomeSurfaceView.SelectedLabel - set by a click on a stem/tip
+    // there (see OnViewportClick), resolved here to the matching Positions row.
+    [ObservableProperty]
+    private string? domeSelectedLabel;
+
+    partial void OnDomeSelectedLabelChanged(string? value)
+    {
+        if (value is null)
+            return;
+        var match = Positions.FirstOrDefault(p => p.Label == value);
+        if (match is not null)
+            SelectedPosition = match;
+    }
 
     // Own progress/busy/status state for GenerateMosaicAsync, deliberately separate from
     // StatusBarViewModel.CaptureProgress/IsCaptureInProgress/CaptureStatus - those are also
@@ -837,13 +863,25 @@ public partial class MosaicViewModel : ObservableObject
         {
             SurfaceLegendMinText = "n/a";
             SurfaceLegendMaxText = "n/a";
+            SurfaceLegendImage = null;
             return;
         }
 
         double min = visible.Min(v => v.Value);
         double max = visible.Max(v => v.Value);
-        SurfaceLegendMinText = $"{min:F1} {unit}";
-        SurfaceLegendMaxText = $"{max:F1} {unit}";
+
+        // Mirrors MosaicDomeSurfaceView.Rebuild's own maxAbs/NormColorT exactly: the 3D view
+        // colours (and heights) a value zero-anchored/linearly across [-maxAbs, +maxAbs], not
+        // across [min, max] the way the 2D heatmap/Zenith Dome do - so unlike SkyHeatmap/SkyDome's
+        // legend (real observed min/max, matching their own min-max colour mapping), this strip's
+        // true endpoints are -maxAbs/+maxAbs; labelling it with the session's actual min/max
+        // instead would pair the wrong colours with those numbers. A plain 0..1 HeatmapImageBuilder.
+        // Ramp sweep already IS that strip, since the zero-anchored map is linear across the full
+        // symmetric range - only the end labels need to reflect maxAbs rather than min/max.
+        double maxAbs = Math.Max(Math.Max(Math.Abs(min), Math.Abs(max)), 1e-9);
+        SurfaceLegendMinText = $"-{maxAbs:F1} {unit}";
+        SurfaceLegendMaxText = $"+{maxAbs:F1} {unit}";
+        SurfaceLegendImage = HeatmapImageBuilder.BuildLegendStrip(200);
     }
 
     private void BuildPositionsSummary(MosaicResult result)

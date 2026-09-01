@@ -4,6 +4,7 @@ using RASTA.App.ViewModels;
 using RASTA.Processing.Gridding;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 
@@ -70,6 +71,33 @@ namespace RASTA.App.Views
             set => SetValue(FitMeshProperty, value);
         }
 
+        public static readonly DependencyProperty SelectedLabelProperty =
+            DependencyProperty.Register(nameof(SelectedLabel), typeof(string), typeof(MosaicDomeSurfaceView),
+                new PropertyMetadata(null));
+
+        /// <summary>
+        /// Set by a click on a stem/tip (or a fitted-mesh face) to that point's own Label - see
+        /// OnViewportClick. Bound OneWayToSource from MosaicView.xaml so MosaicViewModel can
+        /// select the matching Positions DataGrid row (MosaicViewModel.OnDomeSelectedLabelChanged).
+        /// One-way only: there's no "highlight the selected stem" behaviour yet for the DataGrid's
+        /// own selection to drive back onto this view.
+        /// </summary>
+        public string? SelectedLabel
+        {
+            get => (string?)GetValue(SelectedLabelProperty);
+            set => SetValue(SelectedLabelProperty, value);
+        }
+
+        // Each currently-rendered point's own extruded (x, y, height) center, cached by Rebuild -
+        // see OnViewportClick's remarks on why nearest-point matching, not vertex-index tracking,
+        // is how a raw hit-test result gets resolved back to a specific DomeSurfacePoint.
+        private List<(string Label, Point3D Position)> _pointPositions = new();
+        private Point _mouseDownPosition;
+
+        // The Label set from the previous Rebuild - see Rebuild's own remarks on why this, not a
+        // separate "which property changed" flag, is what decides whether the camera re-fits.
+        private HashSet<string> _lastLabels = new();
+
         public MosaicDomeSurfaceView()
         {
             InitializeComponent();
@@ -81,10 +109,49 @@ namespace RASTA.App.Views
                 if ((bool)e.NewValue)
                     Dispatcher.InvokeAsync(Rebuild, System.Windows.Threading.DispatcherPriority.Loaded);
             };
+
+            // Click-to-select: a plain MouseUp isn't enough on its own, since CameraMode="Inspect"
+            // also uses the left button to orbit - only a down/up pair whose screen position barely
+            // moved counts as a click rather than the end of a drag.
+            Viewport.MouseLeftButtonDown += (_, e) => _mouseDownPosition = e.GetPosition(Viewport);
+            Viewport.MouseLeftButtonUp += OnViewportClick;
         }
 
         private static void OnDataChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
             ((MosaicDomeSurfaceView)d).Rebuild();
+
+        /// <summary>
+        /// Resolves a click to whichever DomeSurfacePoint it landed on and pushes its Label into
+        /// SelectedLabel. Ignores anything that moved more than a few pixels between down and up
+        /// (an orbit drag, not a click) and any hit that isn't on PointsVisual/MeshVisual (the
+        /// reference grid/compass labels in AxisVisual aren't selectable data).
+        /// </summary>
+        private void OnViewportClick(object sender, MouseButtonEventArgs e)
+        {
+            var position = e.GetPosition(Viewport);
+            if ((position - _mouseDownPosition).Length > 4)
+                return;
+
+            if (_pointPositions.Count == 0)
+                return;
+
+            var dataHit = Viewport3DHelper.FindHits(Viewport.Viewport, position)
+                .Where(h => h.Model == PointsVisual.Content || h.Model == MeshVisual.Content)
+                .OrderBy(h => h.Distance)
+                .FirstOrDefault();
+            if (dataHit is null)
+                return;
+
+            // The merged mesh has no per-vertex point identity (one draw call for every stem/tip -
+            // see BuildStemsAndDots/BuildFittedMesh), so rather than track vertex-index ranges per
+            // point, just find whichever point's own extruded center is nearest the actual hit
+            // location - reliable since points are normally spread far apart relative to a stem's
+            // own StemRadius/TipRadius.
+            var nearest = _pointPositions
+                .OrderBy(p => (p.Position - dataHit.Position).LengthSquared)
+                .First();
+            SelectedLabel = nearest.Label;
+        }
 
         // Overall scene scale - deliberately matching the old globe's SphereRadius=30 so switching
         // between this tab and the 2D Zenith Dome (whose own domeRadius is independently chosen in
@@ -97,7 +164,7 @@ namespace RASTA.App.Views
         private const double MaxHeightExtent = 12.0;
 
         private const double StemRadius = 0.3;
-        private const double TipRadius = 0.8;
+        private const double TipRadius = 0.6;
         private const int CylinderSegments = 8;
         private const int SphereThetaDiv = 10;
         private const int SpherePhiDiv = 6;
@@ -108,11 +175,15 @@ namespace RASTA.App.Views
         private static readonly Vector3D LabelUpDirection = new(0, 1, 0);
 
         /// <summary>
-        /// Ground-plane (X,Y) position for a given Az/El, sharing the exact same projection as
-        /// the 2D Zenith Dome's own Project() (MosaicViewModel.RenderDome): a linear zenith-angle
-        /// radius (0 at the zenith center, DomeRadius at the horizon edge) and azimuth negated so
-        /// the compass reads correctly for a naked-eye sky view (N away from the viewer at Az=0,
-        /// E to one side, W to the other - see MosaicViewModel.RenderDome's own compass remarks).
+        /// Ground-plane (X,Y) position for a given Az/El. East/west (X) shares the exact same
+        /// negated-sine convention as the 2D Zenith Dome's own Project() (MosaicViewModel.
+        /// RenderDome), so E lands at -X and W at +X the same way E lands left/W lands right
+        /// there. North/south (Y) is the opposite sign from the 2D dome's own cy - r*cos(az),
+        /// though: the 2D formula's y is a *screen* coordinate (increasing downward), where
+        /// cy - r puts N above center - but this method returns a *world* Y feeding a camera
+        /// whose default view renders increasing world Y toward the bottom of the screen (see
+        /// MosaicDomeSurfaceView.xaml's camera remarks), so N needs +r here, not -r, to likewise
+        /// land toward the top and match the 2D dome's N-up/S-down/E-left/W-right reading.
         /// The reference grid sits at Z=0 (this method's own two coordinates); extrusion height
         /// is handled separately by Height, along Z, since it depends on the point's *value*, not
         /// its Az/El - see Rebuild's Point3D(x, y, height) construction.
@@ -121,19 +192,36 @@ namespace RASTA.App.Views
         {
             double r = Math.Clamp((90.0 - elDeg) / 90.0, 0.0, 1.0) * DomeRadius;
             double azRad = azDeg * Math.PI / 180.0;
-            return (-r * Math.Sin(azRad), -r * Math.Cos(azRad));
+            return (-r * Math.Sin(azRad), r * Math.Cos(azRad));
         }
 
+        /// <summary>
+        /// Whether this rebuild re-fits the camera to the new content's bounding box, or leaves
+        /// the user's current orbit/zoom exactly where it was, is decided here from the *identity*
+        /// of the point set (its Labels), not from which bound property triggered the call: FitMesh
+        /// and SurfaceMetric (Strength/Velocity) both leave Points' own set of Labels unchanged -
+        /// same positions, just drawn differently or read for a different field - so those re-runs
+        /// keep whatever framing the user already has. A genuinely new Points list (a fresh mosaic,
+        /// or DomeTimeUtc moving which positions are above the horizon) changes the Label set, which
+        /// is exactly when the old framing may no longer suit the new spread and a re-fit earns its
+        /// keep. This one heuristic covers every trigger (present or future) without each needing
+        /// its own "does this one reset the camera?" callback.
+        /// </summary>
         private void Rebuild()
         {
             PointsVisual.Content = null;
             MeshVisual.Content = null;
             AxisVisual.Children.Clear();
             AxisVisual.Content = null;
+            _pointPositions = new List<(string, Point3D)>();
 
             BuildReferenceGrid();
 
             var points = Points;
+            var labels = points is null ? new HashSet<string>() : points.Select(p => p.Label).ToHashSet();
+            bool resetCamera = !labels.SetEquals(_lastLabels);
+            _lastLabels = labels;
+
             if (points is null || points.Count == 0)
                 return;
 
@@ -149,6 +237,13 @@ namespace RASTA.App.Views
             double Height(double v) => v / maxAbs * MaxHeightExtent;
             double NormColorT(double v) => Math.Clamp(0.5 + v / (2 * maxAbs), 0.0, 1.0);
 
+            // Cached for OnViewportClick's nearest-point hit resolution - see its own remarks.
+            _pointPositions = points.Select(p =>
+            {
+                var (x, y) = DomeXY(p.AzDeg, p.ElDeg);
+                return (p.Label, new Point3D(x, y, Height(p.Value)));
+            }).ToList();
+
             // The stems/dots and the fitted mesh are alternate readings of the same data - showing
             // both at once mostly just doubles up on the same shape (the mesh already passes
             // through every stem's own tip), so FitMesh hides the per-point geometry rather than
@@ -161,9 +256,11 @@ namespace RASTA.App.Views
 
             // There IS a well-defined "whole object" here (unlike the old globe's dead-center
             // vantage point - see MosaicDomeSurfaceView.xaml's CameraMode="Inspect" remarks), so
-            // re-fitting the camera on every data refresh is exactly the right default, not a
-            // fight against the user's own position the way it was for the globe.
-            Viewport.ZoomExtents(0);
+            // re-fitting the camera makes sense whenever the point set actually changed - see this
+            // method's own remarks on why that's the Label-set comparison above, not a per-property
+            // flag.
+            if (resetCamera)
+                Viewport.ZoomExtents(0);
         }
 
         /// <summary>
@@ -332,7 +429,7 @@ namespace RASTA.App.Views
                 double az = i * 45.0;
                 double azRad = az * Math.PI / 180.0;
                 double labelR = DomeRadius + LabelOffset;
-                var center = new Point3D(-labelR * Math.Sin(azRad), -labelR * Math.Cos(azRad), LabelHeight);
+                var center = new Point3D(-labelR * Math.Sin(azRad), labelR * Math.Cos(azRad), LabelHeight);
                 labels.Children.Add(TextCreator.CreateTextLabelModel3D(
                     compassPoints[i], Brushes.DimGray, isDoubleSided: true, height: LabelHeight,
                     center: center, textDirection: LabelTextDirection, updirection: LabelUpDirection));
@@ -432,14 +529,14 @@ namespace RASTA.App.Views
         }
 
         /// <summary>
-        /// Same diverging blue-gray-red ramp as HeatmapImageBuilder/the old globe, as a
+        /// Same visible-spectrum ramp as HeatmapImageBuilder's 2D heatmap, as a
         /// LinearGradientBrush rather than a raster ImageBrush - see the old MosaicSurfaceView's
         /// own history for why a raster texture silently failed to render as a 3D material here.
         /// </summary>
         private static LinearGradientBrush BuildGradientBrush(byte alpha)
         {
             var stops = new GradientStopCollection();
-            var colors = HeatmapImageBuilder.DivergingStops;
+            var colors = HeatmapImageBuilder.SpectrumStops;
             for (int i = 0; i < colors.Length; i++)
             {
                 var (r, g, b) = colors[i];

@@ -394,24 +394,30 @@
 
                         <views:MosaicDomeSurfaceView Grid.Row="0"
                                                   Points="{Binding SurfacePoints}"
-                                                  FitMesh="{Binding FitMeshThroughPoints}"/>
+                                                  FitMesh="{Binding FitMeshThroughPoints}"
+                                                  SelectedLabel="{Binding DomeSelectedLabel, Mode=OneWayToSource}"/>
 
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
-                            <TextBlock Text="Height:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <RadioButton Content="Strength (dB)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
+                        <StackPanel Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" >
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,5,0,0">
+                                <TextBlock Text="Height:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0, 5,0"/>
+                                <RadioButton Content="Strength (dB)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
                                          IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Strength}"/>
-                            <RadioButton Content="Velocity (km/s)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
+                                <RadioButton Content="Velocity (km/s)" GroupName="SurfaceMetric" VerticalAlignment="Center" Margin="0,0,10,0"
                                          IsChecked="{Binding SurfaceMetric, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Velocity}"/>
-                            <CheckBox Content="Fit mesh through points" IsChecked="{Binding FitMeshThroughPoints}"
-                                      VerticalAlignment="Center" Margin="25,0,0,0"
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,5,0,0">
+                                <CheckBox Content="Fit mesh through points" IsChecked="{Binding FitMeshThroughPoints}"
+                                      VerticalAlignment="Center"
                                       ToolTip="Replace the individual stems/dots with a translucent surface triangulated through each point's own extruded center"/>
+                            </StackPanel>
                             <TextBlock Text="(drag to orbit, scroll to zoom; axis labels read best from the ViewCube's &quot;Top&quot; view)"
-                                       FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                       FontStyle="Italic" Foreground="Gray" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </StackPanel>
 
                         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,6">
                             <TextBlock Text="{Binding SurfaceLegendMinText}" VerticalAlignment="Center"/>
-                            <TextBlock Text=" → " VerticalAlignment="Center"/>
+                            <Image Source="{Binding SurfaceLegendImage}" Width="200" Height="14" Margin="6,0,6,0"
+                                   ToolTip="0 sits at the strip's center - see the 3D Dome's zero-anchored colour/height mapping"/>
                             <TextBlock Text="{Binding SurfaceLegendMaxText}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
@@ -420,10 +426,25 @@
             
             <GridSplitter Grid.Row="0" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
             
-            <DataGrid Grid.Row="0" Grid.Column="2" ItemsSource="{Binding Positions}" 
-                      AutoGenerateColumns="False" 
+            <DataGrid x:Name="PositionsDataGrid" Grid.Row="0" Grid.Column="2" ItemsSource="{Binding Positions}"
+                      SelectedItem="{Binding SelectedPosition}"
+                      AutoGenerateColumns="False"
                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                       IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column">
+                <!-- Recolours the selected row/cell to match the nav sidebar's own "selected
+                     section" accent (MainWindow.xaml's NavSelectedAccentBrush) - a plain RowStyle
+                     Background trigger isn't enough on its own, since the default DataGridCell
+                     template paints its own selected background over the row from a
+                     DynamicResource lookup of SystemColors.HighlightBrushKey (and the
+                     InactiveSelection... pair when this DataGrid doesn't have keyboard focus,
+                     e.g. right after a 3D Dome stem click) - overriding those resource keys here,
+                     scoped to just this DataGrid, is what the template actually reads from. -->
+                <DataGrid.Resources>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="{StaticResource NavSelectedAccentColor}"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="Black"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="{StaticResource NavSelectedAccentColor}"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="Black"/>
+                </DataGrid.Resources>
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Position" Binding="{Binding Label}" Width="Auto"/>
                     <DataGridTextColumn Header="Coordinates" Binding="{Binding Coordinates}" Width="Auto"/>
