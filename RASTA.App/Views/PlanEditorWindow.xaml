@@ -41,9 +41,9 @@
                      PlanViewModel.CanDrawRegion), so this row itself is hidden for AltAz. -->
                 <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
                             Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
-                    <RadioButton Content="Range (start/end)" GroupName="GeometryMode" Margin="0 0 16 0"
+                    <RadioButton Content="Range (start/end)" GroupName="GeometryMode" Margin="0 0 16 0" IsEnabled="False"
                                  IsChecked="{Binding Range.GeometryMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Range}"/>
-                    <RadioButton Content="Drawn region"
+                    <RadioButton Content="Drawn region" IsEnabled="False"
                                  IsChecked="{Binding Range.GeometryMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Region}"
                                  ToolTip="Draw a closed region directly on the map (see the Draw Region toolbar button there) instead of typing RA/Dec limits here."/>
                 </StackPanel>
