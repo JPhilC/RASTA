@@ -19,8 +19,6 @@ namespace RASTA.Core.Capture
 
         public PlanType PlanType { get; init; }
 
-        public string SdrDeviceId { get; set; } = string.Empty;
-
         // Sweep definition
         public TargetRange Range { get; set; } = new TargetRange();
 

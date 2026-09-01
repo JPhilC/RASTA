@@ -99,6 +99,24 @@ public partial class PrepareViewModel : ViewModelBase
         set => _settings.HorizonLimitDeg = value;
     }
 
+    public double DishDiameterM
+    {
+        get => _settings.DishDiameterM;
+        set => _settings.DishDiameterM = value;
+    }
+
+    public double FocalLengthM
+    {
+        get => _settings.FocalLengthM;
+        set => _settings.FocalLengthM = value;
+    }
+
+    // Read-only, computed - see SettingsViewModel.BeamwidthDeg/FocalRatio. Refreshed via the
+    // SettingsViewModel.PropertyChanged forwarding switch below (DishDiameterM/FocalLengthM
+    // changing also raises these on SettingsViewModel itself).
+    public double BeamwidthDeg => _settings.BeamwidthDeg;
+    public double FocalRatio => _settings.FocalRatio;
+
     public double CalibrationFrequencyHz
     {
         get => _settings.CalibrationFrequencyHz;
@@ -239,6 +257,22 @@ public partial class PrepareViewModel : ViewModelBase
 
             case nameof(SettingsViewModel.SiteElevationM):
                 OnPropertyChanged(nameof(SiteElevationM));
+                break;
+
+            case nameof(SettingsViewModel.DishDiameterM):
+                OnPropertyChanged(nameof(DishDiameterM));
+                break;
+
+            case nameof(SettingsViewModel.FocalLengthM):
+                OnPropertyChanged(nameof(FocalLengthM));
+                break;
+
+            case nameof(SettingsViewModel.BeamwidthDeg):
+                OnPropertyChanged(nameof(BeamwidthDeg));
+                break;
+
+            case nameof(SettingsViewModel.FocalRatio):
+                OnPropertyChanged(nameof(FocalRatio));
                 break;
 
             case nameof(SettingsViewModel.IsConnected):

@@ -48,16 +48,70 @@ namespace RASTA.Processing.Planning
             double minElevationDeg,
             double slewRateDegPerSec)
         {
-            var range = plan.Range;
             if (plan.PlanType == PlanType.Drift)
                 return SweepPlanResult.Fail("Drift plans are not supported for sweeps.");
+
+            var (rawPoints, error) = BuildRawPoints(plan);
+            if (error != null)
+                return SweepPlanResult.Fail(error);
+
+            return BuildSweepFromPoints(rawPoints, startTimeUtc, dwell, settleTimeSeconds,
+                siteLatitudeDeg, siteLongitudeDeg, minElevationDeg, slewRateDegPerSec);
+        }
+
+        /// <summary>
+        /// The "turn a plan's geometry into an unordered/unvalidated candidate point list" half
+        /// of BuildSweep, extracted so PlanViewModel's map preview can get the same raw points
+        /// BuildSweep itself would use even when the plan fails BuildSweepFromPoints' horizon
+        /// check - showing the raw grid (colour-coded per point by the caller) is more useful for
+        /// diagnosing a failing plan than just an error message. Drift plans are not handled here
+        /// - callers that care (BuildSweep) check PlanType == Drift themselves first.
+        /// </summary>
+        public (IReadOnlyList<TargetPoint> Points, string? Error) BuildRawPoints(CapturePlan plan)
+        {
+            var range = plan.Range;
+
+            if (plan.PlanType == PlanType.AltAz)
+            {
+                if (range.AngularSeparationDeg <= 0)
+                    return (Array.Empty<TargetPoint>(), "Angular separation must be greater than zero.");
+                return (BuildAltAzSweep(range).ToList(), null);
+            }
+
+            if (range.GeometryMode == SweepGeometryMode.Region)
+            {
+                // A region-mode plan's grid spacing/point count comes entirely from the
+                // drawn polygon - see BuildRegionGrid, which already validates
+                // AngularSeparationDeg and vertex count internally.
+                var regionPoints = BuildRegionGrid(range.RegionVertices, range.AngularSeparationDeg);
+                if (regionPoints.Count == 0)
+                    return (regionPoints, "Region has too few vertices, or no grid points fell inside it - check the drawn region and angular separation.");
+                return (regionPoints, null);
+            }
+
             if (range.AngularSeparationDeg <= 0)
-                return SweepPlanResult.Fail("Angular separation must be greater than zero.");
+                return (Array.Empty<TargetPoint>(), "Angular separation must be greater than zero.");
+            return (BuildEquatorialSweep(range).ToList(), null);
+        }
 
-            var rawPoints = (plan.PlanType == PlanType.AltAz)
-                ? BuildAltAzSweep(range)
-                : BuildEquatorialSweep(range);
-
+        /// <summary>
+        /// The ordering/horizon-validation half of BuildSweep, extracted so a raw point list
+        /// from any source (a Range's Start/End boxes, a drawn Region's grid - see
+        /// BuildRegionGrid - or, for PlanViewModel's map preview, either of those computed
+        /// ahead of time) goes through the exact same greedy-elevation ordering and horizon-
+        /// limit check that an actual sweep uses. Behaviourally identical to the loop that used
+        /// to live directly in BuildSweep.
+        /// </summary>
+        public SweepPlanResult BuildSweepFromPoints(
+            IReadOnlyList<TargetPoint> rawPoints,
+            DateTime startTimeUtc,
+            TimeSpan dwell,
+            double settleTimeSeconds,
+            double siteLatitudeDeg,
+            double siteLongitudeDeg,
+            double minElevationDeg,
+            double slewRateDegPerSec)
+        {
             // Greedily order the sweep to keep the scope as high above the horizon as
             // possible throughout: at each step, visit whichever remaining point would
             // be highest in the sky at its estimated arrival time (accounting for the
@@ -241,6 +295,78 @@ namespace RASTA.Processing.Planning
         private static double DegreesToHours(double degrees)
         {
             return degrees / 15.0; // 360° = 24h → 1h = 15°
+        }
+
+        /// <summary>
+        /// Turns a closed loop of RA/Dec vertices (traced on the Plan view's sky map - see
+        /// TargetRange.RegionVertices) into a coverage grid, the region-mode counterpart to
+        /// BuildEquatorialSweep's Start/End-box grid. Walks the same cos(Dec)-corrected
+        /// row/column grid as BuildEquatorialSweep, but over the vertices' own RA/Dec bounding
+        /// box rather than a typed range, keeping only grid points that actually fall inside
+        /// the polygon (standard ray-casting point-in-polygon test on the RA-hours x Dec-degrees
+        /// plane).
+        ///
+        /// Equatorial only - a region drawn on the map is captured as fixed RA/Dec (see
+        /// PlanViewModel), the same way any other Equatorial plan point is. Like StepRange
+        /// elsewhere in this file, this has no concept of RA's 24h wraparound: a region whose
+        /// bounding box would need to cross the 24h/0h seam produces a bounding box spanning
+        /// almost the whole circle instead of the short arc actually enclosed - draw a region
+        /// that doesn't straddle RA=0h/24h.
+        /// </summary>
+        public static IReadOnlyList<TargetPoint> BuildRegionGrid(
+            IReadOnlyList<RegionVertex> vertices,
+            double angularSeparationDeg)
+        {
+            if (vertices.Count < 3)
+                return Array.Empty<TargetPoint>();
+
+            double separationDeg = Math.Abs(angularSeparationDeg);
+            if (separationDeg <= 0)
+                return Array.Empty<TargetPoint>();
+
+            double minDec = vertices.Min(v => v.DecDeg);
+            double maxDec = vertices.Max(v => v.DecDeg);
+            double minRa = vertices.Min(v => v.RaHours);
+            double maxRa = vertices.Max(v => v.RaHours);
+
+            var polygon = vertices.Select(v => (x: v.RaHours, y: v.DecDeg)).ToList();
+
+            var points = new List<TargetPoint>();
+            foreach (double dec in StepRange(minDec, maxDec, separationDeg))
+            {
+                double raStepHours = DegreesToHours(RowStepDeg(separationDeg, dec));
+
+                foreach (double ra in StepRange(minRa, maxRa, raStepHours))
+                {
+                    if (IsPointInPolygon(ra, dec, polygon))
+                        points.Add(TargetPoint.FromRaDec(ra, dec));
+                }
+            }
+
+            return points;
+        }
+
+        /// <summary>
+        /// Standard ray-casting point-in-polygon test: counts how many polygon edges a
+        /// horizontal ray from (x, y) toward +infinity in x crosses - odd means inside.
+        /// Operates directly on RA-hours/Dec-degrees; only a topological test, so the mismatched
+        /// axis units don't matter.
+        /// </summary>
+        private static bool IsPointInPolygon(double x, double y, IReadOnlyList<(double x, double y)> polygon)
+        {
+            bool inside = false;
+            for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+            {
+                var pi = polygon[i];
+                var pj = polygon[j];
+
+                if (((pi.y > y) != (pj.y > y)) &&
+                    (x < (pj.x - pi.x) * (y - pi.y) / (pj.y - pi.y) + pi.x))
+                {
+                    inside = !inside;
+                }
+            }
+            return inside;
         }
     }
 }

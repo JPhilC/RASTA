@@ -1,4 +1,5 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
+using RASTA.Core.Antenna;
 using RASTA.Core.Telescope;
 using RASTA.Infrastructure.Logging;
 using RASTA.Infrastructure.Services;
@@ -36,6 +37,8 @@ namespace RASTA.App.ViewModels
             SiteLatitudeDeg = _optionsService.Options.SiteLatitudeDeg;
             SiteLongitudeDeg = _optionsService.Options.SiteLongitudeDeg;
             SiteElevationM = _optionsService.Options.SiteElevationM;
+            DishDiameterM = _optionsService.Options.DishDiameterM;
+            FocalLengthM = _optionsService.Options.FocalLengthM;
         }
 
         // -------------------------------
@@ -121,6 +124,51 @@ namespace RASTA.App.ViewModels
 
             _state.SiteElevationM = value;
         }
+
+        // -------------------------------
+        // Antenna
+        // -------------------------------
+        // Persisted, editable at any time without a mount attached - same treatment as Site
+        // Settings above. Feeds BeamwidthDeg, which PlanViewModel uses to suggest a default
+        // AngularSeparationDeg for a new plan instead of leaving it at 0.
+        // -------------------------------
+
+        [ObservableProperty]
+        private double dishDiameterM;
+
+        partial void OnDishDiameterMChanged(double value)
+        {
+            _optionsService.Options.DishDiameterM = value;
+            OnPropertyChanged(nameof(BeamwidthDeg));
+            OnPropertyChanged(nameof(FocalRatio));
+        }
+
+        // Not used by BeamwidthDeg itself - see AntennaUtils.ComputeBeamwidthDeg's remarks on
+        // why f/D can't rigorously refine the estimate without the feed's own illumination
+        // pattern. Stored for context (FocalRatio below) and a future antenna-gain estimate.
+        [ObservableProperty]
+        private double focalLengthM;
+
+        partial void OnFocalLengthMChanged(double value)
+        {
+            _optionsService.Options.FocalLengthM = value;
+            OnPropertyChanged(nameof(FocalRatio));
+        }
+
+        /// <summary>
+        /// Half-power beamwidth (see AntennaUtils) for DishDiameterM at the app's default
+        /// centre frequency - the same frequency a new CapturePlan's own CenterFrequency starts
+        /// from (UserOptions.DefaultCentreFrequencyHz). Computed on read, not persisted itself.
+        /// </summary>
+        public double BeamwidthDeg =>
+            AntennaUtils.ComputeBeamwidthDeg(DishDiameterM, _optionsService.Options.DefaultCentreFrequencyHz);
+
+        /// <summary>
+        /// f/D - shown alongside BeamwidthDeg purely as context: the 70*wavelength/diameter
+        /// estimate assumes a feed reasonably well-matched to the dish, which in practice means
+        /// a focal ratio roughly in the 0.35-0.5 range. Not fed into BeamwidthDeg itself.
+        /// </summary>
+        public double FocalRatio => DishDiameterM > 0 ? FocalLengthM / DishDiameterM : 0;
 
         // -------------------------------
         // Coordinate Mode (session-specific)

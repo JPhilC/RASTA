@@ -1,13 +1,39 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using RASTA.Core.Telescope;
 
 namespace RASTA.Core.Planning
 {
+    /// <summary>
+    /// How a plan's sweep geometry is defined - see TargetRange.GeometryMode. Range is the
+    /// original "type numeric start/end boxes" definition; Region is the newer "trace a closed
+    /// loop on the Plan view's sky map" alternative (Equatorial plans only - see
+    /// SweepPlanner.BuildRegionGrid).
+    /// </summary>
+    public enum SweepGeometryMode
+    {
+        Range,
+        Region
+    }
+
     public partial class TargetRange : ObservableObject
     {
         [ObservableProperty]
         private CoordinateMode mode;
+
+        // How this range's geometry was defined - see SweepGeometryMode. Only meaningful for
+        // Equatorial plans; AltAz plans are always Range for now.
+        [ObservableProperty]
+        private SweepGeometryMode geometryMode = SweepGeometryMode.Range;
+
+        // Populated when GeometryMode == Region: the closed loop of RA/Dec vertices traced on
+        // the Plan view's sky map. SweepPlanner.BuildRegionGrid turns this into a coverage grid
+        // at AngularSeparationDeg spacing, the same way Range's Start/End boxes do via
+        // BuildEquatorialSweep - see PlanViewModel.RefreshMapDisplay.
+        [ObservableProperty]
+        private List<RegionVertex> regionVertices = new();
 
         // Equatorial
         [ObservableProperty] private double rAStartHours;
@@ -62,6 +88,9 @@ namespace RASTA.Core.Planning
 
                 // Common
                 AngularSeparationDeg = this.AngularSeparationDeg,
+
+                GeometryMode = this.GeometryMode,
+                RegionVertices = this.RegionVertices.Select(v => new RegionVertex(v.RaHours, v.DecDeg)).ToList(),
             };
         }
 

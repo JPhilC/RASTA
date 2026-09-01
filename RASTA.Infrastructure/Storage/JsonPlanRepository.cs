@@ -58,7 +58,7 @@ namespace RASTA.Infrastructure.Storage
             return plan;
         }
 
-        public IEnumerable<CapturePlan> ListPlans(string sdrDeviceId)
+        public IEnumerable<CapturePlan> ListPlans()
         {
             foreach (var file in Directory.GetFiles(folder, "*.json"))
             {
@@ -74,7 +74,7 @@ namespace RASTA.Infrastructure.Storage
                     // Skip corrupted or unreadable files
                 }
 
-                if (plan != null && plan.SdrDeviceId == sdrDeviceId)
+                if (plan != null)
                     yield return plan;
             }
         }

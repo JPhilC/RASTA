@@ -1,0 +1,225 @@
+<Window x:Class="RASTA.App.Views.PlanEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:helpers="clr-namespace:RASTA.App.Helpers"
+        xmlns:controls="clr-namespace:RASTA.App.Controls"
+        mc:Ignorable="d"
+        Title="Edit Plan Details" Height="720" Width="380"
+        WindowStartupLocation="Manual" ShowInTaskbar="True">
+
+    <!-- Modeless (Show(), not ShowDialog()) - see PlanEditorWindowService. Bound to the same
+         PlanViewModel instance PlanView's map is bound to, so both stay in sync automatically. -->
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="10">
+
+            <TextBlock Text="Plan Editor" FontSize="20" FontWeight="Bold" Margin="0 0 0 16"/>
+
+            <!-- Friendly Name -->
+            <StackPanel Margin="0 10 0 0">
+                <TextBlock Text="Friendly Name" FontWeight="Bold"/>
+                <TextBox Text="{Binding FriendlyName}" HorizontalAlignment="Stretch"/>
+            </StackPanel>
+
+            <!-- Plan Type -->
+            <StackPanel Margin="0 10 0 0">
+                <TextBlock Text="Plan Type" FontWeight="Bold"/>
+                <ComboBox HorizontalAlignment="Left" Width="200"
+                          SelectedItem="{Binding PlanType}"
+                          ItemsSource="{Binding Source={x:Static helpers:PlanTypeEnum.Values}}"/>
+            </StackPanel>
+
+            <!-- SWEEP GEOMETRY (Equatorial or AltAz) -->
+            <StackPanel Visibility="{Binding PlanType, Converter={StaticResource EquatorialOrAltAzVisibilityConverter}}"
+                        Margin="0 10 0 0">
+
+                <TextBlock Text="Sweep Geometry" FontWeight="Bold"/>
+
+                <!-- Range vs drawn-Region toggle - Region is Equatorial-only (see
+                     PlanViewModel.CanDrawRegion), so this row itself is hidden for AltAz. -->
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                    <RadioButton Content="Range (start/end)" GroupName="GeometryMode" Margin="0 0 16 0"
+                                 IsChecked="{Binding Range.GeometryMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Range}"/>
+                    <RadioButton Content="Drawn region"
+                                 IsChecked="{Binding Range.GeometryMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Region}"
+                                 ToolTip="Draw a closed region directly on the map (see the Draw Region toolbar button there) instead of typing RA/Dec limits here."/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            Margin="0 5 0 0"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+
+                    <!-- RA/Dec -->
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="RA Start (hours)"/>
+                        <TextBox Width="120" Text="{Binding Range.RAStartHours}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="RA End (hours)"/>
+                        <TextBox Width="120" Text="{Binding Range.RAEndHours}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            Margin="0 5 0 0"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="Dec Start (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.DecStartDeg}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="Dec End (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.DecEndDeg}"/>
+                    </StackPanel>
+                </StackPanel>
+                <!-- Az/El -->
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
+
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="Az Start (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.AzimuthStartDeg}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="Az End (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.AzimuthEndDeg}"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="El Start (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.AltitudeStartDeg}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="El End (deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.AltitudeEndDeg}"/>
+                    </StackPanel>
+                </StackPanel>
+                <!-- Angular separation -->
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 0">
+                    <StackPanel Margin="0 0 20 0">
+                        <TextBlock Text="Angular Separation (Deg)"/>
+                        <TextBox Width="120" Text="{Binding Range.AngularSeparationDeg}"
+                                 ToolTip="The true angular separation wanted between adjacent dwell points on the sky (e.g. half your antenna's beamwidth for Nyquist-sampled coverage). For a Range plan, Declination/Elevation points are spaced this far apart directly and RA/Azimuth is corrected per row; for a drawn Region, this is the grid spacing used to fill the traced area."/>
+                    </StackPanel>
+                </StackPanel>
+
+            </StackPanel>
+
+            <!-- DRIFT SCAN -->
+            <StackPanel Margin="0 20 0 0 "
+                Visibility="{Binding PlanType, Converter={StaticResource DriftVisibilityConverter}}">
+                <TextBlock Text="Drift Scan Parameters" FontWeight="Bold"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Declination (deg)"/>
+                        <TextBox Width="120" Text="{Binding DriftDeclinationDeg}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Duration (min)"/>
+                        <TextBox Width="120" Text="{Binding DriftDurationMinutes}"/>
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Cadence (sec)"/>
+                        <TextBox Width="120" Text="{Binding DriftCadenceSeconds}"/>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- CAPTURE PARAMETERS -->
+            <TextBlock Text="Capture Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+            <StackPanel Orientation="Vertical" Margin="0 0 0 10">
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Dwell Time (sec)"/>
+                        <TextBox Width="120" Text="{Binding DwellSeconds}"/>
+                    </StackPanel>
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Files/Point"/>
+                        <TextBox Width="120" Text="{Binding FilesPerPoint}"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Sample Rate (Hz)"/>
+                        <controls:FrequencyEntryBox
+                                    FrequencyHz="{Binding SampleRate,
+                                    UpdateSourceTrigger=PropertyChanged,
+                                    ValidatesOnDataErrors=True}"
+                                     Width="150" HorizontalAlignment="Left"/>
+
+                    </StackPanel>
+
+                    <StackPanel Margin="0 5 20 0">
+                        <TextBlock Text="Center Frequency (Hz)"/>
+                        <controls:FrequencyEntryBox
+                                    FrequencyHz="{Binding CenterFrequency,
+                                    UpdateSourceTrigger=PropertyChanged,
+                                    ValidatesOnDataErrors=True}"
+                                     Width="150" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Margin="0,5,20,0">
+                        <TextBlock Text="FFT Bins"/>
+                        <TextBox Width="120" Text="{Binding FftBins}"/>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- TELESCOPE PARAMETERS -->
+            <TextBlock Text="Telescope Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Settle Time (sec)"/>
+                    <TextBox Width="120" Text="{Binding SettleTimeSeconds}"/>
+                </StackPanel>
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Tracking Enabled"/>
+                    <CheckBox IsChecked="{Binding TrackingEnabled}"/>
+                </StackPanel>
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Home When Complete"/>
+                    <CheckBox IsChecked="{Binding GoToHomeAfterCapture}"/>
+                </StackPanel>
+
+            </StackPanel>
+
+            <!-- OUTPUT PARAMETERS -->
+
+            <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
+
+                <StackPanel Margin="0 5 20 0">
+                    <TextBlock Text="Despike Live Spectrum"/>
+                    <CheckBox IsChecked="{Binding DespikeEnabled}"
+                              ToolTip="Excise narrowband RFI spikes (e.g. a USB3/mount comb) from CaptureView's live spectrum while this plan runs."/>
+                </StackPanel>
+
+            </StackPanel>
+
+            <!-- SAVE PLAN -->
+            <Button Content="Save Plan"
+                Height="40"
+                Command="{Binding SavePlanCommand}"
+                Margin="0 20 0 0"/>
+            <TextBlock Text="{Binding SaveStatusText}" FontStyle="Italic" TextWrapping="Wrap" Margin="0 6 0 20"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>

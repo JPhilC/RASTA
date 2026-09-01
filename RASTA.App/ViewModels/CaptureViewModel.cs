@@ -54,11 +54,11 @@ public partial class CaptureViewModel : ObservableObject
 
     public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
 
-    // Plans offered in the Capture dropdown - populated the same way
-    // PlanViewModel.SavedPlans is (IPlanRepository.ListPlans for the connected SDR
-    // device), then filtered to whichever PlanType matches the mount's current
-    // CoordinateMode (see LoadAvailablePlans/PlanMatchesMountMode). Selection is no
-    // longer pushed in from PlanViewModel.SelectedPlan on navigation.
+    // Plans offered in the Capture dropdown - populated the same way PlanViewModel.SavedPlans
+    // is (IPlanRepository.ListPlans - plans are no longer tied to a specific SDR device), then
+    // filtered to whichever PlanType matches the mount's current CoordinateMode (see
+    // LoadAvailablePlans/PlanMatchesMountMode). Selection is no longer pushed in from
+    // PlanViewModel.SelectedPlan on navigation.
     public ObservableCollection<CapturePlan> AvailablePlans { get; } = new();
 
     public bool CanCaptureSweep => _activePlan != null
@@ -97,6 +97,21 @@ public partial class CaptureViewModel : ObservableObject
 
     [ObservableProperty]
     private double quickCaptureDwellSeconds = 30;
+
+    // Set by PlanViewModel.CaptureHereCommand (the sky map's right-click "Slew & Capture Here")
+    // to hand off a specific target ahead of navigating here, instead of QuickCaptureAsync's
+    // usual "wherever the mount currently is" behaviour. QuickCaptureAsync slews here first when
+    // this is set, then clears it - so the *next* Quick Capture, with no hand-off, reverts to
+    // "wherever pointed" automatically.
+    [ObservableProperty]
+    private TargetPoint? pendingQuickCaptureTarget;
+
+    public string QuickCaptureTargetLabel => PendingQuickCaptureTarget is { } t
+        ? $"Target: {t} (from Plan map)"
+        : "Target: current mount position";
+
+    partial void OnPendingQuickCaptureTargetChanged(TargetPoint? value) =>
+        OnPropertyChanged(nameof(QuickCaptureTargetLabel));
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(CancelQuickCaptureCommand))]
@@ -163,8 +178,8 @@ public partial class CaptureViewModel : ObservableObject
 
     /// <summary>
     /// Populates AvailablePlans the same way PlanViewModel.LoadSavedPlans does -
-    /// IPlanRepository.ListPlans for the connected SDR device - then filters to plans
-    /// whose PlanType matches the mount's current CoordinateMode (see
+    /// IPlanRepository.ListPlans (plans are no longer tied to a specific SDR device) - then
+    /// filters to plans whose PlanType matches the mount's current CoordinateMode (see
     /// PlanMatchesMountMode). Re-resolves the current selection against the freshly
     /// loaded instances (ListPlans deserializes new objects every call, so the old
     /// ActivePlan reference would otherwise match nothing in the reloaded list even if
@@ -173,12 +188,10 @@ public partial class CaptureViewModel : ObservableObject
     /// </summary>
     public void LoadAvailablePlans()
     {
-        // MountState_PropertyChanged/SdrState_PropertyChanged can invoke this from a
-        // background thread - TelescopeService's poll loop and
-        // SdrDeviceService.EnumerateDevicesAsync (e.g. on SDR reconnect after a sleep/
-        // unplug) both run inside their own Task.Run and mutate TelescopeState/SdrState
-        // from there, which raises these PropertyChanged events synchronously on that
-        // same thread. Unlike a plain property notification (which WPF's binding
+        // MountState_PropertyChanged can invoke this from a background thread -
+        // TelescopeService's poll loop runs inside its own Task.Run and mutates
+        // TelescopeState from there, which raises this PropertyChanged event synchronously on
+        // that same thread. Unlike a plain property notification (which WPF's binding
         // machinery marshals to the UI thread automatically), AvailablePlans.Clear()/
         // Add() below are ObservableCollection mutations bound directly to the UI and
         // must happen on the dispatcher thread itself, or WPF throws. UiThread.
@@ -186,11 +199,10 @@ public partial class CaptureViewModel : ObservableObject
         // NavigationViewModel call it directly), so this is safe from any caller.
         UiThread.SafeInvoke(() =>
         {
-            string sdrDeviceId = _sdrState.SelectedDevice?.DeviceId ?? "UNKNOWN";
             string? previouslySelectedName = ActivePlan?.FriendlyName;
 
             AvailablePlans.Clear();
-            foreach (var plan in _planRepository.ListPlans(sdrDeviceId))
+            foreach (var plan in _planRepository.ListPlans())
             {
                 if (PlanMatchesMountMode(plan))
                     AvailablePlans.Add(plan);
@@ -748,13 +760,30 @@ public partial class CaptureViewModel : ObservableObject
 
         DateTime startTime = DateTime.UtcNow;
 
-        // Capture wherever the mount currently is - only the coordinate pair the
-        // connected mount's Mode reports directly (RA/Dec or Az/El) is recorded; the
-        // other pair is reconstructed later from the stored site+time, exactly as
-        // every other capture already does (see FitsFileMetaData / CLAUDE.md).
-        var currentTarget = _mountState.Mode == CoordinateMode.Equatorial
-            ? TargetPoint.FromRaDec(_mountState.RightAscensionHours, _mountState.DeclinationDeg)
-            : TargetPoint.FromAzEl(_mountState.AzimuthDeg, _mountState.ElevationDeg);
+        TargetPoint currentTarget;
+        if (PendingQuickCaptureTarget is { } pendingTarget)
+        {
+            // Hand-off from PlanViewModel's sky map ("Slew & Capture Here") - slew there first,
+            // then use that target directly rather than re-reading _mountState (which is only
+            // refreshed by TelescopeService's poll loop, so reading it immediately after a slew
+            // could still race and see stale position data).
+            _statusBar.CaptureStatus = "Quick capture: slewing to target";
+            if (!await SlewToPendingTargetAsync(pendingTarget))
+                return; // error already shown inside the helper
+
+            currentTarget = pendingTarget;
+            PendingQuickCaptureTarget = null; // one-shot - the next Quick Capture reverts to "wherever pointed"
+        }
+        else
+        {
+            // Capture wherever the mount currently is - only the coordinate pair the
+            // connected mount's Mode reports directly (RA/Dec or Az/El) is recorded; the
+            // other pair is reconstructed later from the stored site+time, exactly as
+            // every other capture already does (see FitsFileMetaData / CLAUDE.md).
+            currentTarget = _mountState.Mode == CoordinateMode.Equatorial
+                ? TargetPoint.FromRaDec(_mountState.RightAscensionHours, _mountState.DeclinationDeg)
+                : TargetPoint.FromAzEl(_mountState.AzimuthDeg, _mountState.ElevationDeg);
+        }
 
         _quickCaptureCts = new CancellationTokenSource();
         var ct = _quickCaptureCts.Token;
@@ -891,6 +920,36 @@ public partial class CaptureViewModel : ObservableObject
     // -------------------------------------------------------
 
     [RelayCommand]
+    /// <summary>
+    /// Slews to a PlanViewModel-supplied ad-hoc target ahead of a Quick Capture. This mount's
+    /// ASCOM driver rejects a slew outright unless tracking is already on (same reasoning
+    /// CaptureSweepAsync documents for its own per-point slews), so tracking is switched on
+    /// first if needed and left on afterward - this is a one-off manual "go look at this spot"
+    /// action, not a sweep with restore-to-original-state semantics.
+    /// </summary>
+    private async Task<bool> SlewToPendingTargetAsync(TargetPoint target)
+    {
+        try
+        {
+            bool canSetTracking = await _mount.GetCanSetTrackingAsync();
+            if (canSetTracking && !await _mount.GetTrackingAsync())
+                await _mount.SetTrackingAsync(true);
+
+            if (target.Mode == CoordinateMode.Equatorial)
+                await _mount.SlewToRaDecAsync(target.RightAscensionHours, target.DeclinationDeg);
+            else
+                await _mount.SlewToAzAltAsync(target.AzimuthDeg, target.ElevationDeg);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _statusBar.CaptureStatus = "Error";
+            MessageBox.Show(ex.Message, "Slew Error");
+            return false;
+        }
+    }
+
     private async Task SlewToTargetAsync(TargetPoint target)
     {
         if (!_mount.IsConnected)

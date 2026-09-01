@@ -75,6 +75,10 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
 
@@ -99,6 +103,32 @@
             <TextBlock Grid.Column="0" Grid.Row="5" Text="Horizon Limit (deg)"/>
             <TextBox Grid.Column="1" Grid.Row="5" Width="100"
                      Text="{Binding HorizonLimitDeg}"
+                     Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="6" Text="Dish Diameter (m)"
+                       ToolTip="Your antenna's dish diameter - used to estimate its beamwidth (see below), which suggests a default angular separation for a new Plan's sweep/region grid."/>
+            <TextBox Grid.Column="1" Grid.Row="6" Width="100"
+                     Text="{Binding DishDiameterM}"
+                     Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="7" Text="Focal Length (m)"
+                       ToolTip="Your antenna's focal length. Not used by the Beamwidth estimate itself (that needs the feed's own illumination pattern, not just f/D) - shown here for the f/D ratio below, and reserved for a future antenna-gain estimate."/>
+            <TextBox Grid.Column="1" Grid.Row="7" Width="100"
+                     Text="{Binding FocalLengthM}"
+                     Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="8" Text="Beamwidth (deg)"
+                       ToolTip="Estimated half-power beamwidth at the default centre frequency (Options), from the standard 70*wavelength/diameter approximation for a parabolic dish - this assumes a feed reasonably well-matched to the dish (see the f/D ratio below), not a precise figure for your specific feed. A new Plan defaults its Angular Separation to half of this."/>
+            <TextBox Grid.Column="1" Grid.Row="8" Width="100"
+                     Text="{Binding BeamwidthDeg, Mode=OneWay, StringFormat={}{0:F2}}"
+                     IsReadOnly="True" Focusable="False" Background="Transparent" BorderThickness="0"
+                     Margin="5,0,0,5"/>
+
+            <TextBlock Grid.Column="0" Grid.Row="9" Text="f/D Ratio"
+                       ToolTip="Focal Length / Dish Diameter. The Beamwidth estimate above assumes a value roughly in the 0.35-0.5 range (a feed reasonably well-matched to the dish) - well outside that, treat the Beamwidth figure more loosely."/>
+            <TextBox Grid.Column="1" Grid.Row="9" Width="100"
+                     Text="{Binding FocalRatio, Mode=OneWay, StringFormat={}{0:F2}}"
+                     IsReadOnly="True" Focusable="False" Background="Transparent" BorderThickness="0"
                      Margin="5,0,0,5"/>
         </Grid>
 

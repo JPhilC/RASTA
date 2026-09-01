@@ -93,6 +93,7 @@ namespace RASTA.App
 
 
             services.AddSingleton<IUserPromptService, MessageBoxPromptService>();
+            services.AddSingleton<IPlanEditorWindowService, PlanEditorWindowService>();
 
             // ---------------------------------------------------------
             // FFT engine

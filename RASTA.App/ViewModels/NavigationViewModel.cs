@@ -29,9 +29,12 @@ namespace RASTA.App.ViewModels
 
         public StatusBarViewModel StatusBarViewModel { get; }
 
-        // Plan doesn't need a mount attached - PlanType/CoordinateMode is a free choice
-        // on the Plan screen itself, not detected from a connected mount.
-        public bool CanNavigatePlan => StatusBarViewModel.SdrConnected;
+        // Plan needs neither a mount nor an SDR - PlanType/CoordinateMode is a free choice on
+        // the Plan screen itself, plans are no longer tied to a specific SDR device, and the
+        // sky map (background/points/region drawing) works from site settings alone, so
+        // planning can be done fully offline. The one thing that does need a connected mount +
+        // SDR is the map's right-click "Slew & Capture Here", gated separately by
+        // PlanViewModel.CanCaptureHere.
 
         // Capture drives an actual mount slew (and CaptureViewModel.LoadAvailablePlans
         // filters plans by the mount's detected CoordinateMode), so it needs both an SDR
@@ -53,14 +56,9 @@ namespace RASTA.App.ViewModels
                 if (args.PropertyName == nameof(StatusBarViewModel.SdrConnected) ||
                     args.PropertyName == nameof(StatusBarViewModel.TelescopeConnected))
                 {
-                    OnPropertyChanged(nameof(CanNavigatePlan));
                     OnPropertyChanged(nameof(CanNavigateCapture));
                     // Update command state on UI thread
-                    UiThread.SafeInvoke(() =>
-                    {
-                        NavigatePlanCommand.NotifyCanExecuteChanged();
-                        NavigateCaptureCommand.NotifyCanExecuteChanged();
-                    });
+                    UiThread.SafeInvoke(() => NavigateCaptureCommand.NotifyCanExecuteChanged());
                 }
             };
         }
@@ -77,7 +75,7 @@ namespace RASTA.App.ViewModels
             UpdateView();
         }
 
-        [RelayCommand(CanExecute = nameof(CanNavigatePlan))]
+        [RelayCommand]
         private void NavigatePlan()
         {
             CurrentSection = NavigationSection.Plan;

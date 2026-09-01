@@ -1,263 +1,222 @@
-﻿<UserControl x:Class="RASTA.App.Views.PlanView"
+<UserControl x:Class="RASTA.App.Views.PlanView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:helpers="clr-namespace:RASTA.App.Helpers"
-             xmlns:converters="clr-namespace:RASTA.App.Converters"
-             xmlns:selectors="clr-namespace:RASTA.App.Selectors"
-             xmlns:controls="clr-namespace:RASTA.App.Controls"
+             xmlns:vm="clr-namespace:RASTA.App.ViewModels"
              mc:Ignorable="d">
 
-    <UserControl.Resources>
-
-        <!-- Sweep point templates -->
-        <DataTemplate x:Key="EquatorialPointTemplate">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding RightAscensionHours, StringFormat=RA: {0:F2}h}" Margin="0 5 20 0"/>
-                <TextBlock Text="{Binding DeclinationDeg, StringFormat=Dec: {0:F2}°}" Margin="0 5 0 0"/>
-            </StackPanel>
-        </DataTemplate>
-
-        <DataTemplate x:Key="AltAzPointTemplate">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding AzimuthDeg, StringFormat=Az: {0:F1}°}" Margin="0 10 20 0"/>
-                <TextBlock Text="{Binding ElevationDeg, StringFormat=Alt: {0:F1}°}" Margin="0 5 0 0"/>
-            </StackPanel>
-        </DataTemplate>
-
-        <selectors:TargetPointTemplateSelector
-            x:Key="TargetPointSelector"
-            EquatorialTemplate="{StaticResource EquatorialPointTemplate}"
-            AltAzTemplate="{StaticResource AltAzPointTemplate}" />
-
-    </UserControl.Resources>
+    <!-- The Plan view's primary content is now the sky map (a zenith-centered Alt/Az dome, same
+         projection/reference geometry the Mosaic tab's Zenith Dome uses - see DomeProjector).
+         The old numeric Range boxes and other plan fields moved into the modeless "Edit Plan
+         Details" window (see OpenPlanEditorCommand/PlanEditorWindowService) - both are bound to
+         this same PlanViewModel instance, so they stay in sync automatically. -->
 
     <Grid Margin="10">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="3*"/>
-            <ColumnDefinition Width="2*"/>
+            <ColumnDefinition Width="10"/>
+            <ColumnDefinition Width="1*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- LEFT SIDE: PLAN EDITOR -->
-        <ScrollViewer Grid.Column="0"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-            <StackPanel>
+        <!-- LEFT SIDE: SKY MAP -->
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-                <TextBlock Text="Plan Editor"
-                       FontSize="24"
-                       FontWeight="Bold"
-                       Margin="0 0 0 20"/>
+            <TextBlock Grid.Row="0" Text="Plan" FontSize="24" FontWeight="Bold" Margin="0 0 0 10"/>
 
-                <!-- Friendly Name -->
-                <StackPanel Margin="0 10 0 0">
-                    <TextBlock Text="Friendly Name" FontWeight="Bold"/>
-                    <TextBox Text="{Binding FriendlyName}" Width="300" HorizontalAlignment="Left"/>
+            <!-- Toolbar -->
+            <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0 0 0 8">
+                <Button Content="Edit Plan Details..." Command="{Binding OpenPlanEditorCommand}" Padding="8,3" Margin="0,0,16,4"/>
+
+                <!-- Name + Save right here on the map, so drawing a region and saving it don't
+                     require jumping to the separate Edit Plan Details window. SaveStatusText
+                     gives explicit feedback either way (success or failure) rather than a save
+                     that silently does (or doesn't) do anything. -->
+                <TextBlock Text="Plan Name" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <TextBox Width="150" VerticalAlignment="Center" Margin="0,0,4,4" Text="{Binding FriendlyName, UpdateSourceTrigger=PropertyChanged}"/>
+                <Button Content="Save Plan" Command="{Binding SavePlanCommand}" Padding="8,2" Margin="0,0,4,4"/>
+                <TextBlock Text="{Binding SaveStatusText}" VerticalAlignment="Center" FontStyle="Italic" Margin="0,0,16,4"/>
+
+                <TextBlock Text="Map Time (UTC)" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <TextBox Width="140" VerticalAlignment="Center" Margin="0,0,4,4"
+                         Text="{Binding MapTimeUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"/>
+                <Button Content="Now" Command="{Binding SetMapTimeNowCommand}" Padding="8,2" Margin="0,0,16,4"/>
+
+                <TextBlock Text="Grid:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <RadioButton Content="Alt/Az" GroupName="MapGridMode" VerticalAlignment="Center" Margin="0,0,10,4"
+                             IsChecked="{Binding MapGridMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=AltAz}"/>
+                <RadioButton Content="RA/Dec" GroupName="MapGridMode" VerticalAlignment="Center" Margin="0,0,16,4"
+                             IsChecked="{Binding MapGridMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Equatorial}"/>
+
+                <StackPanel Orientation="Horizontal"
+                            Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}"
+                            Margin="0,0,16,4">
+                    <Button Content="Draw Region" Command="{Binding StartDrawRegionCommand}" Padding="8,3"
+                            Visibility="{Binding IsDrawingRegion, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
+                    <Button Content="Finish Region" Command="{Binding FinishRegionCommand}" Padding="8,3" Margin="4,0,0,0"
+                            Visibility="{Binding IsDrawingRegion, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                    <Button Content="Clear Region" Command="{Binding ClearRegionCommand}" Padding="8,3" Margin="4,0,0,0"
+                            Visibility="{Binding CanClearRegion, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 </StackPanel>
 
-                <!-- Plan Type -->
-                <StackPanel Margin="0 10 0 0">
-                    <TextBlock Text="Plan Type" FontWeight="Bold"/>
-                    <ComboBox Width="200" HorizontalAlignment="Left"
-                      SelectedItem="{Binding PlanType}"
-                      ItemsSource="{Binding Source={x:Static helpers:PlanTypeEnum.Values}}"/>
-                </StackPanel>
-                <!-- SWEEP GEOMETRY (Equatorial or AltAz) -->
-                <StackPanel Visibility="{Binding PlanType, Converter={StaticResource EquatorialOrAltAzVisibilityConverter}}" 
-                            Margin="0 10 0 0">
+                <TextBlock Text="Points:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <RadioButton Content="Show All" GroupName="PointDisplayMode" VerticalAlignment="Center" Margin="0,0,10,4"
+                             IsChecked="{Binding PointDisplayMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=All}"/>
+                <RadioButton Content="Animate" GroupName="PointDisplayMode" VerticalAlignment="Center" Margin="0,0,10,4"
+                             IsChecked="{Binding PointDisplayMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Animate}"/>
+                <Button Content="▶" Command="{Binding PlayAnimationCommand}" Padding="8,2" Margin="0,0,2,4" ToolTip="Play"/>
+                <Button Content="⏸" Command="{Binding PauseAnimationCommand}" Padding="8,2" Margin="0,0,2,4" ToolTip="Pause"/>
+                <Button Content="⏭" Command="{Binding StepAnimationCommand}" Padding="8,2" Margin="0,0,2,4" ToolTip="Step"/>
+                <Button Content="⏮" Command="{Binding ResetAnimationCommand}" Padding="8,2" Margin="0,0,10,4" ToolTip="Reset"/>
+                <TextBlock Text="Speed (s/point)" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <Slider Width="100" Minimum="0.1" Maximum="2" Value="{Binding AnimationSpeedSecondsPerPoint}" VerticalAlignment="Center" Margin="0,0,0,4"/>
+            </WrapPanel>
 
-                    <TextBlock Text="Sweep Geometry" FontWeight="Bold"/>
+            <!-- Dome map -->
+            <Viewbox Grid.Row="2" Stretch="Uniform">
+                <Canvas x:Name="MapCanvas"
+                        Width="{Binding MapDisplay.CanvasSize}" Height="{Binding MapDisplay.CanvasSize}"
+                        Background="Transparent"
+                        MouseMove="MapCanvas_MouseMove"
+                        MouseLeftButtonDown="MapCanvas_MouseLeftButtonDown"
+                        PreviewMouseRightButtonDown="MapCanvas_PreviewMouseRightButtonDown">
 
+                    <Canvas.ContextMenu>
+                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                            <MenuItem Header="Slew &amp; Capture Here" Command="{Binding CaptureHereCommand}"/>
+                        </ContextMenu>
+                    </Canvas.ContextMenu>
 
-                    <StackPanel Orientation="Horizontal" 
-                                Margin="0 5 0 0"
-                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
+                    <!-- Analytic Milky Way background - see MilkyWayBackgroundBuilder. -->
+                    <Image Source="{Binding MapDisplay.Background}"
+                           Width="{Binding MapDisplay.CanvasSize}" Height="{Binding MapDisplay.CanvasSize}"
+                           Stretch="Fill" RenderOptions.BitmapScalingMode="Linear" IsHitTestVisible="False"/>
 
-                        <!-- RA/Dec -->
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="RA Start (hours)"/>
-                            <TextBox Width="120" Text="{Binding Range.RAStartHours}"/>
-                        </StackPanel>
+                    <!-- Altitude rings -->
+                    <ItemsControl ItemsSource="{Binding MapDisplay.AltitudeRings}" IsHitTestVisible="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding Left}"/>
+                                <Setter Property="Canvas.Top" Value="{Binding Top}"/>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="{Binding Diameter}" Height="{Binding Diameter}"
+                                         Stroke="#40808080" StrokeThickness="1"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="RA End (hours)"/>
-                            <TextBox Width="120" Text="{Binding Range.RAEndHours}"/>
-                        </StackPanel>
-                    </StackPanel>
+                    <!-- Azimuth spokes -->
+                    <ItemsControl ItemsSource="{Binding MapDisplay.AzimuthSpokes}" IsHitTestVisible="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}"
+                                      Stroke="#30808080" StrokeThickness="1"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
-                    <StackPanel Orientation="Horizontal" 
-                                Margin="0 5 0 0"
-                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=Equatorial}">
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Dec Start (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.DecStartDeg}"/>
-                        </StackPanel>
+                    <!-- RA/Dec meridian/parallel grid - only populated when MapGridMode is
+                         Equatorial (see PlanViewModel.RefreshVisiblePoints); empty, and so
+                         invisible, in Alt/Az mode. -->
+                    <ItemsControl ItemsSource="{Binding MapDisplay.EquatorialGridLines}" IsHitTestVisible="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Polyline Points="{Binding}" Stroke="#40808080" StrokeThickness="1"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Dec End (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.DecEndDeg}"/>
-                        </StackPanel>
-                    </StackPanel>
-                    <!-- Az/El -->
-                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
-                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
+                    <!-- Compass labels (Alt/Az mode) or RA/Dec labels (Equatorial mode) - same
+                         MapDisplay.CompassLabels binding either way, see RefreshVisiblePoints. -->
+                    <ItemsControl ItemsSource="{Binding MapDisplay.CompassLabels}" IsHitTestVisible="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Text}" FontSize="11" FontWeight="Bold" Margin="-10,-8,0,0"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Az Start (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.AzimuthStartDeg}"/>
-                        </StackPanel>
+                    <!-- In-progress region polyline -->
+                    <Polyline Points="{Binding MapDisplay.RegionPolyline}" Stroke="Yellow" StrokeThickness="2"
+                              StrokeDashArray="4 2" IsHitTestVisible="False"/>
 
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Az End (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.AzimuthEndDeg}"/>
-                        </StackPanel>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0"
-                                Visibility="{Binding PlanType, Converter={StaticResource PlanTypeToVisibilityConverter}, ConverterParameter=AltAz}">
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="El Start (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.AltitudeStartDeg}"/>
-                        </StackPanel>
+                    <!-- Capture points (sequence-coloured; the current animated point is enlarged) -->
+                    <ItemsControl ItemsSource="{Binding MapDisplay.Points}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="9" Height="9" Margin="-4.5,-4.5,0,0"
+                                         Stroke="Black" StrokeThickness="0.5" ToolTip="{Binding Tooltip}"
+                                         IsHitTestVisible="False">
+                                    <Ellipse.Fill>
+                                        <SolidColorBrush Color="{Binding Color}"/>
+                                    </Ellipse.Fill>
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                    <Setter Property="Width" Value="16"/>
+                                                    <Setter Property="Height" Value="16"/>
+                                                    <Setter Property="Margin" Value="-8,-8,0,0"/>
+                                                    <Setter Property="Stroke" Value="White"/>
+                                                    <Setter Property="StrokeThickness" Value="2"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Canvas>
+            </Viewbox>
 
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="El End (deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.AltitudeEndDeg}"/>
-                        </StackPanel>
-                    </StackPanel>
-                    <!-- Angular separation -->
-                    <StackPanel Orientation="Horizontal" Margin="0 5 0 0">
-                        <StackPanel Margin="0 0 20 0">
-                            <TextBlock Text="Angular Separation (Deg)"/>
-                            <TextBox Width="120" Text="{Binding Range.AngularSeparationDeg}"
-                                     ToolTip="The true angular separation wanted between adjacent dwell points on the sky (e.g. half your antenna's beamwidth for Nyquist-sampled coverage). Declination/Elevation points are spaced this far apart directly; RA/Azimuth points are automatically spaced wider per row (divided by cos of that row's Dec/Elevation) so every point ends up this same real distance from its neighbours, rather than crowding together near the poles/zenith the way an equal-hours or equal-degrees step would."/>
-                        </StackPanel>
-                    </StackPanel>
-
-                </StackPanel>
-
-                <!--<Button Content="Build Sweep"
-                        Width="200"
-                        Height="40"
-                        Command="{Binding BuildSweepCommand}"
-                        Margin="0 20 0 20"/>-->
-
-                <!-- DRIFT SCAN -->
-                <StackPanel Margin="0 20 0 0 " 
-                Visibility="{Binding PlanType, Converter={StaticResource DriftVisibilityConverter}}">
-                    <TextBlock Text="Drift Scan Parameters" FontWeight="Bold"/>
-
-                    <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Declination (deg)"/>
-                            <TextBox Width="120" Text="{Binding DriftDeclinationDeg}"/>
-                        </StackPanel>
-
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Duration (min)"/>
-                            <TextBox Width="120" Text="{Binding DriftDurationMinutes}"/>
-                        </StackPanel>
-
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Cadence (sec)"/>
-                            <TextBox Width="120" Text="{Binding DriftCadenceSeconds}"/>
-                        </StackPanel>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- CAPTURE PARAMETERS -->
-                <TextBlock Text="Capture Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
-                <StackPanel Orientation="Vertical" Margin="0 0 0 10">
-                    <StackPanel Orientation="Horizontal">
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Dwell Time (sec)"/>
-                            <TextBox Width="120" Text="{Binding DwellSeconds}"/>
-                        </StackPanel>
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Files/Point"/>
-                            <TextBox Width="120" Text="{Binding FilesPerPoint}"/>
-                        </StackPanel>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Sample Rate (Hz)"/>
-                            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
-                                        FrequencyHz="{Binding SampleRate,
-                                        UpdateSourceTrigger=PropertyChanged,
-                                        ValidatesOnDataErrors=True}"
-                                         Width="120" HorizontalAlignment="Left"/>
-
-                        </StackPanel>
-
-                        <StackPanel Margin="0 5 20 0">
-                            <TextBlock Text="Center Frequency (Hz)"/>
-                            <controls:FrequencyEntryBox Grid.Row="1" Grid.Column="1" 
-                                        FrequencyHz="{Binding CenterFrequency,
-                                        UpdateSourceTrigger=PropertyChanged,
-                                        ValidatesOnDataErrors=True}"
-                                         Width="120" HorizontalAlignment="Left"/>
-                        </StackPanel>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal">
-                        <StackPanel Margin="0,5,20,0">
-                            <TextBlock Text="FFT Bins"/>
-                            <TextBox Width="120" Text="{Binding FftBins}"/>
-                        </StackPanel>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- TELESCOPE PARAMETERS -->
-                <TextBlock Text="Telescope Parameters" FontWeight="Bold" Margin="0 20 0 0"/>
-
-                <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Settle Time (sec)"/>
-                        <TextBox Width="120" Text="{Binding SettleTimeSeconds}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Tracking Enabled"/>
-                        <CheckBox IsChecked="{Binding TrackingEnabled}"/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Home When Complete"/>
-                        <CheckBox IsChecked="{Binding GoToHomeAfterCapture}"/>
-                    </StackPanel>
-
-                </StackPanel>
-
-                <!-- OUTPUT PARAMETERS -->
-
-                <StackPanel Orientation="Horizontal" Margin="0 5 0 10">
-
-                    <StackPanel Margin="0 5 20 0">
-                        <TextBlock Text="Despike Live Spectrum"/>
-                        <CheckBox IsChecked="{Binding DespikeEnabled}"
-                                  ToolTip="Excise narrowband RFI spikes (e.g. a USB3/mount comb) from CaptureView's live spectrum while this plan runs."/>
-                    </StackPanel>
-
-                    <StackPanel Margin="0 5 20 0"/>
-
-                </StackPanel>
-
-                <!-- SAVE PLAN -->
-                <Button Content="Save Plan"
-                    Width="200"
-                    Height="40"
-                    Command="{Binding SavePlanCommand}"
-                    Margin="0 20 0 0"/>
-
+            <StackPanel Grid.Row="3" Margin="0 6 0 0">
+                <TextBlock Text="{Binding HoverReadoutText}" FontFamily="Consolas"/>
+                <TextBlock Text="{Binding MapDisplay.StatusText}" FontStyle="Italic" TextWrapping="Wrap"/>
             </StackPanel>
-        </ScrollViewer>
+        </Grid>
 
         <!-- RIGHT SIDE: SAVED PLANS -->
-        <ScrollViewer Grid.Column="1" 
-                      Margin="20 0 0 0" 
+        <ScrollViewer Grid.Column="2"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Auto">
-            <StackPanel >
+            <StackPanel>
 
                 <TextBlock Text="Saved Plans"
                        FontSize="20"
@@ -268,10 +227,10 @@
                       SelectedItem="{Binding SelectedPlan}">
                     <ListView.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel>
-                                <TextBlock Text="{Binding FriendlyName}" FontWeight="Bold"/>
-                                <TextBlock Text="{Binding PlanType}"/>
-                                <TextBlock Text="{Binding Points.Count, StringFormat=Points: {0}}"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding FriendlyName}" FontWeight="Bold" Margin="0,0,5,0"/>
+                                <TextBlock Text="{Binding PlanType}" Margin="0,0,5,0"/>
+                                <TextBlock Text="{Binding Range.GeometryMode}"/>
                             </StackPanel>
                         </DataTemplate>
                     </ListView.ItemTemplate>
