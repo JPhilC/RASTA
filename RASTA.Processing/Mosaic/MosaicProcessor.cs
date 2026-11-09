@@ -36,7 +36,15 @@ namespace RASTA.Processing.Mosaic
     public record MosaicResult(
         double[] FrequencyHz,
         double[] VelocityKmPerSec,
-        IReadOnlyList<MosaicPosition> Positions);
+        IReadOnlyList<MosaicPosition> Positions)
+    {
+        /// <summary>
+        /// How many of Positions had their averaged spectrum served from SpectrumCacheService
+        /// rather than re-read from raw IQ (see CachedSpectrumLoader). Always 0 for a LAB
+        /// Survey session, which has no FFT step to cache.
+        /// </summary>
+        public int PositionsFromCache { get; init; }
+    }
 
     /// <summary>
     /// Folder-wide counterpart to VisualiseViewModel.ProcessHiCore: walks every dwell-point
@@ -44,29 +52,23 @@ namespace RASTA.Processing.Mosaic
     /// shared baseline, producing one MosaicPosition per sky/AltAz position. Pure algorithm -
     /// no UI/hardware deps - matching the RASTA.Processing layering convention.
     ///
-    /// The baseline is read/averaged once up front, then every position is processed
+    /// The baseline is loaded once up front, then every position is processed
     /// concurrently via Parallel.For (see ProcessFolder's remarks) - positions are otherwise
     /// completely independent of each other, so this scales with core count rather than being
     /// stuck at one position's worth of FFT/pipeline work at a time.
+    ///
+    /// The slow part of each file set - reading the raw IQ and averaging its FFT frames - goes
+    /// through CachedSpectrumLoader, shared with Single Capture (issue #19): a position
+    /// reduced before, here or there, is loaded from the cache without opening its FITS
+    /// file at all. Everything from Target FFT Size binning onward always runs fresh.
     /// </summary>
     public class MosaicProcessor
     {
-        private readonly FitsFileIo _fitsFileIo;
-        private readonly IFftEngine _fftEngine;
+        private readonly CachedSpectrumLoader _spectrumLoader;
 
-        // FitsFileIo itself holds no state, but the nom.tam.fits/nom.tam.util library it reads
-        // through underneath is an old Java port never written with concurrent access in mind -
-        // calling ReadRawIq/ReadCombinedRawIq from multiple positions at once hung the whole
-        // process (observed stalled mid-FFT, with total CPU/memory activity flatlining - a
-        // deadlock signature, not a crash). IFftEngine and everything after the read genuinely
-        // is stateless/thread-safe (see ProcessFolder's remarks), so only the file-reading step
-        // itself is serialized here, not the CPU-bound work that follows it.
-        private readonly object _fitsReadLock = new();
-
-        public MosaicProcessor(FitsFileIo fitsFileIo, IFftEngine fftEngine)
+        public MosaicProcessor(CachedSpectrumLoader spectrumLoader)
         {
-            _fitsFileIo = fitsFileIo;
-            _fftEngine = fftEngine;
+            _spectrumLoader = spectrumLoader;
         }
 
         /// <summary>
@@ -87,10 +89,11 @@ namespace RASTA.Processing.Mosaic
             double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma,
             SmoothingKind smoothing = SmoothingKind.None,
             int smoothingWindow = 21,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool forceRegenerate = false)
         {
             return Task.Run(
-                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, despike, despikeThresholdSigma, smoothing, smoothingWindow, ct),
+                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, despike, despikeThresholdSigma, smoothing, smoothingWindow, ct, forceRegenerate),
                 ct);
         }
 
@@ -104,7 +107,8 @@ namespace RASTA.Processing.Mosaic
             double despikeThresholdSigma,
             SmoothingKind smoothing,
             int smoothingWindow,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool forceRegenerate)
         {
             string baselineFullPath = Path.GetFullPath(baselineFilePath);
 
@@ -117,38 +121,61 @@ namespace RASTA.Processing.Mosaic
             if (groups.Count == 0)
                 throw new InvalidOperationException("No capture files found in the selected folder.");
 
-            // --- Baseline: read once, average once, reuse for every position ---
-            progressCallback?.Invoke("Reading baseline…", 0.0);
-            var (baselineMeta, baselineIqRaw) = _fitsFileIo.ReadRawIq(baselineFilePath);
+            // --- Baseline: loaded (cache or raw IQ) once, reused for every position ---
+            // Always averaged at native resolution; Target FFT Size re-binning happens after
+            // averaging, via SpectrumBinner - not by shrinking the raw IQ beforehand, which
+            // aliases distant frequency bins together instead of averaging local ones (see
+            // SpectrumBinner's own remarks for why).
+            progressCallback?.Invoke("Loading baseline…", 0.0);
+            var baseline = _spectrumLoader.Load(
+                new[] { baselineFilePath }, skao: false, forceRegenerate, "baseline",
+                progressCallback, ct, out _);
 
-            int scanFftSize = baselineMeta.FftSize;
+            int scanFftSize = baseline.FftSize;
             int fftSize = (targetFftSize > 0 && targetFftSize <= scanFftSize) ? targetFftSize : scanFftSize;
-            int bytesPerFrame = scanFftSize * 2;
 
-            // Always FFT/accumulate at native resolution; Target FFT Size re-binning
-            // happens after averaging, via SpectrumBinner - not by shrinking the raw IQ
-            // beforehand, which aliases distant frequency bins together instead of
-            // averaging local ones (see SpectrumBinner's own remarks for why).
-            var baselineAcc = new HiStreamingAccumulator(scanFftSize);
-            ForEachChunk(baselineIqRaw, bytesPerFrame, chunk =>
-                baselineAcc.AddBaselineFrame(_fftEngine.ComputeSkAoPower(chunk, scanFftSize)));
-            double[] baselinePower = baselineAcc.GetBaselineAverage();
+            double[] baselinePower = baseline.AveragedPower!;
             if (fftSize < scanFftSize)
                 baselinePower = SpectrumBinner.BinAverage(baselinePower, fftSize);
 
             // --- One dwell-point capture group per sky/AltAz position, processed in parallel.
-            // Each position reads its own file(s) and runs its own FFT/accumulate/pipeline work
-            // completely independently of every other position - the only thing they share is
-            // the already-computed, read-only baselinePower array above. IFftEngine (FftEngine)
-            // is genuinely stateless and safe to call concurrently; HiStreamingAccumulator/
-            // HiStreamingPipeline are freshly `new`'d per position anyway, same as the old
-            // sequential loop. The FITS read itself is deliberately still serialized (see
-            // _fitsReadLock) - only the FFT/accumulate/pipeline/peak-search work that follows it
-            // runs concurrently across positions.
+            // Each position loads its own file set and runs its own pipeline work completely
+            // independently of every other position - the only thing they share is the
+            // already-computed, read-only baselinePower array above. HiStreamingPipeline is
+            // freshly `new`'d per position. On a cache miss the FITS read itself is still
+            // serialized (see CachedSpectrumLoader's FitsReadLock - the underlying FITS library
+            // hangs under concurrent reads); the FFT/averaging after it, and everything on a
+            // cache hit, runs concurrently across positions.
             var positionsArray = new MosaicPosition[groups.Count];
             double[]? frequencyAxis = null;
             double[]? velocityAxis = null;
             int completedCount = 0;
+            int fromCacheCount = 0;
+
+            // The bar is one continuous 0->1 run across all positions, built from each
+            // position's own measured fraction (0 = not started, 1 = done) rather than only
+            // from completed positions: on a cache miss a single position is a slow serialized
+            // FITS read plus thousands of FFT frames, so counting whole positions alone leaves
+            // the bar frozen for a long time - and, since the baseline phase above has just
+            // driven it to 100%, frozen at "finished" while the first positions are still being
+            // read. Reset to 0 here so the positions phase visibly starts.
+            var positionFractions = new double[groups.Count];
+            var progressLock = new object();
+            void ReportOverall(int g, double fraction, string? status = null)
+            {
+                if (progressCallback is null)
+                    return;
+                double overall;
+                lock (progressLock)
+                {
+                    positionFractions[g] = fraction;
+                    overall = positionFractions.Sum() / groups.Count;
+                }
+                progressCallback(
+                    status ?? $"Processing positions ({Volatile.Read(ref completedCount)} of {groups.Count} done)…",
+                    overall);
+            }
+            progressCallback?.Invoke($"Processing positions (0 of {groups.Count} done)…", 0.0);
 
             try
             {
@@ -157,32 +184,49 @@ namespace RASTA.Processing.Mosaic
                     var files = groups[g];
                     string label = Path.GetFileNameWithoutExtension(files[0]);
 
-                    (FitsFileMetaData captureMeta, byte[] captureIqRaw) read;
-                    lock (_fitsReadLock)
+                    // On a cache miss the loader reports two 0->1 runs for this position - the
+                    // file read, then the frame averaging. Map them onto the first and second
+                    // half of this position's own fraction (a drop back toward 0 marks the
+                    // switch from one run to the next), and only pass on changes of 1% or more:
+                    // the averaging run reports once per FFT frame, from several positions at
+                    // once. A cache hit reports nothing here and jumps straight to "done" below.
+                    int phase = 0;
+                    double lastPhaseFraction = 0.0;
+                    double lastReported = 0.0;
+                    void OnPositionProgress(string _, double fraction)
                     {
-                        read = _fitsFileIo.ReadCombinedRawIq(files);
+                        if (fraction < lastPhaseFraction && phase == 0)
+                            phase = 1;
+                        lastPhaseFraction = fraction;
+
+                        double positionFraction = Math.Min((phase + fraction) / 2.0, 0.99);
+                        if (positionFraction - lastReported < 0.01)
+                            return;
+                        lastReported = positionFraction;
+                        ReportOverall(g, positionFraction);
                     }
-                    var (captureMeta, captureIqRaw) = read;
+
+                    var captureMeta = _spectrumLoader.Load(
+                        files, skao: false, forceRegenerate, label, OnPositionProgress, ct, out bool fromCache);
+                    if (fromCache)
+                        Interlocked.Increment(ref fromCacheCount);
 
                     if (captureMeta.FftSize != scanFftSize ||
-                        captureMeta.SampFreqHz != baselineMeta.SampFreqHz ||
-                        captureMeta.CentFreqHz != baselineMeta.CentFreqHz)
+                        captureMeta.SampFreqHz != baseline.SampFreqHz ||
+                        captureMeta.CentFreqHz != baseline.CentFreqHz)
                     {
                         throw new InvalidOperationException(
                             $"Capture group '{label}' has a different FFT size, sample rate, or center " +
                             "frequency than the baseline.");
                     }
 
-                    var captureAcc = new HiStreamingAccumulator(scanFftSize);
-                    ForEachChunk(captureIqRaw, bytesPerFrame, chunk =>
-                        captureAcc.AddCaptureFrame(_fftEngine.ComputeSkAoPower(chunk, scanFftSize)));
-                    double[] capturePower = captureAcc.GetCaptureAverage();
+                    double[] capturePower = captureMeta.AveragedPower!;
                     if (fftSize < scanFftSize)
                         capturePower = SpectrumBinner.BinAverage(capturePower, fftSize);
 
                     // Each position has its own pointing, so its own LSR correction - unlike
                     // ProcessHiCore, this can't be hoisted out of the loop.
-                    double lsrCorrectionKmPerSec = captureMeta.ComputeLsrCorrectionKmPerSec();
+                    double lsrCorrectionKmPerSec = captureMeta.LsrCorrectionKmPerSec;
 
                     var pipeline = new HiStreamingPipeline();
                     pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma);
@@ -242,7 +286,7 @@ namespace RASTA.Processing.Mosaic
                     // happens to finish, not necessarily 0,1,2... - a plain (g+1)/groups.Count
                     // could report progress out of order or even go "backwards" on screen.
                     int done = Interlocked.Increment(ref completedCount);
-                    progressCallback?.Invoke($"Processing position {done} of {groups.Count} ({label})…", (double)done / groups.Count);
+                    ReportOverall(g, 1.0, $"Processing positions ({done} of {groups.Count} done, last: {label})…");
                 });
             }
             catch (AggregateException ex)
@@ -263,7 +307,10 @@ namespace RASTA.Processing.Mosaic
             return new MosaicResult(
                 frequencyAxis ?? Array.Empty<double>(),
                 velocityAxis ?? Array.Empty<double>(),
-                positions);
+                positions)
+            {
+                PositionsFromCache = fromCacheCount
+            };
         }
 
         /// <summary>
@@ -308,14 +355,5 @@ namespace RASTA.Processing.Mosaic
             return (lineStrengthDb, velocityKmPerSec[peakIndex]);
         }
 
-        private static void ForEachChunk(byte[] iq, int bytesPerChunk, Action<byte[]> processChunk)
-        {
-            for (int offset = 0; offset + bytesPerChunk <= iq.Length; offset += bytesPerChunk)
-            {
-                var chunk = new byte[bytesPerChunk];
-                Buffer.BlockCopy(iq, offset, chunk, 0, bytesPerChunk);
-                processChunk(chunk);
-            }
-        }
     }
 }

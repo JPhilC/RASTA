@@ -13,6 +13,7 @@ using RASTA.Infrastructure.Storage;
 using RASTA.Infrastructure.Telescope;
 using RASTA.Processing.Calibration;
 using RASTA.Processing.Gridding;
+using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Mosaic;
 using RASTA.Processing.Planning;
 using System.Threading.Tasks;
@@ -68,6 +69,7 @@ namespace RASTA.App
             // ---------------------------------------------------------
             services.AddSingleton(_logger);
             services.AddSingleton<UserOptionsService>();
+            services.AddSingleton<SpectrumCacheService>();
             // ---------------------------------------------------------
             // Telescope state
             // ---------------------------------------------------------
@@ -141,6 +143,7 @@ namespace RASTA.App
             // Processing
             // ---------------------------------------------------------
             services.AddSingleton<GridBuilder>();
+            services.AddSingleton<CachedSpectrumLoader>();
             services.AddSingleton<MosaicProcessor>();
             services.AddSingleton<LabSurveyMosaicProcessor>();
 

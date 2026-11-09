@@ -212,6 +212,76 @@ pipeline, kept for cross-checking against `HiStreamingPipeline`'s FFT-size-agnos
 strictly positive, unlike `HiSpectrum`, so it's the one mode that can validly be shown in dB; see
 `VisualiseViewModel.UseDbScale`/`ToDb`).
 
+An earlier version of `SkaoPipelineProcessor.cs` didn't actually match the reference algorithm despite
+its own doc comments claiming otherwise — checked directly against the real source
+(`ska-tabletop-radiotelescope/src/skao_trt/{constants,record_data,plotting}.py`, not a paraphrase of
+it) surfaced several genuine discrepancies, since fixed: the reference runs one full-resolution,
+*unwindowed* FFT per read (`2**21` samples) and sums groups of adjacent frequency bins down to 256
+channels (`pwr.reshape(256, -1).sum(axis=1)`) — full-resolution FFT first, then bin-sum, the same safe
+approach `SpectrumBinner` uses elsewhere in this app — not the many small, literal 256-point FFTs
+(Hann-windowed, no bin-summing) the port ran instead. `CH_CUT`/`CH_OFF` (25, 40) are channel *indices*
+into the 256-bin spectrum, marking two 15-channel windows near each edge used only for the continuum
+fit — not velocity-magnitude thresholds in km/s, which the port had them as. The reference's
+`filter_rfi` (Savitzky-Golay residual, 5-point window, σ=3) rejects outliers from those two windows
+before fitting, which the port skipped entirely; conversely, the reference's `compute_hi_spectrum`
+never smooths its returned/plotted HI spectrum at all — `savgol_filter` is only ever used inside
+`filter_rfi` — while the port unconditionally ran a final SG pass over the whole result. The velocity
+sign was also inverted (`(f - HiFreqHz)/HiFreqHz` instead of the radio-convention `(HiFreqHz - f)/
+HiFreqHz` `HiStreamingPipeline` itself already uses). `SkaoHiObservation.ProcessIq` now FFTs (unwindowed,
+native resolution) every whole native-FFT-size frame a RASTA baseline/capture file actually contains,
+bins each frame's power spectrum down to 256 channels, and sums that across every frame — the same
+"full-resolution FFT, then bin-sum, then sum across reads" *operation* the reference performs, just
+adapted to RASTA's own continuous-stream capture shape instead of the reference's fixed 25-reads-of-
+`2**21`-samples one (a literal read-count match isn't meaningful here — RASTA doesn't capture in that
+shape — but the underlying math now is). `SkaoHiPipelineProcessor.Process` publishes `FrequencyHz`/
+`VelocityKmPerSec`/`RatioSpectrum`/`HiSpectrum` already trimmed to `velocity[ChCut:-ChCut]` (206 of the
+256 channels), matching `plot_hi_spectrum_on_axes` exactly — `VisualiseViewModel.ProcessSkaoTtrt` passes
+that trimmed length into `SpectrumVm.UpdateParameters` rather than the untrimmed 256, since
+`SpectrumViewModel.UpdateSpectrum` indexes its point buffer by whatever `FftSize` it was last told,
+which must match the actual data/x-axis array length passed to `UpdateSpectrum` or the chart silently
+truncates/throws.
+
+`SkaoHiPipelineProcessor.Process` also excises the receiver's DC/LO-leakage spike
+(`RemoveDcSpike`, right after the fftshift step) - a deliberate divergence from the reference, added
+after confirming directly against the source that `compute_hi_spectrum` never touches this spike at
+all, and that nothing else in the reference algorithm removes it either. What actually keeps the real
+TTRT app's chart from being dominated by it is two things RASTA can't fully inherit: (1) the reference
+FFTs at native `2**21` resolution before binning down to 256 channels - since the spike concentrates in
+essentially one native bin regardless of FFT size, summing it against ~8191 "normal" neighbouring
+native bins per output channel dilutes it far more than RASTA's own much smaller native FFT size does
+(only ~15 neighbours per output channel, since RASTA doesn't capture at 2^21-sample native
+resolution - see `SkaoHiObservation.ProcessIq`'s own remarks); (2) the reference GUI's Y-axis limits
+are plain operator-entered text fields (`ControlsBar.ymin_entry`/`ymax_entry` in `tabletop_app.py`),
+not computed - left blank they fall back to raw `spectrum.min()-1`/`max()+1`, which would get blown
+out by a leftover spike exactly like RASTA's own `SpectrumViewModel.ApplyRobustYAxisRange`
+(percentile-based auto-scaling - already functionally the automatic equivalent of the reference's
+manual entry) does. Since (2) only shapes the view and can't remove an outlier data point from
+shooting past whatever the axis limits are, and RASTA has no practical way to reproduce (1) without
+capturing at native 2^21-sample resolution, `RemoveDcSpike` excises it from the data directly instead -
+detected from the baseline's binned 256-channel spectrum only (never the capture, for the same
+"unambiguously instrumental, not sky signal" reasoning `HiStreamingPipeline.RemoveDcSpike` uses),
+interpolated away identically in both baseline and capture before the ratio/continuum fit. Duplicated
+rather than shared with `HiStreamingPipeline.RemoveDcSpike` to keep this class self-contained, per its
+own established "not a refactor" convention elsewhere in this file.
+
+The first version of `RemoveDcSpike` here copied `HiStreamingPipeline.RemoveDcSpike`'s own detection
+verbatim - a fixed ratio (4x a local median) - and it measurably failed to catch anything on a real
+baseline/capture pair, confirmed with a scratch diagnostic harness run directly against the FITS files:
+the spike bin measured only ~2.3x the local median, comfortably under the 4x bar, even though it was
+visibly overwhelming the chart. The reason is the binning itself: `SkaoHiObservation.ProcessIq` sums
+16 native FFT bins (at a typical 4096-native-size capture) into each of the 256 output channels, and
+since the spike lives in only one of those 16 native bins, the group-sum dilutes what would be a
+dramatic native-resolution ratio down to roughly `(spike + 15*normal) / (16*normal)` - close to the
+~2.3x actually measured. What a fixed-ratio test misses, a robust statistical test doesn't: the same
+diagnostic showed that bin sitting ~144 *standard deviations* (MAD-based, matching `HiStreamingPipeline.
+Despike`'s own robust-sigma technique) above the local baseline, since the surrounding "normal" bins
+varied by only a fraction of a percent. `RemoveDcSpike` now uses that same MAD/sigma test (`HiConstants.
+DefaultDespikeThresholdSigma`, still baseline-only) instead of a fixed ratio - the general lesson
+(`Despike`'s own doc comment already makes the same point for narrowband RFI comb spurs): a ratio test
+suits a spike that's dramatically elevated in absolute terms, a sigma test suits one that's modest in
+ratio but still statistically unmistakable against a tight local noise floor - and heavy binning/
+averaging is exactly what turns the former into the latter.
+
 `HiStreamingPipeline.Process` (and `HiStreamingProcessor.Compute`) take an optional
 `lsrCorrectionKmPerSec` parameter (default 0), added as a flat offset to every channel's velocity —
 `VisualiseViewModel.ProcessHiCore` computes it via `AstronomyUtils.ComputeLsrCorrectionKmPerSec` from
@@ -730,6 +800,30 @@ concatenates their raw IQ — each file's contribution is first trimmed to a who
 native FFT frames, so a chunk extracted later never straddles the boundary between two physically
 discontinuous captures. `CombinedFileCount` (shown in the view) reports how many files went in;
 non-matching filenames (baseline files, single-file dwells) are unaffected.
+
+`CachedSpectrumLoader` (`RASTA.Processing/HiPipeline`, shared by `VisualiseViewModel.LoadFileSpectra`
+and `MosaicProcessor`) caches the one expensive step of chart/mosaic generation (issue #19):
+each file set's native-resolution accumulated power spectrum (the Hann `ComputeSkAoPower` average,
+and/or - computed only when SKAO TTRT is first requested - `SkaoHiObservation.AccumulateBinnedPower`'s
+unwindowed 256-channel sum), plus the few header values the charts need (FFT size, centre/sample
+frequency, gain, recorded pointing, LSR correction, frame counts). `SpectrumCacheService` (`RASTA.Infrastructure/Services`)
+stores one small JSON file per file set under `%LOCALAPPDATA%\RASTA\SpectrumCache`, keyed on every
+contributing file's full path + size + last-write time plus `SpectrumCacheService.PipelineVersion`.
+Spectrum mode, Target FFT Size, smoothing, despike and dB are deliberately **not** in the key - they
+are all downstream of the cached product and are simply re-run (milliseconds) on every Generate
+Chart, so a parameter change is near-instant and can't be served a stale result. Bump
+`PipelineVersion` only when something *upstream* of the averaged spectrum changes (`ComputeSkAoPower`,
+`SkaoFftPower`/`AccumulateBinnedPower`, `FitsFileIo`'s raw read/combine, `ComputeLsrCorrectionKmPerSec`,
+or the set of header values `SpectrumCacheEntry` carries).
+`ChartSource` ("Cache"/"Raw IQ"/"Cache + raw IQ") shows where the current chart came from;
+`RegenerateChartCommand` bypasses and overwrites the cache, `ClearChartCacheCommand` empties it (for
+both tabs). On the Mosaic tab the same cache means a repeat Generate Mosaic opens no FITS file at all
+for already-reduced positions (a position viewed in Single Capture is a hit in Mosaic and vice versa);
+`MosaicResult.PositionsFromCache` feeds the "N position(s) processed (M from cache)" summary and
+`MosaicViewModel.RegenerateMosaicCommand` bypasses it. The serialized-FITS-read lock described under
+"Mosaic sky-map view" below now lives in `CachedSpectrumLoader` (`FitsReadLock`, static, so it also
+covers a chart generated while a mosaic runs) and is only taken on a cache miss. LAB Survey sessions
+never touch the cache.
 
 ### Capture cancellation and mount-disconnect recovery
 

@@ -80,6 +80,14 @@
                    Text="{Binding DetectedFormatDescription}"
                    FontStyle="Italic" Opacity="0.8" VerticalAlignment="Center"/>
 
+        <!-- Bypasses the averaged-spectrum cache shared with Single Capture (issue #19) -
+             RASTA FITS sessions only, a LAB Survey folder has nothing cached to bypass. -->
+        <Button Grid.Row="6" Grid.Column="12"
+                Content="Regenerate (No Cache)" Command="{Binding RegenerateMosaicCommand}"
+                Visibility="{Binding IsLabSurveySource, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                ToolTip="Generates the mosaic again, ignoring anything cached for this session's files: every file's raw IQ is re-read and re-averaged, and the cached copies are replaced. Generate Mosaic normally reuses each file's averaged spectrum from the first time it was processed (here or on the Single Capture tab), which is why a repeat run is fast; Target FFT Size, Smooth, Despike and Integrated Window are always re-applied either way. Use Clear Cache on the Single Capture tab to empty the cache entirely."
+                Padding="10,4" Width="160"/>
+
         <!-- Parameters row -->
         <!-- Target FFT Size, Smooth, Smoothing Window and Despike are deliberately NOT
              repeated here - they're mirrored straight from the Single Capture tab (see

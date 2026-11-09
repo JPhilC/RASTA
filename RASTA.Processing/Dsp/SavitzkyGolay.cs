@@ -3,11 +3,18 @@ using System;
 namespace RASTA.Processing.Dsp
 {
     /// <summary>
-    /// Fixed 5-point Savitzky–Golay smoothing kernel (quadratic/cubic fit).
-    /// Used by both HiStreamingPipeline and SkaoPipelineProcessor for the optional
-    /// final smoothing pass. Originally part of the (now-removed) IfAverage chain
-    /// ported from Daniel M. Kamiński's SDR AVE plugin - promoted to its own shared
-    /// location since it's still a real dependency of the active HI pipelines.
+    /// Fixed 5-point Savitzky–Golay smoothing kernel (quadratic/cubic fit), with its
+    /// two edge samples on each side left as zero rather than fitted (no mode='interp'
+    /// equivalent). Originally part of the (now-removed) IfAverage chain ported from
+    /// Daniel M. Kamiński's SDR AVE plugin - promoted to its own shared location at
+    /// the time. No longer used by SkaoPipelineProcessor: the actual SKAO reference
+    /// (compute_hi_spectrum) never smooths its final HI spectrum at all - the
+    /// reference's own savgol_filter(data, 5, 2) call is only ever used internally by
+    /// filter_rfi, over small (30-channel) continuum-fit windows where this kernel's
+    /// zeroed edges would read as spuriously huge residuals - so SkaoPipelineProcessor
+    /// now has its own self-contained, edge-correct Savitzky-Golay implementation
+    /// instead. Currently unused; kept in case a future caller wants a cheap fixed
+    /// kernel over a long array where a couple of zeroed edge samples don't matter.
     /// </summary>
     public class SavitzkyGolay
     {

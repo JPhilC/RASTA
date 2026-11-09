@@ -109,17 +109,19 @@
 
                 <TextBlock Grid.Column="4" Grid.Row="6"
             Text="Target FFT Size" FontWeight="Bold"
-            ToolTip="Number of frequency bins the spectrum is (re)computed at, for the HI (Frequency)/HI (Velocity)/Bandpass Ratio modes above. Set it lower than the file's native FFT size to trade frequency resolution for a smoother, less noisy-looking spectrum, since each bin then averages more of the raw signal; leave it equal to the native size (the default) for no change. Also applies when only a Baseline or only a Capture file is selected, so a single file's noise/resolution trade-off can be assessed before it's ever combined with its counterpart; forced to 256 for SKAO TTRT, which that reference pipeline requires." />
+            ToolTip="Number of frequency bins the spectrum is (re)computed at, for the HI (Frequency)/HI (Velocity)/Bandpass Ratio modes above. Set it lower than the file's native FFT size to trade frequency resolution for a smoother, less noisy-looking spectrum, since each bin then averages more of the raw signal; leave it equal to the native size (the default) for no change. Also applies when only a Baseline or only a Capture file is selected, so a single file's noise/resolution trade-off can be assessed before it's ever combined with its counterpart; disabled (forced to 256) for SKAO TTRT, which that reference pipeline requires." />
 
                 <TextBox Grid.Column="6" Grid.Row="6" Width="50"
                      Text="{Binding TargetFftSize}" HorizontalAlignment="Left"
-                     ToolTip="Number of frequency bins the spectrum is (re)computed at, for the HI (Frequency)/HI (Velocity)/Bandpass Ratio modes above. Set it lower than the file's native FFT size to trade frequency resolution for a smoother, less noisy-looking spectrum, since each bin then averages more of the raw signal; leave it equal to the native size (the default) for no change. Also applies when only a Baseline or only a Capture file is selected, so a single file's noise/resolution trade-off can be assessed before it's ever combined with its counterpart; forced to 256 for SKAO TTRT, which that reference pipeline requires." />
+                     IsEnabled="{Binding TargetFftSizeEnabled}"
+                     ToolTip="Number of frequency bins the spectrum is (re)computed at, for the HI (Frequency)/HI (Velocity)/Bandpass Ratio modes above. Set it lower than the file's native FFT size to trade frequency resolution for a smoother, less noisy-looking spectrum, since each bin then averages more of the raw signal; leave it equal to the native size (the default) for no change. Also applies when only a Baseline or only a Capture file is selected, so a single file's noise/resolution trade-off can be assessed before it's ever combined with its counterpart; disabled (forced to 256) for SKAO TTRT, which that reference pipeline requires." />
 
                 <CheckBox Grid.Column="8" Grid.Row="6"
                   VerticalAlignment="Center"
                   Content="Show dB"
                   IsChecked="{Binding UseDbScale}"
-                  ToolTip="Displays the plotted values in decibels (10·log10 of the linear value) instead of linear units. Only meaningful for the raw Baseline/Capture power spectra (single-file selection) and the Bandpass Ratio mode, since those all stay strictly positive. The HI (Frequency)/HI (Velocity) spectra have already had a fitted continuum subtracted and can go negative or near zero, where a dB scale doesn't mean anything - this checkbox has no effect on those two modes." />
+                  IsEnabled="{Binding ShowDbEnabled}"
+                  ToolTip="Displays the plotted values in decibels (10·log10 of the linear value) instead of linear units. Only meaningful for the raw Baseline/Capture power spectra (single-file selection) and the Bandpass Ratio mode, since those all stay strictly positive. The HI (Frequency)/HI (Velocity) spectra have already had a fitted continuum subtracted and can go negative or near zero, where a dB scale doesn't mean anything, and SKAO TTRT never applies it at all - disabled for all three." />
 
 
                 <Button Grid.Column="14" Grid.Row="6"
@@ -161,7 +163,8 @@
                       SelectedValue="{Binding SmoothingKind, Mode=TwoWay}"
                       SelectedValuePath="Kind"
                       DisplayMemberPath="Name"
-                      ToolTip="Smooths the spectrum, so a weak line is easier to see against per-bin noise. With only a Baseline or only a Capture file selected, it smooths that file's own averaged spectrum directly, so the effect can be judged on it alone. With both files selected (HI (Frequency)/HI (Velocity)), it instead smooths the final result *after* Baseline and Capture are divided and the continuum subtracted - smoothing each file individually beforehand was tried and made the combined chart noisier, not smoother, since Baseline/Capture's own small residual scatter gets amplified by the division and its ×300 display scale; smoothing the already-divided result only has to clean up that one quantity. Bandpass Ratio and SKAO TTRT are unaffected either way. Runs after Target FFT Size re-binning and after Despike, and never affects Show dB.&#x0a;&#x0a;None: no smoothing - the raw per-bin spectrum is shown as computed.&#x0a;Savitzky-Golay: fits a local polynomial across the Window of bins - smooths noise while preserving the shape and width of a real line reasonably well.&#x0a;Moving Average: a plain average across the Window - smooths harder for the same width but also flattens and broadens real features more, so a genuine line can end up looking shallower and wider than it really is." />
+                      IsEnabled="{Binding SmoothingEnabled}"
+                      ToolTip="Smooths the spectrum, so a weak line is easier to see against per-bin noise. With only a Baseline or only a Capture file selected, it smooths that file's own averaged spectrum directly, so the effect can be judged on it alone. With both files selected (HI (Frequency)/HI (Velocity)), it instead smooths the final result *after* Baseline and Capture are divided and the continuum subtracted - smoothing each file individually beforehand was tried and made the combined chart noisier, not smoother, since Baseline/Capture's own small residual scatter gets amplified by the division and its ×300 display scale; smoothing the already-divided result only has to clean up that one quantity. Disabled for Bandpass Ratio and SKAO TTRT, which it never affects. Runs after Target FFT Size re-binning and after Despike, and never affects Show dB.&#x0a;&#x0a;None: no smoothing - the raw per-bin spectrum is shown as computed.&#x0a;Savitzky-Golay: fits a local polynomial across the Window of bins - smooths noise while preserving the shape and width of a real line reasonably well.&#x0a;Moving Average: a plain average across the Window - smooths harder for the same width but also flattens and broadens real features more, so a genuine line can end up looking shallower and wider than it really is." />
                 <TextBlock Grid.Column="4" Grid.Row="8"
                    HorizontalAlignment="Left"
                    Text="Window" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,5,0"
@@ -169,13 +172,15 @@
                 <TextBox Grid.Column="6" Grid.Row="8" Width="40"
                  HorizontalAlignment="Left"
                  Text="{Binding SmoothingWindow}"
+                     IsEnabled="{Binding SmoothingEnabled}"
                      ToolTip="Width, in FFT bins, of the Smooth pass to the left (ignored when Smooth is None). Odd numbers only - an even value is rounded up. A wider window smooths harder but also blurs a real line's shape more; the default of 21 bins is a reasonable starting point, since a genuine HI line normally spans far more than one bin."/>
 
                 <CheckBox Grid.Column="8" Grid.Row="8"
                   VerticalAlignment="Center"
                   Content="Despike"
                   IsChecked="{Binding DespikeEnabled}"
-                  ToolTip="Detects and removes narrowband RFI spikes (e.g. a USB3 cable or mount-controller comb line) from the spectrum before it's baseline-divided and plotted, so a strong but non-astronomical spike isn't mistaken for a signal and doesn't distort the continuum fit. This runs earlier in the pipeline than Smooth, on both baseline and capture, using a statistical 'how many Sigma above the local noise' test (see the Sigma box) rather than a fixed threshold, so it adapts to how noisy or heavily-averaged the particular file is. Also drives the Mosaic tab's processing."/>
+                  IsEnabled="{Binding DespikeControlsEnabled}"
+                  ToolTip="Detects and removes narrowband RFI spikes (e.g. a USB3 cable or mount-controller comb line) from the spectrum before it's baseline-divided and plotted, so a strong but non-astronomical spike isn't mistaken for a signal and doesn't distort the continuum fit. This runs earlier in the pipeline than Smooth, on both baseline and capture, using a statistical 'how many Sigma above the local noise' test (see the Sigma box) rather than a fixed threshold, so it adapts to how noisy or heavily-averaged the particular file is. Also drives the Mosaic tab's processing. Disabled for SKAO TTRT, which excises its own DC/LO spike unconditionally instead and has no use for this opt-in control."/>
 
                 <TextBlock Grid.Column="10" Grid.Row="8"
                    HorizontalAlignment="Left"
@@ -183,6 +188,7 @@
                 <TextBox Grid.Column="12" Grid.Row="8" Width="40"
                  HorizontalAlignment="Left"
                  Text="{Binding DespikeThresholdSigma}"
+                     IsEnabled="{Binding DespikeControlsEnabled}"
                      ToolTip="How many local-noise standard deviations above the local median counts as a spike. Lower this if spikes are still visible with Despike ticked (a shorter/noisier capture may need a lower value than a long baseline dwell)."/>
 
                 <Button Grid.Column="14" Grid.Row="8"
@@ -249,7 +255,27 @@
                        Text="Files Combined" FontWeight="Bold" />
                     <TextBox Grid.Row="2" Grid.Column="10"  Width="50"
                      Text="{Binding CombinedFileCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="12" VerticalAlignment="Center"
+                       Text="Source" FontWeight="Bold"
+                       ToolTip="Where the chart on screen got its averaged spectra from. 'Cache' means nothing was read from the raw IQ files - the averaged spectrum of each file was saved the first time it was processed and reused. 'Raw IQ' means everything was read and averaged from the FITS files. 'Cache + raw IQ' means one side (typically the baseline) was cached and the other was not. Only the slow per-file averaging is cached; Spectrum Mode, Target FFT Size, Smooth, Despike and Show dB are always re-applied, so changing any of them is near-instant and never shows an out-of-date result." />
+                    <TextBox Grid.Row="2" Grid.Column="14"  Width="100"
+                     Text="{Binding ChartSource, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
                 </Grid>
+
+                <StackPanel Grid.Row="10" Grid.Column="14" VerticalAlignment="Top">
+                    <Button Content="Regenerate (No Cache)"
+                        Command="{Binding RegenerateChartCommand}"
+                        ToolTip="Generates the chart again, ignoring anything cached for the selected files: the raw IQ is re-read and re-averaged, and the cached copies are replaced."
+                        Padding="10,4"
+                        Width="160"/>
+                    <Button Content="Clear Cache"
+                        Command="{Binding ClearChartCacheCommand}"
+                        ToolTip="Deletes every cached averaged spectrum (all files, not just the ones selected here). The next Generate Chart for any file reads its raw IQ again."
+                        Padding="10,4"
+                        Margin="0,5,0,0"
+                        Width="160"/>
+                </StackPanel>
 
                 <views:SpectrumView
                     Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="15"

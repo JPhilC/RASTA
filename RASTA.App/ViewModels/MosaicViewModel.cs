@@ -334,6 +334,7 @@ public partial class MosaicViewModel : ObservableObject
     // indicator via GenerationProgress rather than a separate bar next to it.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(GenerateMosaicCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RegenerateMosaicCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelMosaicCommand))]
     private bool isGenerating;
 
@@ -348,6 +349,10 @@ public partial class MosaicViewModel : ObservableObject
     // MosaicProcessor.ProcessFolderAsync already takes and observes a CancellationToken of
     // its own (checked once per position), so no change was needed there.
     private CancellationTokenSource? _generateCts;
+
+    // Set only for the duration of RegenerateMosaicAsync - makes MosaicProcessor ignore
+    // (and then overwrite) whatever SpectrumCacheService holds for this session's files.
+    private bool _forceRegenerate;
 
     public MosaicViewModel(
         MosaicProcessor mosaicProcessor,
@@ -528,12 +533,15 @@ public partial class MosaicViewModel : ObservableObject
                     despikeThresholdSigma: DespikeThresholdSigma,
                     smoothing: SmoothingKind,
                     smoothingWindow: SmoothingWindow,
-                    ct: _generateCts.Token);
+                    ct: _generateCts.Token,
+                    forceRegenerate: _forceRegenerate);
 
             BuildGrids(result);
             BuildPositionsSummary(result);
 
-            StatusSummary = $"{result.Positions.Count} position(s) processed.";
+            StatusSummary = result.PositionsFromCache > 0
+                ? $"{result.Positions.Count} position(s) processed ({result.PositionsFromCache} from cache)."
+                : $"{result.Positions.Count} position(s) processed.";
             GenerationStatus = "Completed";
         }
         catch (OperationCanceledException)
@@ -547,6 +555,26 @@ public partial class MosaicViewModel : ObservableObject
             IsGenerating = false;
             _generateCts?.Dispose();
             _generateCts = null;
+        }
+    }
+
+    /// <summary>
+    /// Generate Mosaic, but ignoring whatever SpectrumCacheService holds for this session's
+    /// baseline and capture files - every file's raw IQ is re-read and re-averaged, and the
+    /// cached copies overwritten. No different from Generate Mosaic for a LAB Survey folder,
+    /// which never uses the cache.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanGenerateMosaic))]
+    private async Task RegenerateMosaicAsync()
+    {
+        _forceRegenerate = true;
+        try
+        {
+            await GenerateMosaicAsync();
+        }
+        finally
+        {
+            _forceRegenerate = false;
         }
     }
 

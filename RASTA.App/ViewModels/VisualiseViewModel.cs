@@ -2,29 +2,90 @@
 using CommunityToolkit.Mvvm.Input;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
+using RASTA.Infrastructure.Services;
 using RASTA.Processing.Dsp;
 using RASTA.Processing.HiPipeline;
-using RASTA.Processing.HiPipeline.RASTA.Processing.HiPipeline;
 using System.IO;
+using System.Windows;
 
 namespace RASTA.App.ViewModels;
 
 
 public partial class VisualiseViewModel : ObservableObject
 {
-    private readonly FitsFileIo _fitsFileIo;
-    private readonly IFftEngine _fftEngine;
     private readonly StatusBarViewModel _statusBar;
+    private readonly SpectrumCacheService _spectrumCache;
+    private readonly CachedSpectrumLoader _spectrumLoader;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetFftSizeEnabled))]
+    [NotifyPropertyChangedFor(nameof(ShowDbEnabled))]
+    [NotifyPropertyChangedFor(nameof(SmoothingEnabled))]
+    [NotifyPropertyChangedFor(nameof(DespikeControlsEnabled))]
     private SpectrumMode mode = SpectrumMode.HiFrequency;
 
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetFftSizeEnabled))]
+    [NotifyPropertyChangedFor(nameof(ShowDbEnabled))]
+    [NotifyPropertyChangedFor(nameof(SmoothingEnabled))]
+    [NotifyPropertyChangedFor(nameof(DespikeControlsEnabled))]
     private string baselineFile;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetFftSizeEnabled))]
+    [NotifyPropertyChangedFor(nameof(ShowDbEnabled))]
+    [NotifyPropertyChangedFor(nameof(SmoothingEnabled))]
+    [NotifyPropertyChangedFor(nameof(DespikeControlsEnabled))]
     private string captureFile;
+
+    // Both files selected is what actually flips GenerateChartAsync over to the
+    // Mode-driven combined pipelines (ProcessFilesHiFrequency/HiVelocity/ProcessSkaoTtrt/
+    // ProcessFilesRatio) - with only one file selected it always falls back to the
+    // single-file ProcessBaseline/ProcessCapture view regardless of Mode (see
+    // GenerateChartAsync), where every one of the controls below applies. The four
+    // properties below drive IsEnabled on VisualiseView.xaml's Target FFT Size/Show
+    // dB/Smooth+Window/Despike+Sigma controls so a control with no effect in the
+    // spectrum mode that's actually about to run is visibly disabled rather than
+    // silently ignored - discovered the hard way when SKAO TTRT mode was selected with
+    // only a Capture file chosen: the mode dropdown implied TTRT was running, but the
+    // silent single-file fallback meant none of this pipeline's own behaviour (not
+    // least the DC-spike excision) was ever exercised.
+    private bool BothFilesSelected => BaselineFile is not null && CaptureFile is not null;
+
+    /// <summary>
+    /// Forced to 256 by ProcessSkaoTtrt whenever SKAO TTRT is the mode that will
+    /// actually run (both files selected) - editing it has no effect there. Still
+    /// relevant for HiFrequency/HiVelocity/Ratio, and for the single-file fallback
+    /// (ProcessBaseline/ProcessCapture, which read it regardless of Mode).
+    /// </summary>
+    public bool TargetFftSizeEnabled => !(BothFilesSelected && Mode == SpectrumMode.TTRT);
+
+    /// <summary>
+    /// Only Ratio's RatioSpectrum stays strictly positive when both files are
+    /// selected - HiFrequency/HiVelocity's continuum-subtracted HiSpectrum can go
+    /// negative, and ProcessSkaoTtrt never applies UseDbScale at all. Always relevant
+    /// for the single-file fallback (a plain power spectrum, always positive).
+    /// </summary>
+    public bool ShowDbEnabled => !BothFilesSelected || Mode == SpectrumMode.Ratio;
+
+    /// <summary>
+    /// SmoothingKind only ever reaches HiStreamingPipeline.Process's HiSpectrum output
+    /// (HiFrequency/HiVelocity) - Ratio reads RatioSpectrum, computed before smoothing
+    /// runs, and ProcessSkaoTtrt never smooths at all (the SKAO reference doesn't
+    /// either). Always relevant for the single-file fallback, which smooths that
+    /// file's own averaged spectrum directly.
+    /// </summary>
+    public bool SmoothingEnabled => !BothFilesSelected || Mode == SpectrumMode.HiFrequency || Mode == SpectrumMode.HiVelocity;
+
+    /// <summary>
+    /// DespikeEnabled/DespikeThresholdSigma feed HiStreamingPipeline.Despike, used by
+    /// HiFrequency/HiVelocity/Ratio (all via ProcessHiCore) and the single-file
+    /// fallback - never by ProcessSkaoTtrt, which excises its own DC/LO spike
+    /// unconditionally instead (see SkaoHiPipelineProcessor.RemoveDcSpike) and has no
+    /// use for this opt-in narrowband-RFI control.
+    /// </summary>
+    public bool DespikeControlsEnabled => !(BothFilesSelected && Mode == SpectrumMode.TTRT);
 
     private double[]? baselineSpectrum;
 
@@ -56,7 +117,7 @@ public partial class VisualiseViewModel : ObservableObject
 
     // How many raw IQ files went into the currently displayed chart's capture data -
     // 1 unless the selected capture file matched the "..._{n}of{total}.fits" pattern
-    // and sibling files were found alongside it (see ReadCombinedCaptureRawIq).
+    // and sibling files were found alongside it (see LoadCaptureSpectra).
     [ObservableProperty]
     private int combinedFileCount = 1;
 
@@ -86,10 +147,13 @@ public partial class VisualiseViewModel : ObservableObject
     // Opt-in narrowband-RFI excision (HiStreamingPipeline.Despike) - off by default,
     // matching the pipeline's own default. Applies to the standalone baseline/capture
     // views (ProcessBaseline/ProcessCapture) as well as the combined HiFrequency/
-    // HiVelocity/Ratio modes via ProcessHiCore; deliberately left out of ProcessSkaoTtrt,
-    // which stays an unmodified cross-check against the SKAO reference algorithm (same
-    // reasoning RemoveDcSpike already follows). Mirrored into MosaicVm so the Mosaic tab's
-    // processing follows this one toggle rather than needing a second control of its own.
+    // HiVelocity/Ratio modes via ProcessHiCore; not used by ProcessSkaoTtrt, which
+    // excises its own DC/LO spike unconditionally instead (SkaoHiPipelineProcessor.
+    // RemoveDcSpike - a deliberate divergence from the reference, unlike this opt-in
+    // control - see CLAUDE.md) and has no use for a separate opt-in toggle. Mirrored
+    // into MosaicVm so the Mosaic tab's processing follows this one toggle rather than
+    // needing a second control of its own. See DespikeControlsEnabled for how this
+    // reaches VisualiseView.xaml's IsEnabled binding.
     [ObservableProperty]
     private bool despikeEnabled;
 
@@ -138,6 +202,7 @@ public partial class VisualiseViewModel : ObservableObject
     // GenerationProgress, rather than a separate bar next to it.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(GenerateChartCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RegenerateChartCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelGenerateChartCommand))]
     private bool isGenerating;
 
@@ -155,10 +220,25 @@ public partial class VisualiseViewModel : ObservableObject
 
     // Only one GenerateChartAsync run at a time is ever in flight (GenerateChartCommand's
     // CanExecute enforces that), so a single field - rather than threading a
-    // CancellationToken through every Process*/ForEachChunk call - is enough to let
-    // ForEachChunk observe a cancellation request from CancelGenerateChart.
+    // CancellationToken through every Process* call - is enough to let
+    // LoadFileSpectra observe a cancellation request from CancelGenerateChart.
     private CancellationTokenSource? _generateCts;
     private CancellationToken _generateCt;
+
+    // Where the chart currently on screen got its averaged spectra from (issue #19):
+    // "Cache" (no raw IQ read at all), "Raw IQ" (everything recomputed) or
+    // "Cache + raw IQ" (e.g. a cached baseline against a capture seen for the first
+    // time). Set once a generation completes, from the hit/miss counts LoadFileSpectra
+    // keeps for that run.
+    [ObservableProperty]
+    private string chartSource = string.Empty;
+
+    private int _cacheHits;
+    private int _cacheMisses;
+
+    // Set only for the duration of RegenerateChartAsync - makes LoadFileSpectra ignore
+    // (and then overwrite) whatever is cached for the selected files.
+    private bool _forceRegenerate;
 
     public SpectrumViewModel SpectrumVm { get; private set; }
 
@@ -168,11 +248,11 @@ public partial class VisualiseViewModel : ObservableObject
     // binding its DataContext to this property.
     public MosaicViewModel MosaicVm { get; }
 
-    public VisualiseViewModel(FitsFileIo fits, IFftEngine fftEngine, StatusBarViewModel statusBar, MosaicViewModel mosaicVm)
+    public VisualiseViewModel(StatusBarViewModel statusBar, MosaicViewModel mosaicVm, SpectrumCacheService spectrumCache, CachedSpectrumLoader spectrumLoader)
     {
-        _fitsFileIo = fits;
-        _fftEngine = fftEngine;
         _statusBar = statusBar;
+        _spectrumCache = spectrumCache;
+        _spectrumLoader = spectrumLoader;
         MosaicVm = mosaicVm;
         // Keep Mosaic in sync with this view's despike/FFT-size/smoothing controls from the
         // start - the On...Changed partials below only fire on a later change, not on these
@@ -186,8 +266,8 @@ public partial class VisualiseViewModel : ObservableObject
     }
 
     // ---------------------------------------------------------
-    // Progress reporting - real, measured progress (chunks
-    // processed / total chunks), same pattern as Calibrator and
+    // Progress reporting - real, measured progress (frames
+    // processed / total frames), same pattern as Calibrator and
     // CaptureViewModel, not a time-based guess. Reported on this
     // view model's own GenerationProgress/GenerationStatus (see
     // fields above), not StatusBarViewModel's shared bar/text.
@@ -207,32 +287,6 @@ public partial class VisualiseViewModel : ObservableObject
     private void EndProgress()
     {
         GenerationProgress = 0;
-    }
-
-    /// <summary>
-    /// Iterates fixed-size chunks of raw IQ, invoking processChunk on each and reporting
-    /// real, measured progress (chunks processed / total chunks) as it goes. Checks
-    /// _generateCt each iteration so CancelGenerateChart can unwind the loop promptly
-    /// rather than only between whole-file phases.
-    /// </summary>
-    private void ForEachChunk(byte[] iq, int bytesPerChunk, Action<byte[]> processChunk)
-    {
-        int totalChunks = bytesPerChunk > 0 ? iq.Length / bytesPerChunk : 0;
-        int processedChunks = 0;
-
-        for (int offset = 0; offset + bytesPerChunk <= iq.Length; offset += bytesPerChunk)
-        {
-            _generateCt.ThrowIfCancellationRequested();
-
-            var chunk = new byte[bytesPerChunk];
-            Buffer.BlockCopy(iq, offset, chunk, 0, bytesPerChunk);
-
-            processChunk(chunk);
-
-            processedChunks++;
-            if (totalChunks > 0)
-                ReportProgress((double)processedChunks / totalChunks);
-        }
     }
 
     /// <summary>
@@ -282,24 +336,48 @@ public partial class VisualiseViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Reads a capture file plus any related "_{n}of{total}" sibling files found
-    /// alongside it (see ResolveRelatedCaptureFiles) and concatenates their raw IQ
-    /// into one buffer, reporting per-file read progress as it goes. Sets
-    /// CombinedFileCount so the UI shows how many files went into the result. The
-    /// actual read/validate/trim/concatenate work lives in FitsFileIo.ReadCombinedRawIq
-    /// (shared with MosaicViewModel's whole-folder flow) - this just resolves which
-    /// files belong together and bridges its progress callback to GenerationStatus.
+    /// The native-resolution accumulated spectrum (plus header values) for one file set,
+    /// from the cache when these exact files have been reduced before and from the raw IQ
+    /// otherwise - see CachedSpectrumLoader, shared with MosaicProcessor, for what is cached
+    /// and why no chart parameter is part of the key (issue #19). This wrapper only bridges
+    /// its progress callback to GenerationStatus/GenerationProgress, passes the running
+    /// generation's cancellation token and Regenerate flag, and counts hits/misses for
+    /// ChartSource. A cancellation unwinds before the caller updates SpectrumVm, so the
+    /// chart on screen keeps showing whatever was last successfully generated.
     /// </summary>
-    private (FitsFileMetaData meta, byte[] iq) ReadCombinedCaptureRawIq(string captureFilePath)
+    private SpectrumCacheEntry LoadFileSpectra(IReadOnlyList<string> files, bool skao, string label)
     {
-        var files = ResolveRelatedCaptureFiles(captureFilePath);
-        CombinedFileCount = files.Count;
+        var entry = _spectrumLoader.Load(
+            files, skao, _forceRegenerate, label,
+            (status, fraction) =>
+            {
+                GenerationStatus = status;
+                ReportProgress(fraction);
+            },
+            _generateCt,
+            out bool fromCache);
 
-        return _fitsFileIo.ReadCombinedRawIq(files, (status, fraction) =>
-        {
-            GenerationStatus = status;
-            ReportProgress(fraction);
-        });
+        if (fromCache)
+            _cacheHits++;
+        else
+            _cacheMisses++;
+
+        return entry;
+    }
+
+    private SpectrumCacheEntry LoadBaselineSpectra(bool skao = false) =>
+        LoadFileSpectra(new[] { BaselineFile! }, skao, "baseline");
+
+    /// <summary>
+    /// Capture counterpart of LoadBaselineSpectra - also pulls in any "_{n}of{total}"
+    /// sibling files (see ResolveRelatedCaptureFiles) and sets CombinedFileCount so the
+    /// UI shows how many files went into the result.
+    /// </summary>
+    private SpectrumCacheEntry LoadCaptureSpectra(bool skao = false)
+    {
+        var files = ResolveRelatedCaptureFiles(CaptureFile!);
+        CombinedFileCount = files.Count;
+        return LoadFileSpectra(files, skao, "capture");
     }
 
 
@@ -348,6 +426,8 @@ public partial class VisualiseViewModel : ObservableObject
         _generateCts = new CancellationTokenSource();
         _generateCt = _generateCts.Token;
         IsGenerating = true;
+        _cacheHits = 0;
+        _cacheMisses = 0;
 
         BeginProgress("Processing…");
 
@@ -382,10 +462,23 @@ public partial class VisualiseViewModel : ObservableObject
             }, _generateCt);
 
             GenerationStatus = "Completed";
+            ChartSource = _cacheMisses == 0 ? "Cache"
+                : _cacheHits == 0 ? "Raw IQ"
+                : "Cache + raw IQ";
         }
         catch (OperationCanceledException)
         {
             GenerationStatus = "Cancelled.";
+        }
+        catch (Exception ex)
+        {
+            // Anything a Process* method throws (e.g. ValidateBaselineCaptureCompatibility's
+            // sample-rate/FFT-size mismatch check) previously had nowhere to go - this method
+            // had no general catch, so it surfaced as an unhandled exception on the UI thread
+            // once Task.Run's await unwound, rather than a clear message telling the user why
+            // nothing was generated.
+            GenerationStatus = $"Failed: {ex.Message}";
+            MessageBox.Show(ex.Message, "Chart Generation Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -396,7 +489,32 @@ public partial class VisualiseViewModel : ObservableObject
         }
     }
 
-    // Cancels a running GenerateChartAsync. ForEachChunk's per-iteration
+    /// <summary>
+    /// Generate Chart, but ignoring whatever SpectrumCacheService holds for the selected
+    /// files - everything is re-read from the raw IQ and the cache entries overwritten.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanGenerateChart))]
+    private async Task RegenerateChartAsync()
+    {
+        _forceRegenerate = true;
+        try
+        {
+            await GenerateChartAsync();
+        }
+        finally
+        {
+            _forceRegenerate = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearChartCache()
+    {
+        int removed = _spectrumCache.Clear();
+        _statusBar.CaptureStatus = $"Cleared {removed} cached spectrum file(s).";
+    }
+
+    // Cancels a running GenerateChartAsync. CachedSpectrumLoader's per-frame
     // ThrowIfCancellationRequested() unwinds the current Process* method before it
     // updates SpectrumVm, so the chart on screen is left showing whatever was last
     // successfully generated rather than a half-updated one.
@@ -436,36 +554,22 @@ public partial class VisualiseViewModel : ObservableObject
         if (BaselineFile is null)
             return;
         CombinedFileCount = 1; // this view doesn't touch the capture file
-        var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        ScanFftSize = baselineMeta.FftSize;
-        FrequencyHz = baselineMeta.CentFreqHz;
-        SamplingHz = baselineMeta.SampFreqHz;
-        Gain = baselineMeta.GainDb;
+        var baseline = LoadBaselineSpectra();
+        ScanFftSize = baseline.FftSize;
+        FrequencyHz = baseline.CentFreqHz;
+        SamplingHz = baseline.SampFreqHz;
+        Gain = baseline.GainDb;
+        FrameCount = baseline.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
         if (TargetFftSize > ScanFftSize)
             TargetFftSize = ScanFftSize;
 
-        // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator. Always at the
-        // file's native resolution - Target FFT Size re-binning happens further down, on
-        // the averaged spectrum, via SpectrumBinner (see its remarks for why shrinking the
-        // raw IQ before the FFT - the old approach - was actually a bug, not a downscale).
-        var acc = new HiStreamingAccumulator(ScanFftSize);
-        int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
-
-        BeginProgress("Processing baseline…");
-        ForEachChunk(baselineIq, bytesPerChunk, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
-            acc.AddBaselineFrame(spectrum);
-        });
-
         // ComputeSkAoPower deliberately leaves the spectrum in raw FFT-bin order (DC at
         // index 0) - shift it into monotonic frequency order before display, the same
         // way HiStreamingPipeline.Process does for the combined baseline/capture views.
-        baselineSpectrum = HiStreamingPipeline.FftShift(acc.GetBaselineAverage());
+        baselineSpectrum = HiStreamingPipeline.FftShift(baseline.AveragedPower!);
         if (TargetFftSize < ScanFftSize)
             baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
         rawBaselineSpectrum = baselineSpectrum;
@@ -488,34 +592,20 @@ public partial class VisualiseViewModel : ObservableObject
     {
         if (CaptureFile is null)
             return;
-        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
-        ScanFftSize = captureMeta.FftSize;
-        FrequencyHz = captureMeta.CentFreqHz;
-        SamplingHz = captureMeta.SampFreqHz;
-        Gain = captureMeta.GainDb;
+        var capture = LoadCaptureSpectra();
+        ScanFftSize = capture.FftSize;
+        FrequencyHz = capture.CentFreqHz;
+        SamplingHz = capture.SampFreqHz;
+        Gain = capture.GainDb;
+        FrameCount = capture.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
         if (TargetFftSize > ScanFftSize)
             TargetFftSize = ScanFftSize;
 
-        // Average the same way HiStreamingPipeline/Calibrator do: SKAO-normalized power
-        // per fftSize frame, arithmetic mean via HiStreamingAccumulator. Always at the
-        // file's native resolution - Target FFT Size re-binning happens further down, on
-        // the averaged spectrum, via SpectrumBinner (see its remarks for why shrinking the
-        // raw IQ before the FFT - the old approach - was actually a bug, not a downscale).
-        var acc = new HiStreamingAccumulator(ScanFftSize);
-        int bytesPerChunk = ScanFftSize * 2; // adjust if your IQ format differs
-
-        BeginProgress("Processing capture…");
-        ForEachChunk(captureIq, bytesPerChunk, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
-            acc.AddCaptureFrame(spectrum);
-        });
-
         // Same fix as ProcessBaseline: shift out of raw FFT-bin order before display.
-        captureSpectrum = HiStreamingPipeline.FftShift(acc.GetCaptureAverage());
+        captureSpectrum = HiStreamingPipeline.FftShift(capture.AveragedPower!);
         if (TargetFftSize < ScanFftSize)
             captureSpectrum = SpectrumBinner.BinAverage(captureSpectrum, TargetFftSize);
         rawCaptureSpectrum = captureSpectrum;
@@ -590,59 +680,59 @@ public partial class VisualiseViewModel : ObservableObject
         _statusBar.CaptureStatus = $"Exported despike debug CSV: {path}";
     }
 
+    /// <summary>
+    /// Baseline and capture must share the same sample rate and FFT size for any of
+    /// the combined pipelines (ProcessHiCore/ProcessSkaoTtrt) to mean anything - a
+    /// mismatch here isn't recoverable, so this runs immediately after the FITS
+    /// metadata (or its cached copy) is available, before any reduction starts. Throws (naming the
+    /// actual mismatched values, not just "do not match") rather than returning a
+    /// bool, so a caller can't accidentally continue past a failure - GenerateChartAsync's
+    /// own try/catch turns this into a MessageBox telling the user exactly why, instead
+    /// of an unhandled exception on a background thread.
+    /// </summary>
+    private static void ValidateBaselineCaptureCompatibility(SpectrumCacheEntry baselineMeta, SpectrumCacheEntry captureMeta)
+    {
+        if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
+            throw new InvalidOperationException(
+                $"Baseline and capture sample rates do not match ({baselineMeta.SampFreqHz:N0} Hz vs " +
+                $"{captureMeta.SampFreqHz:N0} Hz) - they must be recorded at the same sample rate to be combined.");
+
+        if (baselineMeta.FftSize != captureMeta.FftSize)
+            throw new InvalidOperationException(
+                $"Baseline and capture FFT sizes do not match ({baselineMeta.FftSize} vs {captureMeta.FftSize}) - " +
+                "they must be recorded at the same FFT size to be combined.");
+    }
+
     private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)  ProcessHiCore()
     {
         if (BaselineFile is null || CaptureFile is null)
             return (Array.Empty<double>(), Array.Empty<double>(), new HiStreamingPipeline());
 
-        // --- 1. Load FITS IQ data ---
-        var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
+        // --- 1. Native-resolution averaged spectra: from cache, or from the raw IQ ---
+        var baseline = LoadBaselineSpectra();
+        var capture = LoadCaptureSpectra();
 
         // --- 2. Validate metadata ---
-        if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
-            throw new InvalidOperationException("Sample rates of baseline and capture files do not match.");
+        ValidateBaselineCaptureCompatibility(baseline, capture);
 
-        if (baselineMeta.FftSize != captureMeta.FftSize)
-            throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
-
-        ScanFftSize = baselineMeta.FftSize;
-        FrequencyHz = baselineMeta.CentFreqHz;
-        SamplingHz = baselineMeta.SampFreqHz;
-        Gain = baselineMeta.GainDb;
+        ScanFftSize = baseline.FftSize;
+        FrequencyHz = baseline.CentFreqHz;
+        SamplingHz = baseline.SampFreqHz;
+        Gain = baseline.GainDb;
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
         if (TargetFftSize > ScanFftSize)
             TargetFftSize = ScanFftSize;
 
-        int bytesPerFrame = ScanFftSize * 2;
+        FrameCount = $"{baseline.AveragedFrames}/{capture.AveragedFrames}";
 
-        // --- 3. Create streaming accumulator --- always at the file's native resolution;
-        // Target FFT Size re-binning happens after averaging (step 6, via SpectrumBinner),
-        // not by shrinking the raw IQ beforehand - see SpectrumBinner's remarks for why
-        // that used to be a real bug (aliasing), not just a coarser downscale.
-        var acc = new HiStreamingAccumulator(ScanFftSize);
-
-        // --- 4. Accumulate baseline frames ---
-        BeginProgress("Processing baseline…");
-        ForEachChunk(baselineIq, bytesPerFrame, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
-            acc.AddBaselineFrame(spectrum);
-        });
-
-        // --- 5. Accumulate capture frames ---
-        BeginProgress("Processing capture…");
-        ForEachChunk(captureIq, bytesPerFrame, chunk =>
-        {
-            var spectrum = _fftEngine.ComputeSkAoPower(chunk, ScanFftSize);
-            acc.AddCaptureFrame(spectrum);
-        });
-
-        FrameCount = $"{acc.BaselineFrames}/{acc.CaptureFrames}";
-        // --- 6. Get averaged spectra, then re-bin down to Target FFT Size if requested ---
-        var (baselineSpectrum, captureSpectrum) = acc.GetAveragedSpectra();
+        // --- 3. Re-bin down to Target FFT Size if requested - after averaging, via
+        // SpectrumBinner, not by shrinking the raw IQ beforehand - see SpectrumBinner's
+        // remarks for why that used to be a real bug (aliasing), not just a coarser
+        // downscale.
+        double[] baselineSpectrum = baseline.AveragedPower!;
+        double[] captureSpectrum = capture.AveragedPower!;
         if (TargetFftSize < ScanFftSize)
         {
             baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
@@ -653,7 +743,7 @@ public partial class VisualiseViewModel : ObservableObject
         // baseline - even though it now has its own real, meaningful cold-sky pointing, it's
         // a calibration reference position, not the target actually being observed, so LSR
         // correction is about the capture's target, not the baseline's).
-        double lsrCorrectionKmPerSec = captureMeta.ComputeLsrCorrectionKmPerSec();
+        double lsrCorrectionKmPerSec = capture.LsrCorrectionKmPerSec;
         LsrInfo = lsrCorrectionKmPerSec != 0.0
             ? $"{lsrCorrectionKmPerSec:+0.00;-0.00} km/s"
             : "n/a (no pointing/site recorded)";
@@ -714,55 +804,40 @@ public partial class VisualiseViewModel : ObservableObject
         if (BaselineFile is null || CaptureFile is null)
             return;
 
-        // --- Load FITS IQ ---
-        var (baselineMeta, baselineIq) = _fitsFileIo.ReadRawIq(BaselineFile);
-        var (captureMeta, captureIq) = ReadCombinedCaptureRawIq(CaptureFile);
+        // --- Per-file accumulated spectra: from cache, or from the raw IQ ---
+        // The raw IQ is used at native resolution, unmodified.
+        // SkaoHiObservation.AccumulateBinnedPower FFTs every whole native-size frame it
+        // finds in each file (unwindowed, matching the reference exactly), bins each
+        // frame's power spectrum down to SkaoConstants.NumIntegrationBins channels, and
+        // sums that across every frame - the same "one full-resolution FFT, then sum
+        // groups of adjacent bins, then sum across reads" shape
+        // record_data.record_power_spectrum uses, just against however many native
+        // ScanFftSize-length frames a RASTA capture actually contains rather than a fixed
+        // count of 2**21-sample reads (RASTA doesn't capture in that read/reshape shape).
+        // See SkaoHiObservation's own remarks for why an earlier version of this (many
+        // small literal 256-point FFTs, averaged) didn't match the reference at all.
+        var baseline = LoadBaselineSpectra(skao: true);
+        var capture = LoadCaptureSpectra(skao: true);
 
-        if (baselineMeta.SampFreqHz != captureMeta.SampFreqHz)
-            throw new InvalidOperationException("Sample rates of baseline and capture files do not match.");
+        ValidateBaselineCaptureCompatibility(baseline, capture);
 
-        if (baselineMeta.FftSize != captureMeta.FftSize)
-            throw new InvalidOperationException("FFT sizes of baseline and capture files do not match.");
+        ScanFftSize = baseline.FftSize;
+        TargetFftSize = SkaoConstants.NumIntegrationBins;   // the reference's own fixed output bin count
+        FrequencyHz = baseline.CentFreqHz;
+        SamplingHz = baseline.SampFreqHz;
+        Gain = baseline.GainDb;
 
-        ScanFftSize = baselineMeta.FftSize;
-        TargetFftSize = 256;   // SKAO pipeline expects 256 complex samples
-        FrequencyHz = baselineMeta.CentFreqHz;
-        SamplingHz = baselineMeta.SampFreqHz;
-        Gain = baselineMeta.GainDb;
-        int targetFrames  = 16;
-
-        int bytesPerFrame = ScanFftSize * 2;   // IQ: 2 bytes per complex sample
-        int totalFrames = baselineIq.Length / bytesPerFrame;
-
-        if (totalFrames < SkaoConstants.NumIntegrations)
-            throw new InvalidOperationException(
-                $"Baseline FITS does not contain enough frames. " +
-                $"Need {SkaoConstants.NumIntegrations}, found {totalFrames}.");
-
-        // No per-chunk loop is exposed here (SkaoHiObservation does its own internal
-        // integration over a small, fixed-size slice), so just bracket the whole thing.
-        BeginProgress("Processing SKAO TTRT…");
-
-        // baselineIq/captureIq are passed through at native resolution, unmodified -
-        // SkaoHiObservation.ProcessIq slices its own literal 256-raw-sample chunks
-        // directly from them (see its own loop), which is what the SKAO reference
-        // algorithm actually does against a native-rate capture. An earlier version of
-        // this method pre-shrank the raw IQ to 256 samples/frame first (an artifact of
-        // trying to route Target FFT Size through every mode uniformly) - that doesn't
-        // match the reference at all, and time-domain shrinking has the same aliasing
-        // problem SpectrumBinner's own remarks describe for the other Spectrum Modes.
-        FrameCount = $"{targetFrames}/{targetFrames}";
-
-        // --- Run SKAO pipeline ---
         var skao = new SkaoHiObservation();
-        skao.ProcessIq(
-            baselineIq,
-            captureIq,
-            256,          // SKAO FFT size
+        skao.ProcessAccumulated(
+            baseline.SkaoBinnedPower!,
+            capture.SkaoBinnedPower!,
+            baseline.SkaoFrames,
+            capture.SkaoFrames,
             SamplingHz,
             FrequencyHz
         );
 
+        FrameCount = $"{skao.BaselineFrameCount}/{skao.CaptureFrameCount}";
         ReportProgress(1.0);
 
         var hi = skao.Pipeline;
@@ -770,7 +845,7 @@ public partial class VisualiseViewModel : ObservableObject
         // --- Update SpectrumViewModel ---
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(
-            SkaoConstants.NumIntegrationBins,   // 256
+            hi.HiSpectrum.Length,   // trimmed to 206 channels (256 - 2*ChCut) - see SkaoHiPipelineProcessor.Process
             FrequencyHz,
             SamplingHz
         );
