@@ -7,6 +7,7 @@ using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
+using RASTA.Infrastructure.Logging;
 using RASTA.Infrastructure.Services;
 using RASTA.Processing.HiPipeline;
 using RASTA.Processing.Planning;
@@ -23,8 +24,8 @@ public partial class CaptureViewModel : ObservableObject
     private readonly ITelescopeMount _mount;
     private readonly TelescopeState _mountState;
     private readonly SdrDeviceService _sdrDeviceService;
+    private readonly RastaLogger _logger;
     private readonly SdrState _sdrState;
-    private readonly ISdrDevice? _device;
     private readonly SettingsViewModel _settings;
     private readonly CalibrationService _calibrationService;
     private readonly SweepPlanner _planner;
@@ -148,8 +149,10 @@ public partial class CaptureViewModel : ObservableObject
         FitsFileIo fitsFileWriter,
         StatusBarViewModel statusBarViewModel,
         IFftEngine fftEngine,
-        IPlanRepository planRepository)
+        IPlanRepository planRepository,
+        RastaLogger logger)
     {
+        _logger = logger;
         _settings = settingsViewModel;
         _optionsService = userOptionsService;
         _mount = mount;
@@ -162,19 +165,50 @@ public partial class CaptureViewModel : ObservableObject
         _sdrState = sdrState;
         _fftEngine = fftEngine;
         _planRepository = planRepository;
-        _device = sdrDeviceService.GetDevice();
-
         SpectrumVm = new SpectrumViewModel(4096, 1420_405_800, 2.4e6); // default values; will be updated when calibration is loaded
 
         _mountState.PropertyChanged += MountState_PropertyChanged;
         _sdrState.PropertyChanged += SdrState_PropertyChanged;
-        if (_device is ISdrDevice sdrDevice)
-        {
-            sdrDevice.RawIqChunkAvailable += OnChunk;
-        }
+        _ = _device; // subscribe OnChunk to whatever device is open right now
 
         LoadAvailablePlans();
     }
+
+    private ISdrDevice? _subscribedDevice;
+
+    /// <summary>
+    /// The SDR device SdrDeviceService currently has open, resolved fresh on every read.
+    /// This used to be captured once in the constructor - but this view model lives for the
+    /// whole app session while SdrDeviceService disposes/recreates its persistent device on
+    /// hot-plug events, so after any recreate the old reference pointed at a disposed device
+    /// that would never deliver samples again. Re-points the OnChunk subscription whenever
+    /// the underlying instance changes. Capture paths pin it into a local at their start so
+    /// a mid-capture recreate can't swap devices between Start/StopStreaming.
+    /// </summary>
+    private ISdrDevice? _device
+    {
+        get
+        {
+            var current = _sdrDeviceService.GetDevice();
+            if (!ReferenceEquals(current, _subscribedDevice))
+            {
+                if (_subscribedDevice != null)
+                    _subscribedDevice.RawIqChunkAvailable -= OnChunk;
+                if (current != null)
+                    current.RawIqChunkAvailable += OnChunk;
+                _subscribedDevice = current;
+            }
+            return current;
+        }
+    }
+
+    /// <summary>
+    /// How long CaptureRawIqFromStreamAsync waits without receiving a single chunk before
+    /// giving up. Without this, a device that stopped delivering samples (disposed by a
+    /// hot-plug re-enumeration, USB reset, unplug) left the sweep spinning forever with the
+    /// progress bar frozen and only Cancel to get out.
+    /// </summary>
+    private static readonly TimeSpan StreamStallTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Populates AvailablePlans the same way PlanViewModel.LoadSavedPlans does -
@@ -349,6 +383,7 @@ public partial class CaptureViewModel : ObservableObject
         ulong bytesNeeded = (ulong)sampleCount * 2UL;
         var output = new byte[bytesNeeded];
         ulong writePos = 0;
+        var lastChunkUtc = DateTime.UtcNow;
 
         while (writePos < bytesNeeded)
         {
@@ -356,6 +391,7 @@ public partial class CaptureViewModel : ObservableObject
 
             if (_captureQueue.TryDequeue(out var chunk))
             {
+                lastChunkUtc = DateTime.UtcNow;
                 ulong toCopy = Math.Min((ulong)chunk.Length, bytesNeeded - writePos);
                 Array.Copy(chunk, 0, output, (int)writePos, (int)toCopy);
                 writePos += toCopy;
@@ -365,11 +401,87 @@ public partial class CaptureViewModel : ObservableObject
             }
             else
             {
+                if (DateTime.UtcNow - lastChunkUtc > StreamStallTimeout)
+                    throw new SdrStreamStalledException(StreamStallTimeout);
                 await Task.Delay(1, ct);
             }
         }
 
         return output;
+    }
+
+    /// <summary>How many times one file's capture is retried after an SDR stall before giving up.</summary>
+    private const int MaxStallRetries = 2;
+
+    /// <summary>
+    /// Streams one file's worth of raw IQ from <paramref name="device"/>, retrying the same
+    /// file (same pointing - the mount isn't touched) up to MaxStallRetries times if the SDR
+    /// stalls. Each retry reopens the device via SdrDeviceService.ReopenDeviceAsync and
+    /// discards whatever partial data the stalled attempt had collected, so a saved file is
+    /// always one continuous, uninterrupted stream. Returns the device actually used, since a
+    /// retry replaces it - callers must use that one from then on (StopStreaming etc.).
+    /// </summary>
+    private async Task<(byte[] RawIq, ISdrDevice Device)> CaptureFileWithStallRetryAsync(
+        ISdrDevice device, double frequencyHz, double sampleRateHz, double gainDb,
+        uint sampleCount, string statusText, CancellationToken ct)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            _statusBar.CaptureStatus = attempt == 0
+                ? statusText
+                : $"{statusText} (retry {attempt}/{MaxStallRetries})";
+
+            ClearChunkQueues();
+            await device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
+
+            _chunkWorkerCts = new CancellationTokenSource();
+            var workerToken = _chunkWorkerCts.Token;
+            _ = Task.Run(() => ChunkWorker(workerToken));
+
+            BeginProgress();
+            bool stalled = false;
+            try
+            {
+                var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct, ReportProgress);
+                return (rawIq, device);
+            }
+            catch (SdrStreamStalledException)
+            {
+                // Plain catch + conditional rethrow rather than an exception filter - see the
+                // slew-timeout catch in CaptureSweepAsync for why.
+                if (attempt >= MaxStallRetries)
+                    throw;
+                stalled = true;
+            }
+            finally
+            {
+                _chunkWorkerCts?.Cancel();
+                _chunkWorkerCts = null;
+                await device.StopStreamingAsync();
+                EndProgress();
+            }
+
+            if (stalled)
+            {
+                _logger.Warn($"SDR stalled during \"{statusText}\" - reopening device and retrying ({attempt + 1}/{MaxStallRetries}).");
+                _statusBar.CaptureStatus = $"{statusText}: SDR stalled, reopening device...";
+
+                ct.ThrowIfCancellationRequested();
+                if (!await _sdrDeviceService.ReopenDeviceAsync() || _device is not { } reopened)
+                    throw new SdrStreamStalledException(StreamStallTimeout, "The SDR could not be reopened.");
+
+                device = reopened;
+            }
+        }
+    }
+
+    // Chunks still queued from a previous file (enqueued after its sample count was met,
+    // or left behind by a cancel/failure) would otherwise be prepended to the next file's
+    // data - i.e. samples from the previous pointing. Only call while not streaming.
+    private void ClearChunkQueues()
+    {
+        _captureQueue.Clear();
+        _spectrumQueue.Clear();
     }
 
 
@@ -390,7 +502,8 @@ public partial class CaptureViewModel : ObservableObject
             return;
         }
 
-        if (_device == null)
+        var device = _device;
+        if (device == null)
         {
             MessageBox.Show("Device is not connected.");
             return;
@@ -570,26 +683,13 @@ public partial class CaptureViewModel : ObservableObject
                     // -----------------------------
                     // Stage 2 — Capturing
                     // -----------------------------
-                    _statusBar.CaptureStatus = $"Capturing pos {targetIndex + 1} file {i + 1}";
                     var captureStartTime = DateTime.Now;
 
-                    await _device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
-
-                    _chunkWorkerCts = new CancellationTokenSource();
-                    _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
-
-
-                    BeginProgress();
-
-                    var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct, ReportProgress);
-
-                    // -----------------------------
-                    // Stage 2b — Stop streaming for this file
-                    // -----------------------------
-                    _chunkWorkerCts.Cancel();
-                    _chunkWorkerCts = null;
-                    await _device.StopStreamingAsync();
-                    EndProgress();
+                    // Streams, stops streaming, and retries this same file on an SDR stall.
+                    byte[] rawIq;
+                    (rawIq, device) = await CaptureFileWithStallRetryAsync(
+                        device, frequencyHz, sampleRateHz, gainDb, sampleCount,
+                        $"Capturing pos {targetIndex + 1} file {i + 1}", ct);
 
                     System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: captured {rawIq.Length} bytes in {(DateTime.Now - captureStartTime).TotalSeconds:F2} seconds");
 
@@ -657,7 +757,7 @@ public partial class CaptureViewModel : ObservableObject
         {
             _chunkWorkerCts?.Cancel();
             _chunkWorkerCts = null;
-            await _device.StopStreamingAsync();
+            await device.StopStreamingAsync();
 
             // Best-effort only: if the mount itself is what triggered this cancellation
             // (see CancelAnyRunningCapture / TelescopeService.ConnectionLost), these live
@@ -754,7 +854,8 @@ public partial class CaptureViewModel : ObservableObject
             return;
         }
 
-        if (_device == null)
+        var device = _device;
+        if (device == null)
         {
             MessageBox.Show("Device is not connected.");
             return;
@@ -826,20 +927,10 @@ public partial class CaptureViewModel : ObservableObject
             // -----------------------------
             // Capturing
             // -----------------------------
-            _statusBar.CaptureStatus = "Quick capture: capturing";
-
-            await _device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
-
-            _chunkWorkerCts = new CancellationTokenSource();
-            _ = Task.Run(() => ChunkWorker(_chunkWorkerCts.Token));
-
-            BeginProgress();
-            var rawIq = await CaptureRawIqFromStreamAsync(sampleCount, ct, ReportProgress);
-
-            _chunkWorkerCts.Cancel();
-            _chunkWorkerCts = null;
-            await _device.StopStreamingAsync();
-            EndProgress();
+            byte[] rawIq;
+            (rawIq, device) = await CaptureFileWithStallRetryAsync(
+                device, frequencyHz, sampleRateHz, gainDb, sampleCount,
+                "Quick capture: capturing", ct);
 
             string fullPath = FitsPathBuilder.BuildSweepFilePath(_optionsService.Options.CaptureFolder, "quick", startTime, frequencyHz, currentTarget.ToString(), 1, 1);
 
@@ -887,7 +978,7 @@ public partial class CaptureViewModel : ObservableObject
         {
             _chunkWorkerCts?.Cancel();
             _chunkWorkerCts = null;
-            await _device.StopStreamingAsync();
+            await device.StopStreamingAsync();
             _quickCaptureCts?.Dispose();
             _quickCaptureCts = null;
             IsBusy = false;
@@ -1043,4 +1134,20 @@ public partial class CaptureViewModel : ObservableObject
     // -------------------------------------------------------
 
 
+}
+
+/// <summary>
+/// The SDR stopped delivering samples mid-capture (reset, unplug, or a device disposed by a
+/// hot-plug re-enumeration). Thrown by CaptureViewModel.CaptureRawIqFromStreamAsync's
+/// stall watchdog and retried by CaptureFileWithStallRetryAsync before surfacing.
+/// </summary>
+public sealed class SdrStreamStalledException : TimeoutException
+{
+    public SdrStreamStalledException(TimeSpan stallTimeout, string? detail = null)
+        : base(
+            $"The SDR stopped delivering samples ({stallTimeout.TotalSeconds:F0} s with no data) " +
+            $"and retrying didn't recover it.{(detail is null ? "" : " " + detail)} " +
+            "The capture in progress was not saved; files from already-completed points are kept.")
+    {
+    }
 }

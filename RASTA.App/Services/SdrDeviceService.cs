@@ -18,7 +18,26 @@ public class SdrDeviceService : IDisposable
         _logger = logger;
     }
 
+    // Serializes enumeration. UsbWatcherService's debounce timer and explicit callers can
+    // otherwise run two enumerations concurrently (seen in the log as interleaved
+    // "Enumerating"/"removed"/"created" lines), with one disposing the device the other
+    // just opened.
+    private readonly SemaphoreSlim _enumerateLock = new(1, 1);
+
     public async Task EnumerateDevicesAsync()
+    {
+        await _enumerateLock.WaitAsync();
+        try
+        {
+            await EnumerateDevicesCoreAsync();
+        }
+        finally
+        {
+            _enumerateLock.Release();
+        }
+    }
+
+    private async Task EnumerateDevicesCoreAsync()
     {
         _logger.Info("Enumerating SDR devices.");
         await Task.Run(async () =>
@@ -46,6 +65,19 @@ public class SdrDeviceService : IDisposable
 
             if (!refreshSucceeded)
             {
+                // RefreshDevices throwing is NOT evidence the SDR was unplugged - it
+                // reliably fails while the open device is busy streaming (a 2026-11-07
+                // Region sweep died this way: an unrelated USB event mid-capture, refresh
+                // failed, and the live device was disposed out from under the sweep). A
+                // genuine unplug shows up as a successful refresh with the device absent,
+                // handled below. If the device really has gone, the capture paths' own
+                // stall watchdog (CaptureViewModel.StreamStallTimeout) reports it.
+                if (_device != null)
+                {
+                    _logger.Warn("SDR enumeration failed while a device is open (likely busy streaming) - keeping the existing device.");
+                    return;
+                }
+
                 HandleDeviceRemoved();
                 _logger.Warn("SDR enumeration failed: driver not ready after retries.");
                 return;
@@ -103,6 +135,76 @@ public class SdrDeviceService : IDisposable
 
             CreatePersistentDevice(_state.SelectedDevice.Index);
         });
+    }
+
+    /// <summary>
+    /// Forcibly closes and reopens the persistent SDR device - used by CaptureViewModel's
+    /// stall-retry path when an open device has stopped delivering samples. Unlike
+    /// EnumerateDevicesAsync, this deliberately tears down the existing device first (it's
+    /// known bad at this point, and releasing its USB claim is what lets RefreshDevices see
+    /// it again). Prefers the previously selected device by serial, falling back to the
+    /// first one found. Returns true if a working device is open afterwards.
+    /// </summary>
+    public async Task<bool> ReopenDeviceAsync()
+    {
+        await _enumerateLock.WaitAsync();
+        try
+        {
+            return await Task.Run(async () =>
+            {
+                _logger.Warn("Reopening SDR device after a streaming stall.");
+                string? previousSerial = _state.SelectedDevice?.Serial;
+
+                DisposeDevice();
+
+                var manager = RtlSdrDeviceManager.Instance;
+                bool refreshSucceeded = false;
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    try
+                    {
+                        manager.RefreshDevices();
+                        refreshSucceeded = true;
+                        break;
+                    }
+                    catch
+                    {
+                        await Task.Delay(500);
+                    }
+                }
+
+                if (!refreshSucceeded || manager.Devices.Count == 0)
+                {
+                    HandleDeviceRemoved();
+                    _logger.Warn("SDR reopen failed: device not found.");
+                    return false;
+                }
+
+                var list = manager.Devices
+                    .Select(kv => new SdrDeviceDescriptor
+                    {
+                        Index = kv.Key,
+                        Manufacturer = kv.Value.Manufacturer,
+                        Product = kv.Value.ProductType,
+                        Serial = kv.Value.Serial
+                    })
+                    .ToList();
+
+                var chosen = list.FirstOrDefault(d => !string.IsNullOrEmpty(previousSerial) && d.Serial == previousSerial)
+                             ?? list.First();
+
+                _state.Devices = list;
+                _state.SelectedDevice = chosen;
+                _state.IsConnected = true;
+
+                CreatePersistentDevice(chosen.Index);
+                return _device != null;
+            });
+        }
+        finally
+        {
+            _enumerateLock.Release();
+        }
     }
 
     private void CreatePersistentDevice(uint deviceIndex)
