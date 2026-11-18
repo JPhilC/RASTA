@@ -34,12 +34,11 @@
   </Project>
   <Project Path="RASTA.Simulators/RASTA.Simulators.csproj">
     <Platform Solution="*|x64" Project="x64" />
-    <Build Solution="*|x64" Project="false" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />|x64" Project="false" />
     <Build Solution="Debug|Any CPU" Project="false" />
   </Project>
   <Project Path="RASTA.Tests/RASTA.Tests.csproj">
     <Platform Solution="*|x64" Project="x64" />
-    <Build Solution="*|x64" Project="false" />
-    <Build Solution="Debug|Any CPU" Project="false" />
+    <Platform Solution="Debug|Any CPU" Project="x64" />
   </Project>
 </Solution>

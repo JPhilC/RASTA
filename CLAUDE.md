@@ -27,13 +27,25 @@ dotnet run --project RASTA.App/RASTA.App.csproj   # run the app (Windows only; n
   `RASTA.Infrastructure` ships native `librtlsdr.dll` / `libusb-1.0.dll` / `libwinpthread-1.dll`
   alongside itself, and those are x64. Building `AnyCPU` can produce a binary that fails to load the
   SDR driver at runtime.
-- **There is no automated test suite yet.** `RASTA.Tests` and `RASTA.Simulators` are both placeholder
-  projects (a single unused `Class1.cs` each, no test framework package referenced), and both are
-  explicitly excluded from the default build in `RASTA.slnx`
-  (`<Build Solution="*|x64" Project="false" />` / `Debug|Any CPU` likewise). Don't invent
-  `dotnet test` instructions or assume NUnit is available — the README's mention of "NUnit tests" is
-  aspirational, not current state. If you add real tests, you'll need to wire up the test framework
-  and re-enable the project's `Build` flag in `RASTA.slnx` yourself.
+- **`RASTA.Tests` is a real NUnit project** (built as part of `RASTA.slnx`), covering the pure numeric
+  code in `RASTA.Core`/`RASTA.Processing` only — no UI or hardware tests:
+
+  ```
+  dotnet test RASTA.Tests/RASTA.Tests.csproj                              # run everything
+  dotnet test RASTA.Tests/RASTA.Tests.csproj --filter "Name~Despike"      # run a subset
+  ```
+
+  `RASTA.Tests/Synthetic/SyntheticSpectrum.cs` builds baseline/capture power spectra with a known
+  bandpass, noise level, DC spike and Gaussian emission lines (in the raw FFT-bin order
+  `HiStreamingPipeline.Process` expects) — use it to test any pipeline change against a known answer.
+  `ReferenceData/ReferenceSnapshotTests.cs` is not a pass/fail test: when `RASTA_SNAPSHOT_LABEL` is set
+  it reduces a real capture session through `MosaicProcessor` and writes
+  `RASTA.Tests/ReferenceSnapshots/{label}.csv` (per-position summary) and `{label}_spectra.csv`, for
+  diffing real-data results before and after a pipeline change; it's skipped otherwise. The session
+  folder defaults to `D:\Raw\RASTA\Captures\1420.7000MHz\2026-11-08` (`RASTA_REFERENCE_DATA`
+  overrides it) and it uses the app's own spectrum cache, so an uncached session takes minutes.
+  `RASTA.Simulators` is still a placeholder (a single unused `Class1.cs`), excluded from the default
+  build in `RASTA.slnx` (`<Build Solution="*|x64" Project="false" />`).
 - No `.editorconfig`, linter, or formatter is configured in the repo.
 - The app needs a Windows desktop session to run (WPF) and talks to real or absent hardware — an
   RTL-SDR device (must be plugged in before the Plan view becomes usable) and an ASCOM Alpaca Remote
@@ -1391,4 +1403,4 @@ already built.
   real dependency, `RASTA.Processing/Spectral/SpectrumMath.cs`, was removed with it (fully superseded
   by `HiStreamingPipeline`'s proper baseline division/continuum fit and `RASTA.Processing/Dsp/
   SavitzkyGolay.cs`).
-- `RASTA.Simulators` and `RASTA.Tests` are stub projects only (see Commands section above).
+- `RASTA.Simulators` is a stub project only (see Commands section above).

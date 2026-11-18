@@ -116,7 +116,7 @@ velocity correction — or switch to the Mosaic tab to turn a whole session fold
 - **RASTA.Processing** — the HI reduction pipeline, calibration (including cold-sky site
   selection), sweep planning, and the Mosaic sky-map's gridding/visualisation-data builders
 - **RASTA.App** — the WPF MVVM application
-- **RASTA.Tests** — placeholder project only; no tests yet, excluded from the default build
+- **RASTA.Tests** — NUnit tests for the numeric code in RASTA.Core and RASTA.Processing (`dotnet test RASTA.Tests/RASTA.Tests.csproj`)
 - **RASTA.Simulators** — placeholder project only; no simulated hardware yet, excluded from the default build
 - **RASTA.Setup / RASTA.Bundle** — the WiX-based MSI installer and Burn bootstrapper (chains in
   the .NET 10 Desktop Runtime) used to build a distributable installer
@@ -168,7 +168,7 @@ These are hopes, not promises:
 - Automated multi-target calibration sequences
 - Multi-night drift-scan accumulation (partial support exists in the Mosaic view's full-sky grid,
   which is designed to fill in across many sessions over time)
-- A real automated test suite and hardware simulators (currently both stub projects)
+- Broader automated test coverage, and hardware simulators (still a stub project)
 - Plugin system for custom processing modules
 
 ---
