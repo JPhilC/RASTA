@@ -41,7 +41,7 @@ Tracking issue: #31. Each phase has its own GitHub issue, shown in the table.
 | 0 | Verification groundwork | done 2026-11-18 |
 | 1 | LSR correction fixes (#21) | not started |
 | 2 | Overlapped frame averaging (#22) | not started |
-| 3 | Frame and bin rejection before averaging (#23) | not started |
+| 3 | Frame and bin rejection before averaging (#23) | items 1–2 done 2026-11-20; frame rejection and spectral kurtosis not started |
 | 4 | Continuum fit and gain-independent line scale (#24) | not started |
 | 5 | Kelvin calibration against the LAB survey (#25) | not started |
 | 6 | Moment maps for the mosaic (#26) | not started |
@@ -59,6 +59,24 @@ Tracking issue: #31. Each phase has its own GitHub issue, shown in the table.
 | #20 Batch charts and animation | Independent of the pipeline, but its per-folder spectrum stack is the same data Phase 8's longitude–velocity diagram needs. Build the stack once and share it. |
 | #18 Capture sky-map window, #3 Calibration/plan mismatch warning | Unrelated to signal processing. |
 
+### External reference: H1-HUNTER SDR (reviewed 2026-11-23)
+
+H1-HUNTER SDR (Jarkko Suominen, Python, GPL v3) does a similar job to RASTA with an RTL-SDR.
+Phil's fork is cloned at `C:\Source\repos\H1-HUNTER-SDR`. Its processing code and methods document
+were read on 2026-11-23 and compared with this plan; nothing from it was run. Phases below point
+at it where it has a worked implementation ("H1-HUNTER:" notes), and items it has that this plan
+lacked are under "Candidate additions from the H1-HUNTER review" near the end.
+
+- Processing lives in `h1h/physics.py` (spectra, RFI, calibration model, LSR), `h1h/receiver.py`
+  (frame flagging, spectral kurtosis, simulator) and `h1h/maps.py` (velocity cube, moment maps,
+  longitude–velocity, rotation curve, top view).
+- `docs/methods/build_methods.py` is the source of its methods PDF and states every formula,
+  threshold and default in one place. Read that before the code.
+- Its figures were measured on a different receiver chain (0.7–0.9 m dish, default 512-point FFT).
+  Treat thresholds as starting points and confirm them on RASTA data.
+- Licence: GPL v3 can be combined into RASTA's AGPL v3 with attribution. Reimplementing from the
+  methods document avoids the question; say which was done in the phase's outcome notes.
+
 ### Decisions needed from Phil
 
 1. ~~Phase 0: enable a real test project?~~ Decided: yes. `RASTA.Tests` is an NUnit project.
@@ -70,6 +88,11 @@ Tracking issue: #31. Each phase has its own GitHub issue, shown in the table.
    scale outright, or stay as a selectable mode?
 4. **Phase 10:** is frequency switching worth the capture-side changes, given the 8 November
    finding that the cold-sky baseline was contaminated by the pointing-dependent spur comb?
+5. **Phase 5:** calibrate to Kelvin by hot/cold (Y-factor) measurement, by fitting the LAB survey,
+   or both? See the hot/cold item under "Candidate additions from the H1-HUNTER review". Settle
+   this before starting Phase 5.
+6. **Candidate additions (#32–#36):** issues exist; in what order, relative to the numbered
+   phases, should they be done?
 
 ---
 
@@ -116,8 +139,10 @@ channel is about 0.12 km/s wide (586 Hz at 2.4 Msps / 4096), so today's errors s
   `+sin(HA)`. Error is up to about 0.6 km/s at a mid-northern latitude. Re-derive this
   independently before changing it.
 - **Solar apex is in B1900 coordinates** but is dotted with a J2000 target vector. Precess the
-  apex to J2000 (expect roughly RA 18h 07.8m, Dec +30.0°; compute it rather than trusting that
-  figure). Worth up to about 0.35 km/s.
+  apex to J2000 (expect roughly RA 18h 03.8m, Dec +30.0°; compute it rather than trusting that
+  figure). Worth up to about 0.35 km/s. An earlier version of this plan said 18h 07.8m, which was
+  wrong: H1-HUNTER uses RA 270.95934°, Dec +30.00467° (J2000) with 20 km/s (`h1h/common.py`,
+  `APEX_RA_DEG`/`APEX_DEC_DEG`), and 270.959° is 18h 03.8m.
 - **Earth's orbit is treated as circular.** Add the first-order eccentricity term to the orbital
   velocity (e ≈ 0.0167). Worth up to about 0.5 km/s.
 
@@ -128,6 +153,10 @@ default `LSR` frame uses a different solar motion and will disagree by several k
 defaults. Target agreement: within 0.1 km/s.
 
 **Knock-on.** `LsrCorrectionKmPerSec` is stored in `SpectrumCacheEntry`, so bump `PipelineVersion`.
+
+**Related.** The 0.1 km/s target also needs the receiver's frequency error dealt with (1 ppm is
+about 0.3 km/s). See the frequency-correction item under "Candidate additions from the H1-HUNTER
+review".
 
 ---
 
@@ -213,6 +242,52 @@ present, positively, in captures toward the north.
 bin; both are flagged, and clean noise produces close to the expected false-flag rate. Real: the
 8 November spur-comb captures should show the comb bins flagged.
 
+**Outcome so far (2026-11-20).**
+- Baseline cleaning and comb masking are in `HiPipeline/BaselineSpurDetector.cs`, wired into
+  `HiStreamingPipeline.Process` (cleaning always on, `combMask` opt-in, exposed as Visualise's
+  Comb Mask checkbox and mirrored into Mosaic). Tests: `HiPipeline/BaselineSpurDetectorTests.cs`.
+- The four missed band-edge teeth: `Despike`'s flat median/MAD reference window measures the
+  bandpass slope there instead of the noise. A local quadratic fit fixes it. See `CLAUDE.md`.
+- The comb has **four** teeth per 292.96 kHz period, not three (the fourth, near −42 kHz, is weak).
+- Snapshot `phase3-clean` (defaults): no comb dip above 6σ at any of the 40 baseline spur positions
+  in any capture. `phase3-combmask` is the same with comb masking on; it changes little on this
+  session because the baseline's own teeth are already all detected.
+- `ReferenceSnapshotTests` now also writes `{label}_baseline_spurs.csv`, and honours
+  `RASTA_SNAPSHOT_COMBMASK=1`.
+- Still to do: frame rejection, spectral kurtosis (both need `PipelineVersion` bumps). The northern
+  positions (Dec 70–90) remain noisy and are the obvious test case for them.
+
+**H1-HUNTER: design notes for the two remaining items (2026-11-23).**
+- **Frame rejection** (`h1h/receiver.py`, `Receiver._process`). Each frame is tested on 17 values,
+  not one: mean power of the trusted band plus of 16 equal sub-bands. Each is compared with the
+  median and MAD of the last 2048 frames, and the frame is flagged if any exceeds 5 robust sigma.
+  Only increases are flagged. The sub-bands catch a narrowband burst that barely moves total
+  power, which the total-power-only test described above would miss. Adopt the sub-band test.
+  RASTA has the whole dwell in memory, so a whole-dwell median/MAD can replace the running one,
+  unless power drifts over the dwell.
+- **Spectral kurtosis** (`h1h/receiver.py`, `Averager._sk_feed`/`_sk_eval`; constants in
+  `h1h/common.py`). Two differences from the work item above:
+  - It tests each channel in blocks of M = 1024 frames and removes only the flagged blocks from
+    that channel (it keeps ΣP and the count removed per channel, so the cleaned average is exact).
+    One SK value over a whole dwell can only keep or drop the channel outright. A channel that
+    loses more than half its blocks is dropped whole.
+  - **Correction to the work item above:** SK does not respond to a weak steady carrier. Their
+    simulation shows a pulsed carrier removed completely and a weak steady one not detected. So
+    SK is for pulsed and switching interference; steady spurs stay with `BaselineSpurDetector`
+    and `Despike`.
+  - Their bounds for Hann frames at 50% overlap, M = 1024, are 0.836 and 1.214 (0.135% false
+    alarms each side, checked by simulation through their own FFT). Use them as the starting
+    point after Phase 2 and confirm on clean RASTA data. Frames already rejected in time are left
+    out of the block; a block with under half its frames left is not tested.
+  - Their simulation also shows the hydrogen line itself is not flagged (it is Gaussian noise).
+    Repeat that check with `SyntheticSpectrum`.
+- **Line protection for `Despike`.** Their narrow-channel search (`h1h/physics.py`,
+  `rfi_channels`) adds a test `Despike` does not have: a candidate's excess over a 7-channel
+  median must be at least 0.7 of its excess over a 31-channel median, so a channel riding on a
+  broad feature (the line) is not a candidate. `Despike` already caps the excised width
+  (`MaxHalfWidthHz`). Consider adding the narrow-share test if `Despike` is ever seen clipping a
+  real line.
+
 ---
 
 ## Phase 4 — Continuum fit and gain-independent line scale
@@ -239,6 +314,14 @@ gain drift.
 - Check that the line-free window still leaves enough channels when the centre frequency is the
   default 1420.7 MHz, where the line sits off-centre.
 
+**H1-HUNTER (2026-11-23).** It defines the line window in frequency (±0.8 MHz around the rest
+frequency, narrowed automatically so baseline channels remain, plus a 0.2 MHz guard) and trusts
+only the central 80% of the band (`h1h/physics.py`, `resolve_half_mhz`, `trusted_mask`,
+`baseline_fit`). Its baseline is a straight line, and its methods document lists the leftover tilt
+as a known limitation, which supports the polynomial here. Its optional gain-drift correction
+divides the ratio by its median over the line-free channels (`line_free_level`), the zero-order
+case of the normalised output above.
+
 **Verification.** Synthetic: with a curved bandpass mismatch and an injected line, the polynomial
 mode recovers the line amplitude within noise where the linear mode leaves a visible slope or
 bow. Scaling the capture power by 1.2× leaves the normalised output unchanged.
@@ -250,6 +333,13 @@ bow. Scaling the capture power by 1.2× leaves the normalised output unchanged.
 **Goal.** Report brightness temperature in Kelvin, and show a survey profile for comparison.
 
 **Depends on.** Phase 4's normalised output.
+
+**Open decision (5).** H1-HUNTER gets to Kelvin without a survey, by a hot/cold measurement. See
+the hot/cold item under "Candidate additions from the H1-HUNTER review". The two approaches can
+coexist: hot/cold gives the scale offline, and the beam-averaged LAB profile below becomes the
+check on it. Its author reports a ratio of 0.98–1.08 against LAB at a 20° beam with beam
+efficiency taken as 1.0 (Galactic hydrogen fills the beam and sidelobes), so do not apply a
+main-beam efficiency below 1 to the line here either.
 
 **Work.**
 - Add a system-temperature setting (persisted via `UserOptionsService`). Kelvin = normalised
@@ -292,6 +382,14 @@ to each position's own continuum it mostly tracks gain and ground-spillover diff
 - Stretch: show the embedded HI4PI column density (`Hi4PiSkyMap`) at each position alongside the
   measured value.
 
+**H1-HUNTER (2026-11-23).** `h1h/maps.py` `velocity_arrays` computes channel, integrated-intensity
+and mean-velocity maps from a velocity cube (`VelCube`: spectra resampled onto one fixed LSR axis
+per sky cell, so positions with different LSR corrections line up). Its mean velocity uses only
+channels above 2σ, with σ from the MAD of the cube. Its line integral fills interference-removed
+channels by interpolation rather than leaving them out (`h1h/physics.py`, `line_integral`), which
+otherwise lowers the integral. `smooth_sphere` smooths a sky grid with a width that grows as
+1/cos(latitude) along RA, the same correction the 2D heatmap needs if it is ever smoothed.
+
 **Verification.** On a LAB-sourced folder, integrated intensity along a Galactic-plane strip
 peaks on the plane and falls off with latitude. On the reference mosaic session, the integrated
 map is less sensitive to which baseline file is used than the peak map is.
@@ -312,8 +410,26 @@ map is less sensitive to which baseline file is used than the peak map is.
 - Put the prediction in `RASTA.Processing` as a shared function: issue #17 needs the same
   figure for a single baseline spectrum.
 
-**Verification.** On synthetic noise the ratio is close to 1. Independent of other phases once
-Phase 4's line-free mask exists.
+**H1-HUNTER (2026-11-23): a simpler measurement that removes the Phase 4 dependency.**
+- Measure the noise from differences of neighbouring channels instead of an rms over line-free
+  channels (`h1h/physics.py`, `measure_noise`): `d = (b − a) / mean(a, b)` for adjacent channels,
+  σ = 1.4826 · MAD(d) / √(2·(1 − ρ)), where ρ is the correlation between adjacent channels caused
+  by the window. A slope, a curved baseline and the line itself barely affect it, so it needs no
+  line-free mask and works on a single raw spectrum (what issue #17 needs for a baseline).
+- `noise_model(win, hop)` computes, from the window and frame step, the variance factor v₁ for
+  overlapped frames (relative variance of K averaged frames is v₁/K; 1.056 for Hann at 50%
+  overlap) and ρ. Port it rather than using the "1.5 bins" approximation above; it stays correct
+  if the window or overlap changes. `SpectrumBinner` changes ρ and must be allowed for.
+- Predicted relative noise is √(v₁/K + v₁/K_baseline).
+- Their "radiometer check" plots measured and predicted noise against K. A curve that follows
+  1/√K shows the average is noise-limited. Consider it as the display.
+- On a raw spectrum before division, stable fine bandpass structure reads as noise (their example:
+  0.326% raw against 0.100% expected, 0.141% against 0.142% after division). Label a
+  raw-spectrum figure as a guide only.
+
+**Verification.** On synthetic noise the ratio is close to 1. With the neighbour-difference
+measurement this phase is independent of the others (with Phase 2 done first, or not, v₁ follows
+from the frame step actually used).
 
 ---
 
@@ -333,6 +449,17 @@ Phase 4's line-free mask exists.
   Whichever is built first should produce it in a form the other can reuse.
 - Validate against a LAB-sourced Galactic strip (`scripts/New-GalacticStripGridPoints.ps1`)
   before real data.
+
+**H1-HUNTER (2026-11-23).** `h1h/maps.py` `rotation_curve` is the same tangent-point method with
+three differences worth taking:
+- It also uses the 4th quadrant (270° < l < 360°), where the terminal velocity is the most
+  negative one. From the UK little of that is visible, but the code costs nothing.
+- It restricts longitudes to 10°–85° from the centre direction, where the method is reliable.
+- Its defaults are R₀ = 8.15 kpc and V₀ = 236 km/s (Reid et al. 2019) rather than the older IAU
+  8.5 / 220. Use the newer values as defaults, and expect the curve near 236, not 220.
+
+It also reports enclosed mass, M(<R) = V²R/G. A face-on "top view" built from the same
+longitude–velocity data is listed under "Candidate additions from the H1-HUNTER review".
 
 **Verification.** The LAB strip shows the expected sinusoidal envelope in velocity against
 longitude, and the derived rotation curve is roughly flat near 220 km/s.
@@ -382,12 +509,61 @@ local line that the cold-sky-baselined reduction of the same data suppresses.
 
 ---
 
+## Candidate additions from the H1-HUNTER review
+
+Found on 2026-11-23 by reading H1-HUNTER SDR (see "External reference" near the top). Each has a
+GitHub issue (created 2026-11-23) except the Dicke load. None is a numbered phase or scheduled
+yet. Ordered roughly by value for effort.
+
+- **Receiver frequency correction (#32).** `RtlSdrDevice.SetPpmCorrection` is an empty stub, so the
+  crystal error goes straight into every velocity: 1 ppm is 1.42 kHz, about 0.3 km/s, larger than
+  Phase 1's 0.1 km/s target. H1-HUNTER sets the integer ppm in the tuner, applies the fractional
+  part to the frequency axis, and stores the value in every file. It also has a test that counts
+  delivered samples against the PC clock to estimate the error (`h1h/receiver.py`,
+  `_run_ppm_test`; only as good as the PC clock). Work here: implement the stub, add a ppm
+  setting, record it in `FitsFileMetaData`, apply it to the frequency axis. A capture and its
+  baseline must use the same value. Small and independent.
+- **Clipping check on every capture (#33).** RASTA checks ADC saturation only during the gain sweep
+  (`Calibrator.ComputeSaturationFraction`). H1-HUNTER checks every block (raw bytes ≤ 3 or ≥ 252)
+  and rejects a calibration capture with more than 0.1% clipped samples. Work here: compute the
+  fraction for baseline and sweep/Quick captures, warn or reject, and record it in the FITS
+  header. Small and independent.
+- **Hot/cold (Y-factor) calibration to Kelvin (#34).** Capture cold sky, then a hot load (the ground, or
+  an absorber over the feed) at air temperature:
+  `Y = median(P_hot / P_cold)` over line-free channels,
+  `T_sys = (T_hot − Y·T_cold) / (Y − 1)`,
+  `T_A = (T_sys + T_cold) · P / P_cold − T_sys`.
+  T_cold is computed, not assumed (`h1h/physics.py`, `cold_reference`, `spillover_model`): CMB
+  2.725 K, Galactic continuum 0.7 + 4.0·exp(−|b|/8°) K, atmosphere from air temperature and
+  altitude, and ground spillover from altitude and dish diameter. Needs no network. RASTA already
+  captures the cold half; the new parts are a hot-capture step on Prepare, an air-temperature
+  setting, the sky model, and the two results stored on `CalibrationProfile`. Their stated
+  accuracy is 10–20% absolute (a 10 K error in T_hot is about 3.7%). Hot and cold must share
+  receiver settings, and hot is rejected if Y ≤ 1.01. Check the hot load does not saturate at the
+  gain chosen by the gain sweep. This is decision 5.
+- **Milky Way top view (#35).** `h1h/maps.py` `topview_grid` places each longitude–velocity cell at its
+  kinematic distance for a flat rotation curve, seen from the Galactic north pole. Emission with
+  two possible distances (near and far) is drawn in a separate layer from emission with one, and
+  directions within 10° of l = 0° and 180° are left out. A follow-on to Phase 8, using its data.
+- **Hardware simulator (#36).** `h1h/receiver.py` `SimSource` is a 75-line fake RTL-SDR: receiver noise,
+  bandpass ripple and roll-off, a two-component line, cold/hot scenes, crystal error, DC spike, a
+  spur, interference bursts, clipping at high gain and slow gain drift. A model for an
+  `ISdrDevice` in the empty `RASTA.Simulators` project, which would let Capture and Prepare be
+  exercised without hardware.
+- **Dicke reference load.** A USB relay switches the LNA input to a resistor every N averages to
+  track gain drift. Needs hardware Phil does not have; noted for completeness only.
+
+---
+
 ## Considered and left out
 
 - **Smoothing the baseline alone before dividing.** This is standard practice and would reduce
   the baseline's noise contribution. `CLAUDE.md` records that smoothing both spectra before
   division was tried and made things worse; the likely cause is fine-scale structure common to
   both that only cancels unsmoothed. Revisit only after Phase 3, when that structure can be
-  flagged instead.
+  flagged instead. H1-HUNTER offers exactly this as an option (`smooth_reference`: spikes removed,
+  25 kHz median, 60 kHz cubic Savitzky–Golay) and its author measured it as worse on an RTL-SDR
+  for the same reason: 0.219% noise with the smoothed reference against 0.141% with the measured
+  one (0.142% expected). That supports leaving it out.
 - **IQ imbalance correction.** With the centre at 1420.7 MHz the line's mirror image falls in
   band, but at a level far below the noise for current integration times.

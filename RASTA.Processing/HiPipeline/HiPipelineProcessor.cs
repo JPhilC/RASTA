@@ -157,6 +157,9 @@ namespace RASTA.Processing.HiPipeline
         public double[] RatioSpectrum { get; private set; }
         public double[] HiSpectrum { get; private set; }
 
+        /// <summary>What the always-on baseline spur cleaning found on the last Process call.</summary>
+        public BaselineSpurReport? BaselineSpurs { get; private set; }
+
         public void Process(
             double[] baselinePower,
             double[] capturePower,
@@ -167,7 +170,9 @@ namespace RASTA.Processing.HiPipeline
             double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma, // only used when despike is true
             SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths at all
             int smoothingWindow = 5,
-            int smoothingPolyOrder = 2) // only used when smoothing == SavitzkyGolay
+            int smoothingPolyOrder = 2, // only used when smoothing == SavitzkyGolay
+            bool combMask = false, // opt-in: also excise every predicted tooth of a comb fitted to the baseline's spurs
+            bool cleanBaselineSpurs = true) // false when the caller already cleaned at native resolution (see CleanBaselineSpurs)
         {
             if (baselinePower == null) throw new ArgumentNullException(nameof(baselinePower));
             if (capturePower == null) throw new ArgumentNullException(nameof(capturePower));
@@ -180,7 +185,30 @@ namespace RASTA.Processing.HiPipeline
             baselinePower = FftShift(baselinePower);
             capturePower = FftShift(capturePower);
 
-            // 1a. Optional narrowband-RFI despike (e.g. a USB3/mount-controller comb),
+            // 1a. Always-on baseline spur cleaning (issue #23): anything narrow in the
+            // bandpass reference is contamination, detected from the baseline alone and
+            // interpolated away identically in both spectra - see BaselineSpurDetector. With
+            // combMask, every predicted tooth of a comb fitted to those spurs is excised too,
+            // including teeth too weak to detect individually (and teeth present only in the
+            // capture, e.g. a pointing-dependent comb) - opt-in, since it masks bins the
+            // baseline itself doesn't show as elevated.
+            // Callers that re-bin to a Target FFT Size do this at native resolution first
+            // (DetectBaselineSpurs + ApplyBaselineSpurCleaning) and pass cleanBaselineSpurs: false - once binned, a 1-2 bin
+            // spur is smeared across a whole coarse channel and the comb can't be fitted (its
+            // teeth would exceed the mask cap), so it must happen before SpectrumBinner.
+            if (cleanBaselineSpurs)
+            {
+                BaselineSpurs = BaselineSpurDetector.Detect(baselinePower, sampleRateHz, fitComb: combMask);
+                var baselineExcise = SpurExciseMask(BaselineSpurs, combMask);
+                ExciseCandidateRuns(baselinePower, baselineExcise);
+                ExciseCandidateRuns(capturePower, baselineExcise);
+            }
+            else
+            {
+                BaselineSpurs = null;
+            }
+
+            // 1b. Optional narrowband-RFI despike (e.g. a USB3/mount-controller comb),
             // before the always-on DC spike excision below. Uses the two-spectrum overload
             // (union-detected, excised identically in both) rather than despiking each
             // spectrum independently - see its remarks for why: independent excision can
@@ -191,7 +219,7 @@ namespace RASTA.Processing.HiPipeline
                 Despike(baselinePower, capturePower, sampleRateHz, despikeThresholdSigma);
             }
 
-            // 1b. Excise the receiver's fixed LO/DC-leakage spike (every zero-IF SDR,
+            // 1c. Excise the receiver's fixed LO/DC-leakage spike (every zero-IF SDR,
             // including the RTL-SDR this app targets, has one at exactly the tuned
             // center frequency - see RemoveDcSpike for why the window is detected from
             // the baseline rather than hardcoded).
@@ -313,6 +341,55 @@ namespace RASTA.Processing.HiPipeline
             return shifted;
         }
 
+        /// <summary>Exact inverse of <see cref="FftShift"/> (also correct for odd lengths).</summary>
+        public static double[] IfftShift(double[] shifted)
+        {
+            int n = shifted.Length;
+            int half = n / 2;
+
+            var data = new double[n];
+            Array.Copy(shifted, 0, data, half, n - half);
+            Array.Copy(shifted, n - half, data, 0, half);
+
+            return data;
+        }
+
+        /// <summary>
+        /// Baseline spur detection (step 1a of <see cref="Process"/>) run on its own, for callers
+        /// that re-bin to a Target FFT Size: run this on the native-resolution baseline, clean
+        /// each spectrum with <see cref="ApplyBaselineSpurCleaning"/>, then bin, then call
+        /// Process with cleanBaselineSpurs: false. Input is raw FFT-bin order (as Process takes);
+        /// the report's bin indices are in shifted order.
+        /// </summary>
+        public static BaselineSpurReport DetectBaselineSpurs(double[] baselinePower, double sampleRateHz, bool combMask)
+            => BaselineSpurDetector.Detect(FftShift(baselinePower), sampleRateHz, fitComb: combMask);
+
+        /// <summary>
+        /// Interpolates away the bins a <see cref="DetectBaselineSpurs"/> report flagged (plus the
+        /// predicted comb teeth when combMask) in a raw-order spectrum of the same length;
+        /// returns a new raw-order array. Apply identically to baseline and capture.
+        /// </summary>
+        public static double[] ApplyBaselineSpurCleaning(double[] power, BaselineSpurReport report, bool combMask)
+        {
+            if (power.Length != report.Flagged.Length)
+                throw new ArgumentException("Spectrum length doesn't match the spur report.", nameof(power));
+
+            var shifted = FftShift(power);
+            ExciseCandidateRuns(shifted, SpurExciseMask(report, combMask));
+            return IfftShift(shifted);
+        }
+
+        private static bool[] SpurExciseMask(BaselineSpurReport report, bool combMask)
+        {
+            var mask = (bool[])report.Flagged.Clone();
+            if (combMask)
+            {
+                for (int i = 0; i < mask.Length; i++)
+                    mask[i] |= report.CombMask[i];
+            }
+            return mask;
+        }
+
         // How far above a robust local "normal" level counts as the DC/LO spike.
         private const double DcSpikeThresholdRatio = 4.0;
 
@@ -337,6 +414,17 @@ namespace RASTA.Processing.HiPipeline
         /// gets touched. Only a spike that's present in the artifact-only baseline gets
         /// interpolated away, identically, in both spectra.
         /// </summary>
+        /// <summary>
+        /// Single-spectrum form of the DC/LO spike excision, for showing a cleaned baseline on
+        /// its own (Visualise's baseline-only chart). Input is shifted order; returns a new array.
+        /// </summary>
+        public static double[] RemoveDcSpike(double[] shiftedBaseline)
+        {
+            var cleaned = (double[])shiftedBaseline.Clone();
+            RemoveDcSpike(cleaned, new double[cleaned.Length]);
+            return cleaned;
+        }
+
         private static void RemoveDcSpike(double[] baselinePower, double[] capturePower)
         {
             int n = baselinePower.Length;
@@ -976,7 +1064,8 @@ namespace RASTA.Processing.HiPipeline
             double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma,
             SmoothingKind smoothing = SmoothingKind.None, // reference pipeline never smooths the final output
             int smoothingWindow = 5,
-            int smoothingPolyOrder = 2)
+            int smoothingPolyOrder = 2,
+            bool combMask = false)
         {
             var (baselineAvg, captureAvg) = _acc.GetAveragedSpectra();
             _pipe.Process(
@@ -989,7 +1078,8 @@ namespace RASTA.Processing.HiPipeline
                 despikeThresholdSigma,
                 smoothing,
                 smoothingWindow,
-                smoothingPolyOrder);
+                smoothingPolyOrder,
+                combMask);
         }
     }
 }

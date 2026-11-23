@@ -170,6 +170,26 @@ public partial class VisualiseViewModel : ObservableObject
 
     partial void OnDespikeThresholdSigmaChanged(double value) => MosaicVm.DespikeThresholdSigma = value;
 
+    // Opt-in comb masking (issue #23): the baseline's narrow spurs are always excised
+    // (BaselineSpurDetector, inside HiStreamingPipeline.Process); this additionally fits a
+    // regular comb to them and masks every predicted tooth, including teeth too weak to
+    // detect individually and teeth present only in the capture. Off by default until it has
+    // been compared on real data. Mirrored into MosaicVm like DespikeEnabled.
+    [ObservableProperty]
+    private bool combMaskEnabled;
+
+    partial void OnCombMaskEnabledChanged(bool value) => MosaicVm.CombMaskEnabled = value;
+
+    // Summary of what the always-on baseline spur cleaning found on the last combined chart
+    // (spur count, bins excised, and the fitted comb when Comb Mask is on).
+    [ObservableProperty]
+    private string baselineSpurInfo = string.Empty;
+
+    // Baseline-only chart: show the baseline after the spur cleaning (+ Comb Mask if ticked)
+    // and DC spike removal the combined views apply, instead of exactly as recorded.
+    [ObservableProperty]
+    private bool cleanBaselineChart;
+
     // None by default, matching HiStreamingPipeline.Process's own default - the reference
     // pipeline never smooths its final output, and leaving raw per-bin scatter visible is
     // what let SpectrumViewModel.ApplyRobustYAxisRange reveal it in the first place. Only
@@ -259,6 +279,7 @@ public partial class VisualiseViewModel : ObservableObject
         // field initializers, so the very first values need setting explicitly here too.
         MosaicVm.DespikeEnabled = DespikeEnabled;
         MosaicVm.DespikeThresholdSigma = DespikeThresholdSigma;
+        MosaicVm.CombMaskEnabled = CombMaskEnabled;
         MosaicVm.TargetFftSize = TargetFftSize;
         MosaicVm.SmoothingKind = SmoothingKind;
         MosaicVm.SmoothingWindow = SmoothingWindow;
@@ -569,9 +590,22 @@ public partial class VisualiseViewModel : ObservableObject
         // ComputeSkAoPower deliberately leaves the spectrum in raw FFT-bin order (DC at
         // index 0) - shift it into monotonic frequency order before display, the same
         // way HiStreamingPipeline.Process does for the combined baseline/capture views.
-        baselineSpectrum = HiStreamingPipeline.FftShift(baseline.AveragedPower!);
+        double[] nativePower = baseline.AveragedPower!;
+        BaselineSpurReport? spurReport = null;
+        if (CleanBaselineChart)
+        {
+            // The same always-on cleaning (+ Comb Mask) the combined views apply, at native
+            // resolution before re-binning, so the cleaned baseline can be inspected on its own.
+            spurReport = HiStreamingPipeline.DetectBaselineSpurs(nativePower, baseline.SampFreqHz, CombMaskEnabled);
+            nativePower = HiStreamingPipeline.ApplyBaselineSpurCleaning(nativePower, spurReport, CombMaskEnabled);
+        }
+        BaselineSpurInfo = DescribeBaselineSpurs(spurReport);
+
+        baselineSpectrum = HiStreamingPipeline.FftShift(nativePower);
         if (TargetFftSize < ScanFftSize)
             baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
+        if (CleanBaselineChart)
+            baselineSpectrum = HiStreamingPipeline.RemoveDcSpike(baselineSpectrum);
         rawBaselineSpectrum = baselineSpectrum;
         if (DespikeEnabled)
             baselineSpectrum = HiStreamingPipeline.Despike(baselineSpectrum, SamplingHz, DespikeThresholdSigma);
@@ -733,6 +767,14 @@ public partial class VisualiseViewModel : ObservableObject
         // downscale.
         double[] baselineSpectrum = baseline.AveragedPower!;
         double[] captureSpectrum = capture.AveragedPower!;
+
+        // Baseline spur cleaning (+ comb mask) at native resolution, before any re-binning -
+        // binned first, a narrow spur smears across a whole coarse channel and the comb fit
+        // can't succeed (see HiStreamingPipeline.DetectBaselineSpurs).
+        var spurReport = HiStreamingPipeline.DetectBaselineSpurs(baselineSpectrum, baseline.SampFreqHz, CombMaskEnabled);
+        baselineSpectrum = HiStreamingPipeline.ApplyBaselineSpurCleaning(baselineSpectrum, spurReport, CombMaskEnabled);
+        captureSpectrum = HiStreamingPipeline.ApplyBaselineSpurCleaning(captureSpectrum, spurReport, CombMaskEnabled);
+
         if (TargetFftSize < ScanFftSize)
         {
             baselineSpectrum = SpectrumBinner.BinAverage(baselineSpectrum, TargetFftSize);
@@ -759,10 +801,26 @@ public partial class VisualiseViewModel : ObservableObject
             despike: DespikeEnabled,
             despikeThresholdSigma: DespikeThresholdSigma,
             smoothing: SmoothingKind,
-            smoothingWindow: SmoothingWindow
+            smoothingWindow: SmoothingWindow,
+            cleanBaselineSpurs: false // already done above, at native resolution
         );
 
+        BaselineSpurInfo = DescribeBaselineSpurs(spurReport);
+
         return (baselineSpectrum, captureSpectrum, hi);
+    }
+
+    private string DescribeBaselineSpurs(BaselineSpurReport? report)
+    {
+        if (report is null)
+            return string.Empty;
+
+        string text = $"{report.Spurs.Count} spurs, {report.FlaggedBinCount} bins";
+        if (report.Comb is { } comb)
+            text += $"; comb {comb.PeriodHz / 1000:F2} kHz x{comb.PhasesBins.Count}";
+        else if (CombMaskEnabled)
+            text += "; no comb";
+        return text;
     }
 
     private void ProcessFilesHiVelocity()

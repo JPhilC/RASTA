@@ -114,6 +114,12 @@ This is the core HI‑reduction engine. It transforms averaged FFT spectra into 
 
 
 
+1a. **Baseline spur cleaning (always on)**
+
+&#x20;  `BaselineSpurDetector` finds narrow spurs in the baseline alone (a bandpass has no genuinely narrow features) by comparing each bin with a local quadratic fit of its surroundings, and interpolates those bins away identically in baseline and capture. With the opt‑in `combMask`, it also fits a regular comb to the spurs and removes every predicted tooth. Then the opt‑in `Despike` and the always‑on DC/LO spike excision run.
+
+
+
 2. **Frequency axis generation**
 
 &#x20;  Computes the true frequency of each FFT bin.
@@ -279,6 +285,9 @@ It is flexible, FFT‑size‑agnostic, and suitable for both hobbyist and resear
                      ├──────────────────────────────────────────┤
                      │ 1. FFT Shift                              │
                      │    (centre spectrum around HI frequency)  │
+                     │                                            │
+                     │ 1a. Baseline spur cleaning (+ comb mask)  │
+                     │    (excise baseline-only narrow spurs)    │
                      │                                            │
                      │ 2. Frequency Axis                         │
                      │    (true Hz for each FFT bin)             │

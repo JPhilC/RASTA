@@ -210,6 +210,54 @@ ExportDespikeDebugCsvCommand` (a raw-vs-despiked CSV dump written next to the so
 `CapturePlan.DespikeEnabled` (applies it to `CaptureViewModel`'s *live* spectrum while a sweep runs, off
 by default like the pipeline itself).
 
+**Always-on baseline spur cleaning** (issue #23, Phase 3 items 1–2 of `SignalProcessingPlan.md`) runs
+in `Process` right after the fftshift, before `Despike` and `RemoveDcSpike`:
+`HiPipeline/BaselineSpurDetector.Detect` finds narrow spurs in the **baseline alone** and the flagged
+bins are interpolated away identically in both spectra (`ExciseCandidateRuns`). It's the same
+trust argument as `RemoveDcSpike` generalised to the whole band — a bandpass has no genuinely narrow
+features, and the decision never looks at the capture, so it can't remove capture-only signal — which
+is why it's unconditional. Detection compares each bin with a **local quadratic fit** of a reference
+window either side (guard gap, one round of 3σ clipping, robust MAD scatter of the fit residuals,
+6σ detect / 2.5σ skirt growth, widths in Hz like `Despike`'s), not a flat local median. That
+difference is the diagnosis of the four band-edge comb teeth `Despike` missed on 2026-11-08
+(−857, −790, +901, +969 kHz): on the sloping part of the bandpass (~0.1–0.2%/bin there) a flat
+median/MAD window measures the slope rather than the noise, so they read 2.5–7σ against it but
+29–39σ against the detrended fit. `Despike` itself still uses the flat window (unchanged, opt-in).
+The detector skips the DC window (±4 bins, `RemoveDcSpike` owns it) and the outer `reach` bins where
+there isn't a full reference window. `HiStreamingPipeline.BaselineSpurs` exposes the last report
+(spurs with offset/sigma/excess, flagged bins) and is the shared detection issue #17 (baseline
+quality rating) is meant to consume; Visualise shows a one-line summary (`BaselineSpurInfo`).
+
+`Process(..., combMask: true)` (opt-in, `VisualiseViewModel.CombMaskEnabled` mirrored into
+`MosaicViewModel` → `MosaicProcessor`) additionally fits a regular comb to those spurs
+(`FitComb`: brute-force period search, greedy circular phase clustering, ≥4 teeth per phase family,
+≥6 and ≥half of all spurs explained, a binomial chance probability with a look-elsewhere correction
+for the number of trial periods, ≤5% of the band masked; ties broken toward fewer predicted teeth so
+a sub-multiple of the true period loses; period refined by pooled least squares) and also masks every
+predicted tooth — including teeth too weak to detect alone and teeth present only in the capture.
+On the 2026-11-08 baseline it finds **period 292.96 kHz (500 bins) with four teeth per period, not
+three** as `SignalProcessingPlan.md` first described (bins 86/201/393/476 mod 500, i.e. the −42 kHz
+tooth is the weak fourth family), explaining 32 of the baseline's 40 spurs; the other 8 are unrelated
+(the strongest single spur in that baseline, −378.5 kHz at +84%, isn't a comb tooth). With default
+settings (cleaning only), the reference snapshot (`ReferenceSnapshots/phase3-clean*.csv`) has no
+comb dip above 6σ at any of those 40 positions in any of the 27 captures (751 before, 187 with
+`Despike`), and line-free rms drops from ~4–8 to ~1.6–3 at most positions. The northern positions
+(Dec 70–90) are still noisy (rms 4–12) and comb masking barely changes them, so whatever contaminates
+those captures isn't sitting on the baseline's comb teeth — the remaining Phase 3 items (frame
+rejection, spectral kurtosis) are aimed at that. The cleaning has to run at **native** resolution:
+`VisualiseViewModel.ProcessHiCore` and `MosaicProcessor` call `HiStreamingPipeline.DetectBaselineSpurs`
++ `ApplyBaselineSpurCleaning` on the native spectra *before* `SpectrumBinner`, then `Process(...,
+cleanBaselineSpurs: false)`. Run after binning (the first version did), a 1–2 bin tooth smears across a
+whole coarse channel and the comb fit always fails — at Target FFT Size 512 the 4-tooth/62.5-bin comb
+with ≥1-bin half-width would mask ~19% of the band, far over the 5% cap, so the readout said "no comb".
+The baseline-only chart (`ProcessBaseline`) shows the baseline as recorded unless `CleanBaselineChart`
+("Clean Baseline" checkbox) is ticked, which applies the same native-resolution spur cleaning (+ Comb
+Mask) and then `HiStreamingPipeline.RemoveDcSpike(shifted)` (a public single-spectrum wrapper) so the
+cleaning can be inspected on the baseline alone. The live Capture spectrum goes through `Process` too,
+so it gets the always-on cleaning (re-detected on every update, ~25 ms at 4096 bins) but never the
+comb mask. Nothing here touches `SpectrumCacheService.PipelineVersion` — it's all downstream of the
+cached averaged spectrum.
+
 `SpectrumViewModel` also renders a fixed vertical dashed reference line (`Sections`, a zero-width
 `RectangularSection`) at the unshifted HI rest position — 0 km/s for `HiVelocity` (that axis is
 LSR-corrected, so 0 means "at rest relative to the LSR"; real emission still typically shows up offset
