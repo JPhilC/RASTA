@@ -1,4 +1,5 @@
-﻿using RASTA.Core.Telescope;
+﻿using RASTA.Core.Astro;
+using RASTA.Core.Telescope;
 using System.Globalization;
 
 namespace RASTA.Infrastructure.Telescope;
@@ -10,6 +11,17 @@ public class AscomTelescopeMount : ITelescopeMount
 
     public bool IsConnected { get; private set; }
     public CoordinateMode Mode { get; private set; }
+
+    public EquatorialCoordinateSystem? ReportedEquatorialSystem { get; private set; }
+
+    public EquatorialCoordinateSystem FallbackEquatorialSystem { get; set; } = EquatorialCoordinateSystem.Topocentric;
+
+    public EquatorialCoordinateSystem EffectiveEquatorialSystem =>
+        ReportedEquatorialSystem is { } reported && reported != EquatorialCoordinateSystem.Other
+            ? reported
+            : FallbackEquatorialSystem == EquatorialCoordinateSystem.Other
+                ? EquatorialCoordinateSystem.Topocentric
+                : FallbackEquatorialSystem;
 
     public double SiteLatitudeDeg { get; private set; }
     public double SiteLongitudeDeg { get; private set; }
@@ -63,6 +75,20 @@ public class AscomTelescopeMount : ITelescopeMount
 
         // Detect mode
         Mode = await DetectCoordinateModeAsync();
+
+        // RA/Dec epoch (issue #38). Optional in older drivers - treat any failure as "not
+        // implemented" and leave it to FallbackEquatorialSystem.
+        try
+        {
+            int system = await _client.GetAsync<int>("equatorialsystem");
+            ReportedEquatorialSystem = Enum.IsDefined(typeof(EquatorialCoordinateSystem), system)
+                ? (EquatorialCoordinateSystem)system
+                : EquatorialCoordinateSystem.Other;
+        }
+        catch (Exception)
+        {
+            ReportedEquatorialSystem = null;
+        }
     }
 
     public async Task DisconnectAsync()
@@ -118,8 +144,13 @@ public class AscomTelescopeMount : ITelescopeMount
         await SetTrackingRateAsync(0); // 0 = Sidereal
     }
 
-    public Task<double> GetRightAscensionHoursAsync() => _client.GetAsync<double>("rightascension");
-    public Task<double> GetDeclinationDegAsync() => _client.GetAsync<double>("declination");
+    public async Task<(double raHours, double decDeg)> GetRaDecAsync()
+    {
+        double raHours = await _client.GetAsync<double>("rightascension");
+        double decDeg = await _client.GetAsync<double>("declination");
+        return AstronomyUtils.ToJ2000(raHours, decDeg, EffectiveEquatorialSystem, DateTime.UtcNow);
+    }
+
     public Task<double> GetAzimuthDegAsync() => _client.GetAsync<double>("azimuth");
     public Task<double> GetAltitudeDegAsync() => _client.GetAsync<double>("altitude");
     public Task<bool> GetTrackingAsync() => _client.GetAsync<bool>("tracking");
@@ -134,6 +165,8 @@ public class AscomTelescopeMount : ITelescopeMount
 
     public Task SlewToRaDecAsync(double raHours, double decDeg)
     {
+        (raHours, decDeg) = AstronomyUtils.FromJ2000(raHours, decDeg, EffectiveEquatorialSystem, DateTime.UtcNow);
+
         return _client.PutAsync("slewtocoordinates",
             ("RightAscension", raHours.ToString(CultureInfo.InvariantCulture)),
             ("Declination", decDeg.ToString(CultureInfo.InvariantCulture)));

@@ -57,8 +57,8 @@ namespace RASTA.App.Services
                         // -----------------------------
                         // Query mount for pointing
                         // -----------------------------
-                        double raHours = await _mount.GetRightAscensionHoursAsync();
-                        double decDeg = await _mount.GetDeclinationDegAsync();
+                        // J2000 whatever the mount uses (issue #38).
+                        var (raHours, decDeg) = await _mount.GetRaDecAsync();
                         double azDeg = await _mount.GetAzimuthDegAsync();
                         double altDeg = await _mount.GetAltitudeDegAsync();
 

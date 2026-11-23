@@ -39,6 +39,57 @@ namespace RASTA.App.ViewModels
             SiteElevationM = _optionsService.Options.SiteElevationM;
             DishDiameterM = _optionsService.Options.DishDiameterM;
             FocalLengthM = _optionsService.Options.FocalLengthM;
+            FallbackMountEquatorialSystem = _optionsService.Options.FallbackMountEquatorialSystem;
+        }
+
+        // -------------------------------
+        // Mount RA/Dec epoch (issue #38)
+        // -------------------------------
+        // Everything inside RASTA is J2000; the mount converts at the boundary. This is what
+        // to assume when the driver reports equOther or doesn't implement EquatorialSystem.
+        // -------------------------------
+
+        public static IReadOnlyList<EquatorialCoordinateSystem> FallbackEquatorialSystemChoices { get; } =
+            [EquatorialCoordinateSystem.Topocentric, EquatorialCoordinateSystem.J2000];
+
+        [ObservableProperty]
+        private EquatorialCoordinateSystem fallbackMountEquatorialSystem;
+
+        partial void OnFallbackMountEquatorialSystemChanged(EquatorialCoordinateSystem value)
+        {
+            _optionsService.Options.FallbackMountEquatorialSystem = value;
+            _mount.FallbackEquatorialSystem = value;
+            _state.EffectiveEquatorialSystem = _mount.EffectiveEquatorialSystem;
+            OnPropertyChanged(nameof(MountEquatorialSystemText));
+        }
+
+        /// <summary>One line for the Prepare view: what the mount uses and what RASTA does about it.</summary>
+        public string MountEquatorialSystemText
+        {
+            get
+            {
+                if (!IsConnected)
+                    return "Not connected";
+
+                var effective = _mount.EffectiveEquatorialSystem.DisplayName();
+                return _mount.ReportedEquatorialSystem switch
+                {
+                    null => $"Not reported by driver - assuming {effective}",
+                    EquatorialCoordinateSystem.Other => $"Driver reports Other - assuming {effective}",
+                    _ => effective + (_mount.EffectiveEquatorialSystem == EquatorialCoordinateSystem.J2000
+                        ? "" : " (converted to/from J2000)"),
+                };
+            }
+        }
+
+        /// <summary>True when the fallback setting is actually in use for the connected mount.</summary>
+        public bool IsMountEquatorialSystemAssumed =>
+            IsConnected && _mount.ReportedEquatorialSystem is null or EquatorialCoordinateSystem.Other;
+
+        partial void OnIsConnectedChanged(bool value)
+        {
+            OnPropertyChanged(nameof(MountEquatorialSystemText));
+            OnPropertyChanged(nameof(IsMountEquatorialSystemAssumed));
         }
 
         // -------------------------------
@@ -243,11 +294,18 @@ namespace RASTA.App.ViewModels
 
                 await _mount.ConnectAsync();
 
+                _state.ReportedEquatorialSystem = _mount.ReportedEquatorialSystem;
+                _state.EffectiveEquatorialSystem = _mount.EffectiveEquatorialSystem;
+
                 IsConnected = _mount.IsConnected;
                 _state.IsConnected = _mount.IsConnected;
 
                 if (!_mount.IsConnected)
                     return;
+
+                _logger.Info(
+                    $"Mount EquatorialSystem: {(_mount.ReportedEquatorialSystem?.ToString() ?? "not implemented")}; " +
+                    $"using {_mount.EffectiveEquatorialSystem} for RA/Dec conversion to/from J2000.");
 
                 // ---------------------------------------------------------
                 // Check parked state

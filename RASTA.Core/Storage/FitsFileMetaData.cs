@@ -27,6 +27,14 @@ namespace RASTA.Core.Storage
         public double? AzDeg { get; set; }
         public double? AltDeg { get; set; }
 
+        /// <summary>
+        /// Julian-epoch equinox of RaDeg/DecDeg (FITS EQUINOX). Everything RASTA writes is
+        /// J2000, so a new instance defaults to 2000. Files written before issue #38 have no
+        /// EQUINOX card and read back as null, which ComputeLsrCorrectionKmPerSec treats as
+        /// J2000 - their RA/Dec is whatever the mount reported, epoch unknown.
+        /// </summary>
+        public double? Equinox { get; set; } = 2000.0;
+
 
         public void Write(BasicHDU hdu)
         {
@@ -43,6 +51,11 @@ namespace RASTA.Core.Storage
             if (SiteElevationM.HasValue) hdu.AddValue("SITEELV", SiteElevationM.Value, "Site elevation (m)");
             if (RaDeg.HasValue) hdu.AddValue("RA", RaDeg.Value, "Right Ascension (deg)");
             if (DecDeg.HasValue) hdu.AddValue("DEC", DecDeg.Value, "Declination (deg)");
+            if (RaDeg.HasValue && Equinox.HasValue)
+            {
+                hdu.AddValue("RADESYS", "FK5", "RA/Dec reference frame");
+                hdu.AddValue("EQUINOX", Equinox.Value, "Equinox of RA/Dec (Julian epoch)");
+            }
             if (AzDeg.HasValue) hdu.AddValue("AZ", AzDeg.Value, "Azimuth (deg)");
             if (AltDeg.HasValue) hdu.AddValue("ALT", AltDeg.Value, "Altitude (deg)");
 
@@ -71,9 +84,15 @@ namespace RASTA.Core.Storage
             {
                 raHours = raDeg / 15.0;
                 decDeg = dec;
+
+                // No EQUINOX (pre-#38 file): assume J2000, which is what this did before.
+                if (Equinox is double equinox && equinox != 2000.0)
+                    (raHours, decDeg) = AstronomyUtils.Precess(raHours, decDeg,
+                        AstronomyUtils.JulianEpochToJd(equinox), AstronomyUtils.JdJ2000);
             }
             else if (AzDeg is double az && AltDeg is double alt)
             {
+                // Returns J2000 (precessed from of-date since issue #38).
                 (raHours, decDeg) = AstronomyUtils.HorizontalToEquatorial(az, alt, ObservationDate, lat, lon);
             }
             else
@@ -107,6 +126,7 @@ namespace RASTA.Core.Storage
             meta.DecDeg = header.FindCard("DEC") != null ? header.GetDoubleValue("DEC") : null;
             meta.AzDeg = header.FindCard("AZ") != null ? header.GetDoubleValue("AZ") : null;
             meta.AltDeg = header.FindCard("ALT") != null ? header.GetDoubleValue("ALT") : null;
+            meta.Equinox = header.FindCard("EQUINOX") != null ? header.GetDoubleValue("EQUINOX") : null;
             return meta;
         }
     }
