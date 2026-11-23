@@ -67,8 +67,9 @@ namespace RASTA.Infrastructure.Services
         /// do NOT need a bump - those always run fresh.
         ///
         /// 2: added the recorded pointing (RaDeg/DecDeg/AzDeg/AltDeg) for the Mosaic tab.
+        /// 3: LSR correction fixed (diurnal sign, elliptical orbit, J2000 axes) - issue #21.
         /// </summary>
-        public const int PipelineVersion = 2;
+        public const int PipelineVersion = 3;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {

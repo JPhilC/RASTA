@@ -42,7 +42,7 @@ dotnet run --project RASTA.App/RASTA.App.csproj   # run the app (Windows only; n
   it reduces a real capture session through `MosaicProcessor` and writes
   `RASTA.Tests/ReferenceSnapshots/{label}.csv` (per-position summary) and `{label}_spectra.csv`, for
   diffing real-data results before and after a pipeline change; it's skipped otherwise. The session
-  folder defaults to `D:\Raw\RASTA\Captures\1420.7000MHz\2026-11-08` (`RASTA_REFERENCE_DATA`
+  folder defaults to `C:\Raw\RASTA\Captures\1420.7000MHz\2026-11-08` (`RASTA_REFERENCE_DATA`
   overrides it) and it uses the app's own spectrum cache, so an uncached session takes minutes.
   `RASTA.Simulators` is still a placeholder (a single unused `Class1.cs`), excluded from the default
   build in `RASTA.slnx` (`<Build Solution="*|x64" Project="false" />`).
@@ -62,8 +62,14 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
   `ITelescopeMount`, `ISdrDevice`, `IFftEngine`, `IPlanRepository`, coordinate/target types
   (`TargetPoint`, `CoordinateMode`, `CapturePlan`), `FitsFileMetaData` (the FITS header schema — see
   below), `AstronomyUtils` (LST/Julian-date/RA-Dec↔AltAz math, its inverse `HorizontalToEquatorial`,
-  and `ComputeLsrCorrectionKmPerSec` — a low-precision analytic LSR Doppler correction, good to a few
-  tenths of a km/s, not JPL-ephemeris precision).
+  and `ComputeLsrCorrectionKmPerSec` — an analytic kinematic-LSR Doppler correction: elliptical Earth
+  orbit in J2000 axes + eastward diurnal motion + 20 km/s toward the standard apex. Since issue #21 it
+  agrees with JPL Horizons observer velocities to ~0.02 km/s over 14 test cases (tests require 0.1;
+  reference vectors come from `scripts/Get-LsrReferenceVectors.ps1`). Before that it was off by up to
+  1.2 km/s: the diurnal term had the wrong sign, the orbit was circular, and the orbital velocity was
+  in of-date axes while the target was J2000. The apex constant was already J2000, only mislabelled
+  B1900. It assumes J2000 RA/Dec in; nothing yet checks which epoch the mount reports (ASCOM
+  `EquatorialSystem`), and of-date coordinates would cost up to ~0.3 km/s).
 - **RASTA.Infrastructure** — concrete implementations: `RtlSdrDevice` (wraps the `RtlSdrManager`
   NuGet package + native RTL-SDR driver), `AscomAlpacaClient`/`AscomTelescopeMount` (ASCOM **Alpaca**
   Remote Server, not direct COM), `FftEngine` (FFT via `MathNet.Numerics`), JSON-backed repositories

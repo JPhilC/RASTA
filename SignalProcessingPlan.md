@@ -39,7 +39,7 @@ Tracking issue: #31. Each phase has its own GitHub issue, shown in the table.
 | Phase | Title | Status |
 |---|---|---|
 | 0 | Verification groundwork | done 2026-11-18 |
-| 1 | LSR correction fixes (#21) | not started |
+| 1 | LSR correction fixes (#21) | done, see "Outcome" under Phase 1 |
 | 2 | Overlapped frame averaging (#22) | not started |
 | 3 | Frame and bin rejection before averaging (#23) | items 1–2 done 2026-11-20; frame rejection and spectral kurtosis not started |
 | 4 | Continuum fit and gain-independent line scale (#24) | not started |
@@ -157,6 +157,25 @@ defaults. Target agreement: within 0.1 km/s.
 **Related.** The 0.1 km/s target also needs the receiver's frequency error dealt with (1 ppm is
 about 0.3 km/s). See the frequency-correction item under "Candidate additions from the H1-HUNTER
 review".
+
+**Outcome (2026-11-23).** Each finding was re-derived and then measured against JPL Horizons
+(DE441) instead of astropy: Horizons gives the velocity of a surface point relative to the Solar
+System barycentre in ICRF axes, so the reference is `v_observer · u_target + 20 km/s · u_apex ·
+u_target` with none of RASTA's own astronomy in it. `scripts/Get-LsrReferenceVectors.ps1` fetches
+the vectors; 14 cases are in `AstronomyUtilsTests`.
+
+- Diurnal sign: confirmed wrong, fixed.
+- Circular orbit: confirmed, replaced with the first-order elliptical velocity.
+- Apex: **the finding was wrong.** The constant (270.9592°, +30.0047°) already was the B1900
+  18h/+30° apex precessed to J2000; only its comment said B1900. A test now recomputes the
+  precession (270.95932°, +30.00466°).
+- Found instead: the orbital velocity was built from the Sun's longitude at the equinox of date
+  but dotted with a J2000 target, a 0.37° frame mismatch in 2026 (up to 0.2 km/s). The longitudes
+  are now precessed back to J2000.
+- Result: worst error 1.23 km/s before, 0.020 km/s after. `PipelineVersion` is 3.
+- Not done: the function assumes J2000 RA/Dec, and nothing checks which epoch the mount reports
+  (ASCOM `EquatorialSystem`). Of-date coordinates would cost up to ~0.3 km/s. With a ~10° beam this
+  is academic for pointing, but it is the same size as the errors fixed here.
 
 ---
 
