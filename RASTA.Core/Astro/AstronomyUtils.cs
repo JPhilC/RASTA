@@ -114,25 +114,39 @@ namespace RASTA.Core.Astro
         }
 
         /// <summary>
-        /// Approximate correction (km/s) to ADD to a topocentric radio-convention radial
-        /// velocity to convert it to the Local Standard of Rest (LSR) frame:
-        /// <c>v_LSR = v_topocentric + ComputeLsrCorrectionKmPerSec(...)</c>.
+        /// The standard solar apex that defines the kinematic LSR - 20 km/s toward RA 18h,
+        /// Dec +30 deg at equinox 1900 - precessed to J2000 (18h03m50.3s, +30d00'17").
+        /// AstronomyUtilsTests.SolarApex_IsStandardB1900ApexPrecessedToJ2000 recomputes the
+        /// precession and checks these against it.
+        /// </summary>
+        public const double SolarApexRaDegJ2000 = 270.95932;
+        public const double SolarApexDecDegJ2000 = 30.00466;
+
+        /// <summary>
+        /// Correction (km/s) to ADD to a topocentric radio-convention radial velocity to
+        /// convert it to the Local Standard of Rest (LSR) frame:
+        /// <c>v_LSR = v_topocentric + ComputeLsrCorrectionKmPerSec(...)</c>. It is the
+        /// observer's own velocity relative to the LSR, projected onto the direction of the
+        /// target (moving toward a target blueshifts it, so that speed is added back).
         ///
-        /// Sums the projection, onto the line of sight to the target, of three velocity
-        /// vectors:
-        ///   1. Earth's orbital motion around the Sun (topocentric -> heliocentric) -
-        ///      by far the largest term, up to ~30 km/s.
-        ///   2. Earth's rotation / the observer's diurnal motion - usually the smallest,
-        ///      under ~0.5 km/s.
-        ///   3. The Sun's own "standard solar motion" relative to the LSR (heliocentric
-        ///      -> LSR) - a fixed 20 km/s toward a fixed apex, not time-dependent.
+        /// Three velocity vectors are summed:
+        ///   1. Earth's orbital motion around the Sun - by far the largest term, up to
+        ///      ~30 km/s. Elliptical orbit (first order in the eccentricity, worth up to
+        ///      0.5 km/s), expressed in J2000 axes.
+        ///   2. The observer's diurnal motion from the Earth's rotation - under 0.5 km/s,
+        ///      directed due east.
+        ///   3. The Sun's "standard solar motion" relative to the LSR - a fixed 20 km/s
+        ///      toward a fixed apex.
         ///
-        /// This is the same style of low-precision analytic formula used throughout
-        /// amateur radio astronomy (Earth's orbit treated as circular and coplanar with
-        /// the ecliptic, no nutation/aberration) - good to a few tenths of a km/s, well
-        /// within a single FFT channel's width for typical HI setups. It is not
-        /// JPL-ephemeris precision, and it is the conventional "kinematic" LSR (fixed
-        /// standard solar motion), not the newer IAU "dynamical" LSR definition.
+        /// <paramref name="raHours"/>/<paramref name="decDeg"/> are taken to be J2000. Feeding
+        /// in of-date ("JNow") coordinates instead moves the target by the accumulated
+        /// precession (0.37 deg in 2026), an error of up to ~0.3 km/s.
+        ///
+        /// Checked against JPL Horizons observer velocities (see AstronomyUtilsTests) to
+        /// better than 0.1 km/s; what is left out - the Sun's motion about the Solar System
+        /// barycentre, the Earth's about the Earth-Moon barycentre, planetary perturbations -
+        /// adds up to roughly 0.03 km/s. This is the conventional "kinematic" LSR (fixed
+        /// standard solar motion), not the "dynamical" LSR.
         /// </summary>
         public static double ComputeLsrCorrectionKmPerSec(
             double raHours,
@@ -148,8 +162,7 @@ namespace RASTA.Core.Astro
             double ra = raDeg * Math.PI / 180.0;
             double dec = decDeg * Math.PI / 180.0;
 
-            // Unit vector toward the target, equatorial Cartesian (J2000-ish; precession
-            // over a human lifetime is well under the precision this formula targets).
+            // Unit vector toward the target, J2000 equatorial Cartesian.
             double ux = Math.Cos(dec) * Math.Cos(ra);
             double uy = Math.Cos(dec) * Math.Sin(ra);
             double uz = Math.Sin(dec);
@@ -157,23 +170,44 @@ namespace RASTA.Core.Astro
             // --- 1. Earth's heliocentric orbital velocity ---------------------------
             double d = ToJulianDate(utc) - 2451545.0; // days since J2000.0
 
-            double meanLongitudeDeg = NormalizeDegrees(280.460 + 0.9856474 * d);
-            double meanAnomalyDeg = NormalizeDegrees(357.528 + 0.9856003 * d);
-            double meanAnomaly = meanAnomalyDeg * Math.PI / 180.0;
+            double centuries = d / 36525.0;
 
-            // Low-precision apparent ecliptic longitude of the Sun.
-            double sunLambdaDeg = NormalizeDegrees(
-                meanLongitudeDeg + 1.915 * Math.Sin(meanAnomaly) + 0.020 * Math.Sin(2 * meanAnomaly));
-            double sunLambda = sunLambdaDeg * Math.PI / 180.0;
+            // Sun's geometric mean longitude and mean anomaly, mean equinox of date (Meeus).
+            double meanLongitudeDeg = 280.46646 + 0.98564736 * d;
+            double meanAnomalyDeg = 357.52911 + 0.98560028 * d;
+            double meanAnomaly = NormalizeDegrees(meanAnomalyDeg) * Math.PI / 180.0;
 
-            const double obliquityDeg = 23.4393;
+            // Sun's true longitude = mean longitude + equation of centre.
+            double sunLambdaDeg = meanLongitudeDeg
+                + (1.914602 - 0.004817 * centuries) * Math.Sin(meanAnomaly)
+                + 0.019993 * Math.Sin(2 * meanAnomaly)
+                + 0.000289 * Math.Sin(3 * meanAnomaly);
+
+            // Longitude of the Sun's perigee (= Earth's perihelion + 180 deg).
+            double perigeeDeg = meanLongitudeDeg - meanAnomalyDeg;
+
+            // Both longitudes are measured from the equinox of date; the target vector is
+            // J2000. Take out the general precession in longitude so everything shares the
+            // J2000 equinox (0.37 deg by 2026, which would otherwise cost up to 0.2 km/s).
+            double precessionDeg = 1.396971 * centuries + 0.0003086 * centuries * centuries;
+            double sunLambda = NormalizeDegrees(sunLambdaDeg - precessionDeg) * Math.PI / 180.0;
+            double perigee = NormalizeDegrees(perigeeDeg - precessionDeg) * Math.PI / 180.0;
+
+            double eccentricity = 0.016708634 - 0.000042037 * centuries;
+
+            // 2*pi*a / sidereal year = 29.7847 km/s; an ellipse scales that by 1/sqrt(1-e^2).
+            const double meanOrbitalSpeedKmPerSec = 29.7847;
+            double k = meanOrbitalSpeedKmPerSec / Math.Sqrt(1.0 - eccentricity * eccentricity);
+
+            const double obliquityDeg = 23.4392911; // J2000
             double obliquity = obliquityDeg * Math.PI / 180.0;
-            const double earthOrbitalSpeedKmPerSec = 29.7859; // mean orbital speed
 
-            // Earth's velocity direction leads the Sun's ecliptic longitude by 90 deg
-            // (circular-orbit approximation): vDirection = sunLambda - 90 deg.
-            double vEclX = earthOrbitalSpeedKmPerSec * Math.Sin(sunLambda);
-            double vEclY = -earthOrbitalSpeedKmPerSec * Math.Cos(sunLambda);
+            // Velocity on a Kepler ellipse at true longitude L with perihelion longitude w is
+            // k * (-sin L - e sin w, cos L + e cos w). The Earth's L and w are the Sun's
+            // longitude and perigee plus 180 deg, which flips every sign. With e = 0 this is
+            // the circular orbit: the Earth moving toward (Sun's longitude - 90 deg).
+            double vEclX = k * (Math.Sin(sunLambda) + eccentricity * Math.Sin(perigee));
+            double vEclY = -k * (Math.Cos(sunLambda) + eccentricity * Math.Cos(perigee));
 
             // Ecliptic -> equatorial (orbit defines the ecliptic plane, so vEclZ = 0).
             double vOrbX = vEclX;
@@ -188,18 +222,20 @@ namespace RASTA.Core.Astro
             double ha = haDeg * Math.PI / 180.0;
             double lat = latDeg * Math.PI / 180.0;
 
+            // The observer is carried due east, whose unit vector is (-sin LST, cos LST, 0).
+            // Dotted with the target direction that is cos(dec) * sin(RA - LST), i.e.
+            // -cos(dec) * sin(HA): positive toward a rising target (HA < 0), negative toward
+            // a setting one. (This had the opposite sign until issue #21.)
             const double earthEquatorialSpeedKmPerSec = 0.4651;
-            double vRotation = earthEquatorialSpeedKmPerSec * Math.Cos(lat) * Math.Cos(dec) * Math.Sin(ha);
+            double vRotation = -earthEquatorialSpeedKmPerSec * Math.Cos(lat) * Math.Cos(dec) * Math.Sin(ha);
 
             // --- 3. Sun's standard motion relative to the LSR ------------------------
-            // Classical/"standard" solar apex (B1900): 20.0 km/s toward RA 18h03m50.2s,
-            // Dec +30d00'17" - the conventional definition of the kinematic LSR.
+            // The conventional definition of the kinematic LSR: 20 km/s toward the standard
+            // apex (already in J2000, see SolarApexRaDegJ2000).
             const double solarMotionKmPerSec = 20.0;
-            const double solarApexRaDeg = 270.9592; // 18h 03m 50.2s
-            const double solarApexDecDeg = 30.0047; // +30d 00' 17"
 
-            double apexRa = solarApexRaDeg * Math.PI / 180.0;
-            double apexDec = solarApexDecDeg * Math.PI / 180.0;
+            double apexRa = SolarApexRaDegJ2000 * Math.PI / 180.0;
+            double apexDec = SolarApexDecDegJ2000 * Math.PI / 180.0;
 
             double vSunX = solarMotionKmPerSec * Math.Cos(apexDec) * Math.Cos(apexRa);
             double vSunY = solarMotionKmPerSec * Math.Cos(apexDec) * Math.Sin(apexRa);

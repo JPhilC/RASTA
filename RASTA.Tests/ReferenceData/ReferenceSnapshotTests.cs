@@ -30,7 +30,7 @@ namespace RASTA.Tests.ReferenceData
     [TestFixture, Category("ReferenceData")]
     public class ReferenceSnapshotTests
     {
-        private const string DefaultReferenceFolder = @"D:\Raw\RASTA\Captures\1420.7000MHz\2026-11-08";
+        private const string DefaultReferenceFolder = @"C:\Raw\RASTA\Captures\1420.7000MHz\2026-11-08";
 
         // Line-free region used for the noise figure: clear of Galactic HI, and inside the
         // channels the receiver's passband still covers at the default 1420.7 MHz centre.
