@@ -117,6 +117,18 @@ public partial class PrepareViewModel : ViewModelBase
     public double BeamwidthDeg => _settings.BeamwidthDeg;
     public double FocalRatio => _settings.FocalRatio;
 
+    // Mount RA/Dec epoch (issue #38) - see SettingsViewModel.
+    public string MountEquatorialSystemText => _settings.MountEquatorialSystemText;
+    public bool IsMountEquatorialSystemAssumed => _settings.IsMountEquatorialSystemAssumed;
+    public IReadOnlyList<RASTA.Core.Telescope.EquatorialCoordinateSystem> FallbackEquatorialSystemChoices
+        => SettingsViewModel.FallbackEquatorialSystemChoices;
+
+    public RASTA.Core.Telescope.EquatorialCoordinateSystem FallbackMountEquatorialSystem
+    {
+        get => _settings.FallbackMountEquatorialSystem;
+        set => _settings.FallbackMountEquatorialSystem = value;
+    }
+
     public double CalibrationFrequencyHz
     {
         get => _settings.CalibrationFrequencyHz;
@@ -273,6 +285,18 @@ public partial class PrepareViewModel : ViewModelBase
 
             case nameof(SettingsViewModel.FocalRatio):
                 OnPropertyChanged(nameof(FocalRatio));
+                break;
+
+            case nameof(SettingsViewModel.MountEquatorialSystemText):
+                OnPropertyChanged(nameof(MountEquatorialSystemText));
+                break;
+
+            case nameof(SettingsViewModel.IsMountEquatorialSystemAssumed):
+                OnPropertyChanged(nameof(IsMountEquatorialSystemAssumed));
+                break;
+
+            case nameof(SettingsViewModel.FallbackMountEquatorialSystem):
+                OnPropertyChanged(nameof(FallbackMountEquatorialSystem));
                 break;
 
             case nameof(SettingsViewModel.IsConnected):

@@ -30,6 +30,16 @@ namespace RASTA.Core.Telescope
         [ObservableProperty]
         private CoordinateMode mode;
 
+        /// <summary>
+        /// The RA/Dec system the connected mount uses (issue #38) - for display only;
+        /// RightAscensionHours/DeclinationDeg above are always J2000.
+        /// </summary>
+        [ObservableProperty]
+        private EquatorialCoordinateSystem? reportedEquatorialSystem;
+
+        [ObservableProperty]
+        private EquatorialCoordinateSystem effectiveEquatorialSystem = EquatorialCoordinateSystem.Topocentric;
+
         [ObservableProperty]
         private bool trackingEnabled;
 

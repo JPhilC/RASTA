@@ -8,7 +8,101 @@ namespace RASTA.Core.Astro
 {
     public static class AstronomyUtils
     {
+        /// <summary>Julian Date of the J2000.0 epoch.</summary>
+        public const double JdJ2000 = 2451545.0;
 
+        /// <summary>Julian Date of the B1950.0 epoch (Besselian).</summary>
+        public const double JdB1950 = 2433282.4235;
+
+        /// <summary>
+        /// Precesses a mean RA/Dec from the equinox at Julian Date <paramref name="fromJd"/> to
+        /// the one at <paramref name="toJd"/> - the rigorous IAU 1976 method (Meeus,
+        /// Astronomical Algorithms, ch. 21, eqs. 21.2-21.4). Precession only: nutation (up to
+        /// ~17") and annual aberration (up to ~20") are left out, which is far below anything a
+        /// ~10 deg beam or the LSR correction (~0.0001 km/s per arcsecond) can notice. Accurate
+        /// to well under an arcsecond for a few centuries either side of J2000.
+        /// </summary>
+        public static (double raHours, double decDeg) Precess(double raHours, double decDeg, double fromJd, double toJd)
+        {
+            if (fromJd == toJd)
+                return (raHours, decDeg);
+
+            double T = (fromJd - JdJ2000) / 36525.0;
+            double t = (toJd - fromJd) / 36525.0;
+
+            const double arcsec = Math.PI / (180.0 * 3600.0);
+            double zeta = ((2306.2181 + 1.39656 * T - 0.000139 * T * T) * t
+                          + (0.30188 - 0.000344 * T) * t * t + 0.017998 * t * t * t) * arcsec;
+            double z = ((2306.2181 + 1.39656 * T - 0.000139 * T * T) * t
+                       + (1.09468 + 0.000066 * T) * t * t + 0.018203 * t * t * t) * arcsec;
+            double theta = ((2004.3109 - 0.85330 * T - 0.000217 * T * T) * t
+                           - (0.42665 + 0.000217 * T) * t * t - 0.041833 * t * t * t) * arcsec;
+
+            double ra0 = raHours * 15.0 * Math.PI / 180.0;
+            double dec0 = decDeg * Math.PI / 180.0;
+
+            double a = Math.Cos(dec0) * Math.Sin(ra0 + zeta);
+            double b = Math.Cos(theta) * Math.Cos(dec0) * Math.Cos(ra0 + zeta) - Math.Sin(theta) * Math.Sin(dec0);
+            double c = Math.Sin(theta) * Math.Cos(dec0) * Math.Cos(ra0 + zeta) + Math.Cos(theta) * Math.Sin(dec0);
+
+            // atan2 rather than Meeus' asin(c) so a target near the pole keeps full precision.
+            double raDeg = NormalizeDegrees((Math.Atan2(a, b) + z) * 180.0 / Math.PI);
+            double dec = Math.Atan2(c, Math.Sqrt(a * a + b * b));
+
+            return (raDeg / 15.0, dec * 180.0 / Math.PI);
+        }
+
+        /// <summary>J2000 mean RA/Dec to the mean equinox of <paramref name="utc"/> ("JNow").</summary>
+        public static (double raHours, double decDeg) PrecessJ2000ToDate(double raHours, double decDeg, DateTime utc)
+            => Precess(raHours, decDeg, JdJ2000, ToJulianDate(utc));
+
+        /// <summary>Mean RA/Dec of the equinox of <paramref name="utc"/> ("JNow") to J2000.</summary>
+        public static (double raHours, double decDeg) PrecessDateToJ2000(double raHours, double decDeg, DateTime utc)
+            => Precess(raHours, decDeg, ToJulianDate(utc), JdJ2000);
+
+        /// <summary>Julian Date of a Julian-epoch equinox, e.g. 2000.0 or 2026.89 (FITS EQUINOX).</summary>
+        public static double JulianEpochToJd(double julianEpoch) => JdJ2000 + (julianEpoch - 2000.0) * 365.25;
+
+        /// <summary>Julian epoch (e.g. 2026.89) of a UTC instant.</summary>
+        public static double JulianEpoch(DateTime utc) => 2000.0 + (ToJulianDate(utc) - JdJ2000) / 365.25;
+
+        /// <summary>
+        /// The Julian Date of the equinox a mount's coordinate system refers to at
+        /// <paramref name="utc"/>, or null for <see cref="EquatorialCoordinateSystem.Other"/>
+        /// (which the caller must resolve to a concrete system first).
+        /// </summary>
+        public static double? EquinoxJd(EquatorialCoordinateSystem system, DateTime utc) => system switch
+        {
+            EquatorialCoordinateSystem.Topocentric => ToJulianDate(utc),
+            EquatorialCoordinateSystem.J2000 => JdJ2000,
+            EquatorialCoordinateSystem.J2050 => JulianEpochToJd(2050.0),
+            EquatorialCoordinateSystem.B1950 => JdB1950,
+            _ => null,
+        };
+
+        /// <summary>Converts RA/Dec in a mount's coordinate system to J2000.</summary>
+        public static (double raHours, double decDeg) ToJ2000(
+            double raHours, double decDeg, EquatorialCoordinateSystem system, DateTime utc)
+        {
+            double fromJd = EquinoxJd(system, utc)
+                ?? throw new ArgumentException("Resolve EquatorialCoordinateSystem.Other to a concrete system first.", nameof(system));
+            return Precess(raHours, decDeg, fromJd, JdJ2000);
+        }
+
+        /// <summary>Converts J2000 RA/Dec to a mount's coordinate system.</summary>
+        public static (double raHours, double decDeg) FromJ2000(
+            double raHours, double decDeg, EquatorialCoordinateSystem system, DateTime utc)
+        {
+            double toJd = EquinoxJd(system, utc)
+                ?? throw new ArgumentException("Resolve EquatorialCoordinateSystem.Other to a concrete system first.", nameof(system));
+            return Precess(raHours, decDeg, JdJ2000, toJd);
+        }
+
+        /// <summary>
+        /// Az/El of a J2000 RA/Dec at <paramref name="utc"/>. The RA/Dec is precessed to the
+        /// equinox of date first, since the hour angle comes from the sidereal time of date -
+        /// without that a J2000 position lands up to 0.37 deg (in 2026) off (issue #38).
+        /// </summary>
         public static (double azDeg, double elDeg) EquatorialToHorizontal(
             double raHours,
             double decDeg,
@@ -16,6 +110,8 @@ namespace RASTA.Core.Astro
             double latDeg,
             double lonDeg)
         {
+            (raHours, decDeg) = PrecessJ2000ToDate(raHours, decDeg, utc);
+
             // 1. Convert RA hours → degrees
             double raDeg = raHours * 15.0;
 
@@ -65,7 +161,8 @@ namespace RASTA.Core.Astro
         /// Inverse of EquatorialToHorizontal: recovers RA/Dec from an observed Az/Alt at
         /// a given time and site. Needed because AltAz-mode captures only store Az/Alt in
         /// FitsFileMetaData - this reconstructs the RA/Dec needed for things like the LSR
-        /// correction below.
+        /// correction below. Returns J2000: the hour angle gives RA of date, which is
+        /// precessed back to J2000 before returning (issue #38).
         /// </summary>
         public static (double raHours, double decDeg) HorizontalToEquatorial(
             double azDeg,
@@ -110,7 +207,7 @@ namespace RASTA.Core.Astro
             raDeg %= 360.0;
             if (raDeg < 0) raDeg += 360.0;
 
-            return (raDeg / 15.0, dec * 180.0 / Math.PI);
+            return PrecessDateToJ2000(raDeg / 15.0, dec * 180.0 / Math.PI, utc);
         }
 
         /// <summary>
@@ -140,7 +237,9 @@ namespace RASTA.Core.Astro
         ///
         /// <paramref name="raHours"/>/<paramref name="decDeg"/> are taken to be J2000. Feeding
         /// in of-date ("JNow") coordinates instead moves the target by the accumulated
-        /// precession (0.37 deg in 2026), an error of up to ~0.3 km/s.
+        /// precession (0.37 deg in 2026), an error of up to ~0.3 km/s - which is why
+        /// AscomTelescopeMount converts whatever the mount uses to J2000 and FITS headers
+        /// record EQUINOX (issue #38).
         ///
         /// Checked against JPL Horizons observer velocities (see AstronomyUtilsTests) to
         /// better than 0.1 km/s; what is left out - the Sun's motion about the Solar System
@@ -297,7 +396,7 @@ namespace RASTA.Core.Astro
         /// <summary>
         /// Converts a UTC DateTime to Julian Date.
         /// </summary>
-        private static double ToJulianDate(DateTime utc)
+        public static double ToJulianDate(DateTime utc)
         {
             if (utc.Kind != DateTimeKind.Utc)
                 utc = utc.ToUniversalTime();
@@ -415,6 +514,9 @@ namespace RASTA.Core.Astro
             double lonDeg,
             double minElevationDeg)
         {
+            // J2000 in, like EquatorialToHorizontal; the hour angle needs RA/Dec of date.
+            (raHours, decDeg) = PrecessJ2000ToDate(raHours, decDeg, atUtc);
+
             double decRad = decDeg * Math.PI / 180.0;
             double latRad = latDeg * Math.PI / 180.0;
             double minElRad = minElevationDeg * Math.PI / 180.0;

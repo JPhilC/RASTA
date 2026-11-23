@@ -1,5 +1,7 @@
 using NUnit.Framework;
 using RASTA.Core.Astro;
+using RASTA.Core.Storage;
+using RASTA.Core.Telescope;
 
 namespace RASTA.Tests.Astro
 {
@@ -105,31 +107,11 @@ namespace RASTA.Tests.Astro
         public void SolarApex_IsStandardB1900ApexPrecessedToJ2000()
         {
             // The kinematic LSR is defined by 20 km/s toward RA 18h, Dec +30 deg at equinox
-            // 1900. Precess that to J2000 here (IAU 1976 angles, Meeus ch. 21) rather than
-            // trusting any quoted J2000 figure.
+            // 1900. Precess that to J2000 with AstronomyUtils.Precess (itself checked against
+            // Meeus below) rather than trusting any quoted J2000 figure.
             const double jdB1900 = 2415020.3135;
-            const double jdJ2000 = 2451545.0;
-            double T = (jdB1900 - jdJ2000) / 36525.0;
-            double t = (jdJ2000 - jdB1900) / 36525.0;
-
-            double arcsec = Math.PI / (180.0 * 3600.0);
-            double zeta = ((2306.2181 + 1.39656 * T - 0.000139 * T * T) * t
-                          + (0.30188 - 0.000344 * T) * t * t + 0.017998 * t * t * t) * arcsec;
-            double z = ((2306.2181 + 1.39656 * T - 0.000139 * T * T) * t
-                       + (1.09468 + 0.000066 * T) * t * t + 0.018203 * t * t * t) * arcsec;
-            double theta = ((2004.3109 - 0.85330 * T - 0.000217 * T * T) * t
-                           - (0.42665 + 0.000217 * T) * t * t - 0.041833 * t * t * t) * arcsec;
-
-            double ra0 = 270.0 * Math.PI / 180.0;
-            double dec0 = 30.0 * Math.PI / 180.0;
-
-            double a = Math.Cos(dec0) * Math.Sin(ra0 + zeta);
-            double b = Math.Cos(theta) * Math.Cos(dec0) * Math.Cos(ra0 + zeta) - Math.Sin(theta) * Math.Sin(dec0);
-            double c = Math.Sin(theta) * Math.Cos(dec0) * Math.Cos(ra0 + zeta) + Math.Cos(theta) * Math.Sin(dec0);
-
-            double raDeg = (Math.Atan2(a, b) + z) * 180.0 / Math.PI;
-            if (raDeg < 0) raDeg += 360.0;
-            double decDeg = Math.Asin(c) * 180.0 / Math.PI;
+            var (raHours, decDeg) = AstronomyUtils.Precess(18.0, 30.0, jdB1900, AstronomyUtils.JdJ2000);
+            double raDeg = raHours * 15.0;
 
             TestContext.Out.WriteLine($"B1900 18h/+30 precessed to J2000: RA {raDeg:F5} deg, Dec {decDeg:F5} deg");
 
@@ -161,6 +143,121 @@ namespace RASTA.Tests.Astro
 
             double expected = 2.0 * 0.4651 * Math.Cos(latDeg * Math.PI / 180.0);
             Assert.That(rising - setting, Is.EqualTo(expected).Within(0.005));
+        }
+
+        // ---- Precession / mount epoch (issue #38) -----------------------------------------
+
+        [Test]
+        public void Precess_MatchesMeeusExample21b()
+        {
+            // Meeus, Astronomical Algorithms (2nd ed.), example 21.b: theta Persei, J2000 mean
+            // position with proper motion applied, precessed to 2028 Nov 13.19 TD
+            // (JD 2462088.69): RA 2h46m11.331s, Dec +49d20'54.54".
+            var (raHours, decDeg) = AstronomyUtils.Precess(
+                41.054063 / 15.0, 49.227750, AstronomyUtils.JdJ2000, 2462088.69);
+
+            double expectedRaDeg = (2.0 + 46.0 / 60.0 + 11.331 / 3600.0) * 15.0;
+            double expectedDecDeg = 49.0 + 20.0 / 60.0 + 54.54 / 3600.0;
+
+            Assert.That(raHours * 15.0, Is.EqualTo(expectedRaDeg).Within(2e-5));
+            Assert.That(decDeg, Is.EqualTo(expectedDecDeg).Within(2e-5));
+        }
+
+        [TestCase(EquatorialCoordinateSystem.Topocentric)]
+        [TestCase(EquatorialCoordinateSystem.J2050)]
+        [TestCase(EquatorialCoordinateSystem.B1950)]
+        public void FromJ2000_ThenToJ2000_RoundTrips(EquatorialCoordinateSystem system)
+        {
+            foreach (var (ra, dec) in new[] { (0.5, 10.0), (12.0, -45.0), (20.0, 88.5), (23.9, -89.0) })
+            {
+                var (mountRa, mountDec) = AstronomyUtils.FromJ2000(ra, dec, system, Utc);
+                var (ra2, dec2) = AstronomyUtils.ToJ2000(mountRa, mountDec, system, Utc);
+
+                double raDiffHours = Math.Abs(ra2 - ra);
+                raDiffHours = Math.Min(raDiffHours, 24.0 - raDiffHours);
+
+                Assert.That(dec2, Is.EqualTo(dec).Within(1e-7));
+                Assert.That(raDiffHours * 15.0 * Math.Cos(dec * Math.PI / 180.0), Is.LessThan(1e-7));
+            }
+        }
+
+        [Test]
+        public void ToJ2000_J2000System_IsIdentity()
+        {
+            var (ra, dec) = AstronomyUtils.ToJ2000(5.5, 22.0, EquatorialCoordinateSystem.J2000, Utc);
+            Assert.That(ra, Is.EqualTo(5.5));
+            Assert.That(dec, Is.EqualTo(22.0));
+        }
+
+        [Test]
+        public void FromJ2000_Topocentric_In2026_MovesAboutPointThreeSevenDegrees()
+        {
+            // On the equinoctial colure (RA 0h, Dec 0) general precession is almost all in RA:
+            // 26.85 years * ~46.1"/yr (m + n*tan(dec) at dec 0, RA 0) = ~0.344 deg in RA, plus
+            // ~20"/yr * 26.85 = ~0.149 deg in Dec.
+            var (ra, dec) = AstronomyUtils.FromJ2000(0.0, 0.0, EquatorialCoordinateSystem.Topocentric, Utc);
+            double sepDeg = Math.Sqrt(Math.Pow(ra * 15.0, 2) + dec * dec);
+            Assert.That(sepDeg, Is.EqualTo(0.375).Within(0.01));
+        }
+
+        [Test]
+        public void ToJ2000_Other_Throws()
+        {
+            Assert.Throws<ArgumentException>(() =>
+                AstronomyUtils.ToJ2000(1.0, 1.0, EquatorialCoordinateSystem.Other, Utc));
+        }
+
+        [Test]
+        public void FitsLsrCorrection_OfDateEquinox_MatchesJ2000()
+        {
+            // On the ecliptic 90 deg from the Earth's November velocity, where precession (along the
+            // ecliptic) moves the target most nearly along that velocity.
+            const double raHoursJ2000 = 3.0, decJ2000 = 17.0;
+            var (raOfDate, decOfDate) = AstronomyUtils.PrecessJ2000ToDate(raHoursJ2000, decJ2000, Utc);
+
+            var j2000 = new FitsFileMetaData
+            {
+                ObservationDate = Utc, SiteLatitudeDeg = 52.0, SiteLongitudeDeg = -1.5,
+                RaDeg = raHoursJ2000 * 15.0, DecDeg = decJ2000, Equinox = 2000.0,
+            };
+            var ofDate = new FitsFileMetaData
+            {
+                ObservationDate = Utc, SiteLatitudeDeg = 52.0, SiteLongitudeDeg = -1.5,
+                RaDeg = raOfDate * 15.0, DecDeg = decOfDate, Equinox = AstronomyUtils.JulianEpoch(Utc),
+            };
+            var legacy = new FitsFileMetaData
+            {
+                ObservationDate = Utc, SiteLatitudeDeg = 52.0, SiteLongitudeDeg = -1.5,
+                RaDeg = raHoursJ2000 * 15.0, DecDeg = decJ2000, Equinox = null,
+            };
+
+            double expected = j2000.ComputeLsrCorrectionKmPerSec();
+            Assert.That(ofDate.ComputeLsrCorrectionKmPerSec(), Is.EqualTo(expected).Within(1e-4));
+            Assert.That(legacy.ComputeLsrCorrectionKmPerSec(), Is.EqualTo(expected).Within(1e-12));
+
+            // ...and treating the of-date position as J2000 is the error issue #38 is about.
+            var wrong = new FitsFileMetaData
+            {
+                ObservationDate = Utc, SiteLatitudeDeg = 52.0, SiteLongitudeDeg = -1.5,
+                RaDeg = raOfDate * 15.0, DecDeg = decOfDate, Equinox = 2000.0,
+            };
+            Assert.That(Math.Abs(wrong.ComputeLsrCorrectionKmPerSec() - expected), Is.GreaterThan(0.1));
+        }
+
+        [Test]
+        public void FitsLsrCorrection_AltAzCapture_UsesJ2000()
+        {
+            const double raHoursJ2000 = 3.5, decJ2000 = -10.0;
+            var (az, alt) = AstronomyUtils.EquatorialToHorizontal(raHoursJ2000, decJ2000, Utc, 52.0, -1.5);
+
+            var altAz = new FitsFileMetaData
+            {
+                ObservationDate = Utc, SiteLatitudeDeg = 52.0, SiteLongitudeDeg = -1.5,
+                AzDeg = az, AltDeg = alt,
+            };
+
+            double expected = AstronomyUtils.ComputeLsrCorrectionKmPerSec(raHoursJ2000, decJ2000, Utc, 52.0, -1.5);
+            Assert.That(altAz.ComputeLsrCorrectionKmPerSec(), Is.EqualTo(expected).Within(1e-6));
         }
 
         private static (double x, double y, double z) UnitVector(double raDeg, double decDeg)

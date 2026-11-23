@@ -68,8 +68,28 @@ Dependencies flow one way: `RASTA.Core` ← `RASTA.Infrastructure` ← `RASTA.Pr
   reference vectors come from `scripts/Get-LsrReferenceVectors.ps1`). Before that it was off by up to
   1.2 km/s: the diurnal term had the wrong sign, the orbit was circular, and the orbital velocity was
   in of-date axes while the target was J2000. The apex constant was already J2000, only mislabelled
-  B1900. It assumes J2000 RA/Dec in; nothing yet checks which epoch the mount reports (ASCOM
-  `EquatorialSystem`), and of-date coordinates would cost up to ~0.3 km/s).
+  B1900. It assumes J2000 RA/Dec in — of-date coordinates would cost up to ~0.3 km/s — which is
+  what "RA/Dec is J2000 everywhere inside RASTA" (below) guarantees).
+
+  **RA/Dec is J2000 everywhere inside RASTA** (issue #38): plans, `TelescopeState`, FITS headers,
+  the LSR correction, Galactic conversion and the HI4PI background. `AstronomyUtils.Precess` (IAU
+  1976, Meeus ch. 21; precession only — nutation/aberration are under 0.01°) does the conversion,
+  with `PrecessJ2000ToDate`/`PrecessDateToJ2000` and `ToJ2000`/`FromJ2000` (per
+  `EquatorialCoordinateSystem`, the ASCOM `EquatorialCoordinateType` values) on top.
+  `EquatorialToHorizontal` and `SecondsUntilElevationDropsBelow` take J2000 and precess to date
+  internally (the hour angle uses sidereal time of date); `HorizontalToEquatorial` returns J2000.
+  Don't feed them of-date coordinates. The mount boundary is `AscomTelescopeMount`: it reads
+  Alpaca `equatorialsystem` on connect (`ReportedEquatorialSystem`, null if not implemented),
+  falls back to `FallbackEquatorialSystem` (a persisted `UserOptions` setting, default JNow,
+  chosen on the Prepare view) for `equOther`/not implemented, and converts in `GetRaDecAsync`
+  (which replaced the separate RA/Dec getters, since conversion needs both) and
+  `SlewToRaDecAsync`. The Prepare view shows what the mount reports and highlights when the
+  fallback is in use; connect also logs it. `FitsFileMetaData` writes `RADESYS='FK5'` +
+  `EQUINOX=2000.0` with RA/Dec; on read a missing `EQUINOX` (files before #38) is treated as
+  J2000 — those files hold whatever the mount reported, epoch unknown, so a JNow mount's old
+  Equatorial captures still carry up to ~0.3 km/s LSR error. `ComputeLsrCorrectionKmPerSec`
+  precesses any other `EQUINOX` to J2000. `PipelineVersion` 4 because AltAz captures' RA/Dec
+  (via `HorizontalToEquatorial`) changed from of-date to J2000.
 - **RASTA.Infrastructure** — concrete implementations: `RtlSdrDevice` (wraps the `RtlSdrManager`
   NuGet package + native RTL-SDR driver), `AscomAlpacaClient`/`AscomTelescopeMount` (ASCOM **Alpaca**
   Remote Server, not direct COM), `FftEngine` (FFT via `MathNet.Numerics`), JSON-backed repositories
@@ -833,7 +853,8 @@ cancellation and mount-disconnect recovery" below) doesn't leave `IsBusy`/`IsSwe
 every file: origin, data format, center freq, sample rate, FFT size, gain, dwell, observation date,
 site lat/lon/elevation, and pointing in **both** RA/Dec and Az/Alt (whichever the active
 `CoordinateMode` didn't produce directly is left null — reconstructing it later needs the stored
-site+time via `AstronomyUtils`). `FitsPathBuilder` lays files out under the user's configured
+site+time via `AstronomyUtils`). RA/Dec is always J2000, marked by `RADESYS`/`EQUINOX` (see
+"RA/Dec is J2000 everywhere inside RASTA" above). `FitsPathBuilder` lays files out under the user's configured
 capture folder as `{freqMHz}MHz/{yyyy-MM-dd}/{prefix}_....fits`; multi-file dwell points
 (`CapturePlan.FilesPerPoint > 1`) get an `_{index}of{total}.fits` suffix via
 `FitsPathBuilder.BuildSweepFilePath`.

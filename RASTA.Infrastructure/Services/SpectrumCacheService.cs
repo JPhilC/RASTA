@@ -68,8 +68,9 @@ namespace RASTA.Infrastructure.Services
         ///
         /// 2: added the recorded pointing (RaDeg/DecDeg/AzDeg/AltDeg) for the Mosaic tab.
         /// 3: LSR correction fixed (diurnal sign, elliptical orbit, J2000 axes) - issue #21.
+        /// 4: AltAz captures' RA/Dec reconstructed as J2000, not of-date; FITS EQUINOX honoured - issue #38.
         /// </summary>
-        public const int PipelineVersion = 3;
+        public const int PipelineVersion = 4;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {

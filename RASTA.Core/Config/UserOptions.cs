@@ -50,5 +50,11 @@ namespace RASTA.Core.Config
         [ObservableProperty]
         private double focalLengthM = 0.56; // RASTA's own reference antenna: f/D = 0.4
 
+        // Which RA/Dec system to assume for a mount whose driver reports equOther or doesn't
+        // implement EquatorialSystem at all (issue #38). JNow is the usual amateur-mount choice.
+        [ObservableProperty]
+        private RASTA.Core.Telescope.EquatorialCoordinateSystem fallbackMountEquatorialSystem =
+            RASTA.Core.Telescope.EquatorialCoordinateSystem.Topocentric;
+
     }
 }
