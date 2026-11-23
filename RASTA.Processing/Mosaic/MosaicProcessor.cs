@@ -90,10 +90,11 @@ namespace RASTA.Processing.Mosaic
             SmoothingKind smoothing = SmoothingKind.None,
             int smoothingWindow = 21,
             CancellationToken ct = default,
-            bool forceRegenerate = false)
+            bool forceRegenerate = false,
+            bool combMask = false)
         {
             return Task.Run(
-                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, despike, despikeThresholdSigma, smoothing, smoothingWindow, ct, forceRegenerate),
+                () => ProcessFolder(folder, baselineFilePath, targetFftSize, integratedWindowKmPerSec, progressCallback, despike, despikeThresholdSigma, smoothing, smoothingWindow, ct, forceRegenerate, combMask),
                 ct);
         }
 
@@ -108,7 +109,8 @@ namespace RASTA.Processing.Mosaic
             SmoothingKind smoothing,
             int smoothingWindow,
             CancellationToken ct,
-            bool forceRegenerate)
+            bool forceRegenerate,
+            bool combMask)
         {
             string baselineFullPath = Path.GetFullPath(baselineFilePath);
 
@@ -134,7 +136,10 @@ namespace RASTA.Processing.Mosaic
             int scanFftSize = baseline.FftSize;
             int fftSize = (targetFftSize > 0 && targetFftSize <= scanFftSize) ? targetFftSize : scanFftSize;
 
-            double[] baselinePower = baseline.AveragedPower!;
+            // Baseline spur cleaning (+ comb mask) at native resolution, before re-binning - see
+            // HiStreamingPipeline.DetectBaselineSpurs. Detected once; applied to every capture.
+            var spurReport = HiStreamingPipeline.DetectBaselineSpurs(baseline.AveragedPower!, baseline.SampFreqHz, combMask);
+            double[] baselinePower = HiStreamingPipeline.ApplyBaselineSpurCleaning(baseline.AveragedPower!, spurReport, combMask);
             if (fftSize < scanFftSize)
                 baselinePower = SpectrumBinner.BinAverage(baselinePower, fftSize);
 
@@ -220,7 +225,7 @@ namespace RASTA.Processing.Mosaic
                             "frequency than the baseline.");
                     }
 
-                    double[] capturePower = captureMeta.AveragedPower!;
+                    double[] capturePower = HiStreamingPipeline.ApplyBaselineSpurCleaning(captureMeta.AveragedPower!, spurReport, combMask);
                     if (fftSize < scanFftSize)
                         capturePower = SpectrumBinner.BinAverage(capturePower, fftSize);
 
@@ -229,7 +234,7 @@ namespace RASTA.Processing.Mosaic
                     double lsrCorrectionKmPerSec = captureMeta.LsrCorrectionKmPerSec;
 
                     var pipeline = new HiStreamingPipeline();
-                    pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma);
+                    pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma, cleanBaselineSpurs: false);
 
                     // Every position's FrequencyHz/VelocityKmPerSec axis agrees on FFT size/
                     // sample rate/center frequency (validated above), so any one of them is a

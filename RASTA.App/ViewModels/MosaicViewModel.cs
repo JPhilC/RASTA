@@ -196,6 +196,10 @@ public partial class MosaicViewModel : ObservableObject
     [ObservableProperty]
     private double despikeThresholdSigma = HiConstants.DefaultDespikeThresholdSigma;
 
+    // Mirrored from VisualiseViewModel.CombMaskEnabled - see HiStreamingPipeline.Process's combMask.
+    [ObservableProperty]
+    private bool combMaskEnabled;
+
     // Applied to MosaicProcessor.FindLinePeak's own search input (a smoothed copy of
     // RatioSpectrum), not just the stored MosaicPosition.HiSpectrum - unlike
     // HiStreamingPipeline.Process's single-file behaviour (which only ever smooths HiSpectrum,
@@ -534,7 +538,8 @@ public partial class MosaicViewModel : ObservableObject
                     smoothing: SmoothingKind,
                     smoothingWindow: SmoothingWindow,
                     ct: _generateCts.Token,
-                    forceRegenerate: _forceRegenerate);
+                    forceRegenerate: _forceRegenerate,
+                    combMask: CombMaskEnabled);
 
             BuildGrids(result);
             BuildPositionsSummary(result);

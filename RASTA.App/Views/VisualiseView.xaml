@@ -123,6 +123,20 @@
                   IsEnabled="{Binding ShowDbEnabled}"
                   ToolTip="Displays the plotted values in decibels (10·log10 of the linear value) instead of linear units. Only meaningful for the raw Baseline/Capture power spectra (single-file selection) and the Bandpass Ratio mode, since those all stay strictly positive. The HI (Frequency)/HI (Velocity) spectra have already had a fitted continuum subtracted and can go negative or near zero, where a dB scale doesn't mean anything, and SKAO TTRT never applies it at all - disabled for all three." />
 
+                <StackPanel Grid.Column="10" Grid.Row="6" Grid.ColumnSpan="3" Orientation="Horizontal">
+                <CheckBox
+                  VerticalAlignment="Center"
+                  Content="Comb Mask"
+                  IsChecked="{Binding CombMaskEnabled}"
+                  IsEnabled="{Binding DespikeControlsEnabled}"
+                  ToolTip="Narrow spurs in the baseline are always removed from both spectra (a receiver bandpass has no genuinely narrow features, so anything narrow there is interference picked up while the baseline was recorded). When those spurs form a regular comb - teeth repeating at a fixed spacing, as a USB or mount-controller clock often produces - Comb Mask fits the spacing and also removes every predicted tooth position, including teeth too weak to detect on their own and teeth that only appear in the capture. Used when both a Baseline and a Capture file are selected, or with Clean Baseline on a baseline-only chart; also drives the Mosaic tab. The Baseline Spurs box below shows what was found." />
+                <CheckBox Margin="12,0,0,0"
+                  VerticalAlignment="Center"
+                  Content="Clean Baseline"
+                  IsChecked="{Binding CleanBaselineChart}"
+                  ToolTip="Baseline-only chart (only a Baseline file selected): show the baseline after the cleaning the combined charts apply to it - narrow spurs removed (plus every predicted comb tooth when Comb Mask is ticked) and the receiver's centre DC spike removed - instead of exactly as recorded. Untick to compare against the raw baseline. Has no effect on any other chart; the combined charts always clean the baseline." />
+                </StackPanel>
+
 
                 <Button Grid.Column="14" Grid.Row="6"
                     Content="Generate Chart"
@@ -240,6 +254,12 @@
                        Text="Gain (dB)" FontWeight="Bold" />
                     <TextBox Grid.Column="10"  Width="50"
                      Text="{Binding Gain, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+
+                    <TextBlock Grid.Column="12" VerticalAlignment="Center"
+                       Text="Baseline Spurs" FontWeight="Bold"
+                       ToolTip="What the always-on baseline cleaning found on the last combined chart: how many narrow spurs were detected in the baseline, and how many bins were interpolated away in both the baseline and the capture. With Comb Mask ticked, also the fitted comb spacing and how many teeth there are per period." />
+                    <TextBox Grid.Column="14" MinWidth="100"
+                     Text="{Binding BaselineSpurInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center"
                        Text="Frames" FontWeight="Bold" />
                     <TextBox Grid.Row="2" Grid.Column="2"  Width="100"

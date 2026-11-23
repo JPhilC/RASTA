@@ -21,7 +21,9 @@ namespace RASTA.Tests.ReferenceData
     ///   dotnet test RASTA.Tests/RASTA.Tests.csproj --filter "Category=ReferenceData"
     ///
     /// RASTA_REFERENCE_DATA overrides the session folder; RASTA_SNAPSHOT_DESPIKE=1 turns the
-    /// pipeline's opt-in Despike on (default threshold). It goes through the app's own
+    /// pipeline's opt-in Despike on (default threshold), RASTA_SNAPSHOT_COMBMASK=1 its opt-in
+    /// comb masking. {label}_baseline_spurs.csv lists what BaselineSpurDetector found in the
+    /// session's baseline (and the fitted comb, if any). It goes through the app's own
     /// spectrum cache (%LOCALAPPDATA%\RASTA\SpectrumCache), so a session already viewed in
     /// the app takes seconds; an uncached one reads every FITS file and takes minutes.
     /// </summary>
@@ -57,7 +59,8 @@ namespace RASTA.Tests.ReferenceData
                 targetFftSize: 0,
                 integratedWindowKmPerSec: MosaicProcessor.DefaultIntegratedWindowKmPerSec,
                 progressCallback: null,
-                despike: Environment.GetEnvironmentVariable("RASTA_SNAPSHOT_DESPIKE") == "1");
+                despike: Environment.GetEnvironmentVariable("RASTA_SNAPSHOT_DESPIKE") == "1",
+                combMask: Environment.GetEnvironmentVariable("RASTA_SNAPSHOT_COMBMASK") == "1");
 
             var positions = result.Positions.OrderBy(p => p.Label, StringComparer.Ordinal).ToList();
             double[] velocity = result.VelocityKmPerSec;
@@ -116,8 +119,39 @@ namespace RASTA.Tests.ReferenceData
             File.WriteAllText(summaryPath, summary.ToString());
             File.WriteAllText(Path.Combine(outDir, $"{label}_spectra.csv"), spectra.ToString());
 
+            File.WriteAllText(Path.Combine(outDir, $"{label}_baseline_spurs.csv"), DescribeBaselineSpurs(loader, baseline));
+
             TestContext.Out.WriteLine($"{positions.Count} positions ({result.PositionsFromCache} from cache) -> {summaryPath}");
             Assert.That(positions, Is.Not.Empty);
+        }
+
+        private static string DescribeBaselineSpurs(CachedSpectrumLoader loader, string baselineFile)
+        {
+            var entry = loader.Load(new[] { baselineFile }, skao: false, forceRegenerate: false, "baseline", null, CancellationToken.None, out _);
+            double[] shifted = HiStreamingPipeline.FftShift(entry.AveragedPower!);
+            var report = BaselineSpurDetector.Detect(shifted, entry.SampFreqHz);
+
+            var inv = CultureInfo.InvariantCulture;
+            var sb = new StringBuilder();
+            sb.AppendLine("PeakBin,LoBin,HiBin,OffsetKHz,Sigma,ExcessPercent");
+            foreach (var s in report.Spurs)
+                sb.AppendLine(string.Join(",", s.PeakBin, s.LoBin, s.HiBin,
+                    (s.OffsetHz / 1000).ToString("F1", inv), s.Sigma.ToString("F1", inv), (100 * s.ExcessFraction).ToString("F2", inv)));
+
+            if (report.Comb is { } comb)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"# Comb: period {comb.PeriodBins.ToString("F3", inv)} bins ({(comb.PeriodHz / 1000).ToString("F3", inv)} kHz), " +
+                    $"{comb.PhasesBins.Count} phases at bins {string.Join(" ", comb.PhasesBins.Select(p => p.ToString("F1", inv)))}, " +
+                    $"{comb.TeethExplained} spurs explained, {comb.PredictedToothBins.Count} teeth predicted, " +
+                    $"half-width {comb.ToothHalfWidthBins}, masks {(100 * comb.MaskedFraction).ToString("F2", inv)}% of the band");
+            }
+            else
+            {
+                sb.AppendLine();
+                sb.AppendLine("# Comb: none fitted");
+            }
+            return sb.ToString();
         }
 
         private static string FindRepoRoot()
