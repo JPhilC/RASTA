@@ -542,6 +542,18 @@ yet. Ordered roughly by value for effort.
   `_run_ppm_test`; only as good as the PC clock). Work here: implement the stub, add a ppm
   setting, record it in `FitsFileMetaData`, apply it to the frequency axis. A capture and its
   baseline must use the same value. Small and independent.
+
+  **Outcome (2026-11-23).** Reimplemented from H1-HUNTER's description, no code copied.
+  `RASTA.Core/Sdr/FrequencyCorrection` splits a ppm value into the whole part for the tuner
+  (rounded half away from zero) and a residual that scales both the centre frequency and the
+  sample rate (they share the crystal), which gives the true axis exactly. A persisted PPM
+  Correction setting on Prepare feeds Calibrate Device Gain and Capture Baseline; the profile
+  records it, and sweeps/Quick Capture use the profile's value like its gain, so a capture
+  always matches its baseline. Prepare flags a setting that differs from the loaded
+  calibration. FITS gets `PPM` and `PPM_HW`; Visualise and Mosaic apply the residual to the
+  axis and refuse to combine a baseline and capture with different values (no card = 0, so
+  old files reduce as before). No `PipelineVersion` bump (old cache entries read the new
+  fields as null, which is correct). Not done: the PC-clock measurement aid.
 - **Clipping check on every capture (#33).** RASTA checks ADC saturation only during the gain sweep
   (`Calibrator.ComputeSaturationFraction`). H1-HUNTER checks every block (raw bytes ≤ 3 or ≥ 252)
   and rejects a calibration capture with more than 0.1% clipped samples. Work here: compute the

@@ -1,5 +1,6 @@
 ﻿using nom.tam.fits;
 using RASTA.Core.Astro;
+using RASTA.Core.Sdr;
 
 namespace RASTA.Core.Storage
 {
@@ -35,6 +36,27 @@ namespace RASTA.Core.Storage
         /// </summary>
         public double? Equinox { get; set; } = 2000.0;
 
+        /// <summary>
+        /// Receiver crystal correction (ppm) in force for this capture (issue #32): the whole
+        /// part was set in the tuner (PpmHardware), the rest has to be applied to the frequency
+        /// axis - see FrequencyCorrection and AxisCentFreqHz/AxisSampFreqHz. Null for files
+        /// written before #32, which had no correction at all, so they reduce exactly as before.
+        /// </summary>
+        public double? PpmCorrection { get; set; }
+
+        /// <summary>Whole ppm actually set in the tuner (FITS PPM_HW); null when not recorded.</summary>
+        public int? PpmHardware { get; set; }
+
+        /// <summary>The part of PpmCorrection the tuner did not apply; 0 when none was recorded.</summary>
+        public double ResidualPpm =>
+            PpmCorrection is double ppm ? FrequencyCorrection.ResidualPpm(ppm, PpmHardware) : 0.0;
+
+        /// <summary>True centre frequency of the data: CentFreqHz corrected for ResidualPpm.</summary>
+        public double AxisCentFreqHz => FrequencyCorrection.Apply(CentFreqHz, ResidualPpm);
+
+        /// <summary>True sample rate of the data: SampFreqHz corrected for ResidualPpm.</summary>
+        public double AxisSampFreqHz => FrequencyCorrection.Apply(SampFreqHz, ResidualPpm);
+
 
         public void Write(BasicHDU hdu)
         {
@@ -58,6 +80,11 @@ namespace RASTA.Core.Storage
             }
             if (AzDeg.HasValue) hdu.AddValue("AZ", AzDeg.Value, "Azimuth (deg)");
             if (AltDeg.HasValue) hdu.AddValue("ALT", AltDeg.Value, "Altitude (deg)");
+            if (PpmCorrection is double ppm)
+            {
+                hdu.AddValue("PPM", ppm, "Receiver freq correction (ppm)");
+                hdu.AddValue("PPM_HW", PpmHardware ?? FrequencyCorrection.HardwarePpm(ppm), "Part set in tuner (ppm); rest on axis");
+            }
 
         }
 
@@ -127,6 +154,8 @@ namespace RASTA.Core.Storage
             meta.AzDeg = header.FindCard("AZ") != null ? header.GetDoubleValue("AZ") : null;
             meta.AltDeg = header.FindCard("ALT") != null ? header.GetDoubleValue("ALT") : null;
             meta.Equinox = header.FindCard("EQUINOX") != null ? header.GetDoubleValue("EQUINOX") : null;
+            meta.PpmCorrection = header.FindCard("PPM") != null ? header.GetDoubleValue("PPM") : null;
+            meta.PpmHardware = header.FindCard("PPM_HW") != null ? header.GetIntValue("PPM_HW") : null;
             return meta;
         }
     }

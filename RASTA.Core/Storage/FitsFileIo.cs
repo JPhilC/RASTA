@@ -93,11 +93,13 @@ namespace RASTA.Core.Storage
                 {
                     if (meta.FftSize != combinedMeta.FftSize ||
                         meta.SampFreqHz != combinedMeta.SampFreqHz ||
-                        meta.CentFreqHz != combinedMeta.CentFreqHz)
+                        meta.CentFreqHz != combinedMeta.CentFreqHz ||
+                        meta.PpmCorrection != combinedMeta.PpmCorrection ||
+                        meta.PpmHardware != combinedMeta.PpmHardware)
                     {
                         throw new InvalidOperationException(
                             $"Related capture file '{Path.GetFileName(filePaths[f])}' has a different FFT size, " +
-                            "sample rate, or center frequency than the other files being combined.");
+                            "sample rate, center frequency or ppm correction than the other files being combined.");
                     }
 
                     // Total integration time across all combined files, not just the first.

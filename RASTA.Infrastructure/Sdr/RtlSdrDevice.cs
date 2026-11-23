@@ -67,7 +67,8 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
         if (_isStreaming)
             return;
 
-        // Configure device for streaming
+        // Configure device for streaming (ppm first, so the tune below uses it)
+        ApplyPpmCorrection();
         _device.CenterFrequency = Frequency.FromHz(frequencyHz);
         _device.SampleRate = Frequency.FromHz(sampleRateHz);
         _device.TunerGainMode = TunerGainModes.Manual;
@@ -150,7 +151,8 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
         if (_device == null)
             throw new InvalidOperationException("SDR device not initialized.");
 
-        // Configure device
+        // Configure device (ppm first, so the tune below uses it)
+        ApplyPpmCorrection();
         _device.CenterFrequency = Frequency.FromHz(frequencyHz);
         _device.SampleRate = Frequency.FromHz(sampleRateHz);
 
@@ -262,7 +264,24 @@ public sealed class RtlSdrDevice : ISdrDevice, IDisposable
         _device.SetBiasTee(enabled ? BiasTeeModes.Enabled : BiasTeeModes.Disabled);
     }
 
-    public void SetPpmCorrection(int ppm) { }
+    // Whole-ppm crystal correction to apply on the next tune (issue #32). A freshly opened
+    // device starts at 0, which is also librtlsdr's own initial value.
+    private int _ppmCorrection;
+
+    public void SetPpmCorrection(int ppm) => _ppmCorrection = ppm;
+
+    /// <summary>
+    /// Pushes _ppmCorrection to the tuner, before the centre frequency and sample rate are
+    /// set so both are tuned with it. Skipped when the device already has that value:
+    /// librtlsdr's rtlsdr_set_freq_correction returns an error if asked to set the value it
+    /// already holds (H1-HUNTER found the same; pyrtlsdr closes the device on it), which
+    /// RtlSdrManager would surface as an exception - and 0 on a fresh device is exactly that case.
+    /// </summary>
+    private void ApplyPpmCorrection()
+    {
+        if (_device!.FrequencyCorrection != _ppmCorrection)
+            _device.FrequencyCorrection = _ppmCorrection;
+    }
     public void SetDirectSampling(bool enabled) { }
 
     // ---------------------------------------------------------

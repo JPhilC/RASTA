@@ -96,6 +96,8 @@ namespace RASTA.Processing.HiPipeline
             entry.AzDeg = meta.AzDeg;
             entry.AltDeg = meta.AltDeg;
             entry.LsrCorrectionKmPerSec = meta.ComputeLsrCorrectionKmPerSec();
+            entry.PpmCorrection = meta.PpmCorrection;
+            entry.PpmHardware = meta.PpmHardware;
 
             string status = $"Processing {label}…";
             progress?.Invoke(status, 0.0);

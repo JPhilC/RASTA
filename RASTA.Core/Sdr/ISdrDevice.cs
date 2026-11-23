@@ -39,6 +39,12 @@ public interface ISdrDevice : IDisposable
     // Optional advanced features
     // -----------------------------
     void SetBiasTee(bool enabled);
+    /// <summary>
+    /// Sets the whole-ppm crystal correction the tuner applies (see FrequencyCorrection).
+    /// Stored, and applied the next time the device is tuned (StartStreamingAsync /
+    /// CaptureRawIqAsync), so call it before each capture - including on a device instance
+    /// that has just been reopened, which starts at 0.
+    /// </summary>
     void SetPpmCorrection(int ppm);
     void SetDirectSampling(bool enabled);
 }

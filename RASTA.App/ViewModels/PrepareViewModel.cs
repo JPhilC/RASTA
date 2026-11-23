@@ -56,6 +56,8 @@ public partial class PrepareViewModel : ViewModelBase
     partial void OnCalibrationChanged(CalibrationProfile? value)
     {
         OnPropertyChanged(nameof(IsCalibrated));
+        OnPropertyChanged(nameof(PpmCalibrationNote));
+        OnPropertyChanged(nameof(IsPpmCalibrationMismatch));
         UiThread.SafeInvoke(() => CaptureBaselineCommand.NotifyCanExecuteChanged());
     }
 
@@ -162,6 +164,36 @@ public partial class PrepareViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Receiver crystal correction in ppm (issue #32) - see SettingsViewModel.PpmCorrection.</summary>
+    public double PpmCorrection
+    {
+        get => _settings.PpmCorrection;
+        set
+        {
+            _settings.PpmCorrection = value;
+            ValidatePpmCorrection(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PpmCalibrationNote));
+            OnPropertyChanged(nameof(IsPpmCalibrationMismatch));
+        }
+    }
+
+    /// <summary>
+    /// True when the loaded calibration's baseline was captured with a different ppm than the
+    /// current setting. Captures use the calibration's value, so the setting only takes
+    /// effect after a new baseline.
+    /// </summary>
+    public bool IsPpmCalibrationMismatch =>
+        Calibration is { BaselineSpectrum.Length: > 0 } c &&
+        !RASTA.Core.Sdr.FrequencyCorrection.AreEqual(c.PpmCorrection, PpmCorrection);
+
+    public string PpmCalibrationNote =>
+        Calibration is null || Calibration.BaselineSpectrum.Length == 0
+            ? string.Empty
+            : IsPpmCalibrationMismatch
+                ? $"Calibration uses {RASTA.Core.Sdr.FrequencyCorrection.Describe(Calibration.PpmCorrection ?? 0.0)}; captures will use that until a new baseline is captured."
+                : $"Calibration uses {RASTA.Core.Sdr.FrequencyCorrection.Describe(Calibration.PpmCorrection ?? 0.0)}.";
+
     public int GainDwellSeconds
     {
         get => _settings.GainDwellSeconds;
@@ -222,6 +254,7 @@ public partial class PrepareViewModel : ViewModelBase
         ValidateFftSize(FftSize);
         ValidateGainDwell(GainDwellSeconds);
         ValidateBaselineDwell(BaselineDwellSeconds);
+        ValidatePpmCorrection(PpmCorrection);
     }
 
     // -----------------------------
@@ -353,6 +386,15 @@ public partial class PrepareViewModel : ViewModelBase
                 "Gain dwell time must be between 1 and 60 seconds.");
     }
 
+    private void ValidatePpmCorrection(double value)
+    {
+        ClearErrors(nameof(PpmCorrection));
+
+        if (double.IsNaN(value) || Math.Abs(value) > RASTA.Core.Sdr.FrequencyCorrection.MaxAbsPpm)
+            AddError(nameof(PpmCorrection),
+                $"PPM correction must be between -{RASTA.Core.Sdr.FrequencyCorrection.MaxAbsPpm:0} and +{RASTA.Core.Sdr.FrequencyCorrection.MaxAbsPpm:0}.");
+    }
+
     private void ValidateBaselineDwell(int value)
     {
         ClearErrors(nameof(BaselineDwellSeconds));
@@ -458,6 +500,7 @@ public partial class PrepareViewModel : ViewModelBase
         _statusBar.IsCaptureInProgress = true;
 
         double frequencyHz = CalibrationFrequencyHz;
+        double ppmCorrection = PpmCorrection;
         double sampleRateHz = SampleRateHz;
         int fftSize = FftSize;
         TimeSpan dwell = TimeSpan.FromSeconds(GainDwellSeconds);
@@ -483,6 +526,7 @@ public partial class PrepareViewModel : ViewModelBase
                 sampleRateHz,
                 dwell,
                 fftSize,
+                ppmCorrection,
                 (msg, pct) =>
                 {
                     _statusBar.CaptureStatus = msg;
@@ -493,7 +537,7 @@ public partial class PrepareViewModel : ViewModelBase
             // Persisted immediately (empty BaselineSpectrum) so this step alone survives
             // an interrupted session - see the class-level comment above.
             Calibration = await _calibrationService.SaveGainOnlyCalibrationAsync(
-                gainDb, frequencyHz, sampleRateHz, fftSize, device.DeviceId);
+                gainDb, frequencyHz, sampleRateHz, fftSize, ppmCorrection, device.DeviceId);
 
             _statusBar.CaptureStatus = $"Gain selected: {gainDb:F1} dB. Capture a baseline to finish calibration.";
             _statusBar.CalibratedGain = $"Gain = {gainDb:F1} dB (no baseline)";
@@ -550,6 +594,12 @@ public partial class PrepareViewModel : ViewModelBase
             return;
         }
 
+        if (GetErrors(nameof(PpmCorrection)).Cast<object>().Any())
+        {
+            _statusBar.CaptureStatus = "Fix the PPM correction setting first.";
+            return;
+        }
+
         // Gain/frequency/sample-rate/FFT size come from the profile started by
         // Calibrate Device Gain (or a loaded one) - a baseline must be built with
         // exactly the settings the gain was chosen for.
@@ -558,6 +608,9 @@ public partial class PrepareViewModel : ViewModelBase
         int fftSize = Calibration.FftSize;
         double gainDb = Calibration.GainDb;
         TimeSpan baselineDwell = TimeSpan.FromSeconds(BaselineDwellSeconds);
+        // The ppm correction is the current setting, not the profile's: it doesn't affect the gain
+        // choice, so changing it only needs a new baseline. Recorded on the completed profile.
+        double ppmCorrection = PpmCorrection;
 
         _statusBar.CaptureStatus = "Starting baseline capture…";
         ProgressValue = 0.0;
@@ -651,6 +704,7 @@ public partial class PrepareViewModel : ViewModelBase
                 gainDb,
                 baselineDwell,
                 fftSize,
+                ppmCorrection,
                 chosen,
                 SiteLatitudeDeg,
                 SiteLongitudeDeg,
@@ -665,7 +719,7 @@ public partial class PrepareViewModel : ViewModelBase
             baselineCaptured = true;
             _statusBar.CaptureStatus = $"Done. Gain = {Calibration.GainDb:F1} dB";
             _statusBar.CalibratedGain = $"Gain = {Calibration.GainDb:F1} dB";
-            _logger.Info($"Baseline capture complete. Gain {Calibration.GainDb:F1} dB, " +
+            _logger.Info($"Baseline capture complete. Gain {Calibration.GainDb:F1} dB, ppm {ppmCorrection:+0.00;-0.00;0}, " +
                          $"cold-sky Az {chosen.AzimuthDeg:F1}°/Alt {chosen.ElevationDeg:F1}°.");
         }
         catch (OperationCanceledException)
