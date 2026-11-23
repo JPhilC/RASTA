@@ -56,6 +56,7 @@ namespace RASTA.Processing.Calibration
             double sampleRateHz,
             TimeSpan dwellTime,
             int fftSize,
+            double ppmCorrection,
             Action<string, double>? progressCallback,
             CancellationToken ct)
         {
@@ -64,6 +65,9 @@ namespace RASTA.Processing.Calibration
                 throw new InvalidOperationException("SDR device reports no supported gains.");
 
             var gainTrials = new List<GainTrial>();
+
+            // Tuned with the same ppm correction the baseline and captures will use (issue #32).
+            device.SetPpmCorrection(FrequencyCorrection.HardwarePpm(ppmCorrection));
 
             int totalSteps = supportedGains.Count + 1; // +1 finalize
             int currentStep = 0;
@@ -175,6 +179,7 @@ namespace RASTA.Processing.Calibration
             double gainDb,
             TimeSpan baselineDwellTime,
             int fftSize,
+            double ppmCorrection,
             ColdSkyCandidate location,
             double siteLatitudeDeg,
             double siteLongitudeDeg,
@@ -188,6 +193,9 @@ namespace RASTA.Processing.Calibration
             progressCallback?.Invoke($"Capturing cold-sky baseline at {gainDb} dB", 0.0);
 
             uint baselineSampleCount = (uint)Math.Ceiling(sampleRateHz * baselineDwellTime.TotalSeconds);
+
+            // Whole ppm in the tuner; the residual is recorded and corrected on the axis (issue #32).
+            device.SetPpmCorrection(FrequencyCorrection.HardwarePpm(ppmCorrection));
 
             var baselineRawIq = await device.CaptureRawIqAsync(
                 frequencyHz,
@@ -217,7 +225,8 @@ namespace RASTA.Processing.Calibration
                 RaDeg = location.RightAscensionHours * 15.0,
                 DecDeg = location.DeclinationDeg,
                 AzDeg = location.AzimuthDeg,
-                AltDeg = location.ElevationDeg
+                AltDeg = location.ElevationDeg,
+                PpmCorrection = ppmCorrection
             };
 
             _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);
@@ -250,6 +259,7 @@ namespace RASTA.Processing.Calibration
                 SampleRateHz = sampleRateHz,
                 FftSize = fftSize,
                 GainDb = gainDb,
+                PpmCorrection = ppmCorrection,
                 BaselineSpectrum = baselineSpectrum,
                 BaselineMean = baselineSpectrum.Average(),
                 BaselineStdDev = ComputeStdDev(baselineSpectrum),

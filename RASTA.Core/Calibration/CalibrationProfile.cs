@@ -29,6 +29,13 @@
         public double GainDb { get; init; }
 
         /// <summary>
+        /// Receiver crystal correction (ppm) the baseline was captured with (issue #32). Captures
+        /// use this value, like GainDb, so a capture and its baseline always match bin for bin.
+        /// Null for profiles saved before #32, which had no correction (0).
+        /// </summary>
+        public double? PpmCorrection { get; init; }
+
+        /// <summary>
         /// The baseline spectrum captured at the chosen gain.
         /// This is the averaged noise spectrum used for calibration.
         /// </summary>

@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RASTA.Core.Sdr;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Infrastructure.Services;
@@ -126,6 +127,29 @@ public partial class VisualiseViewModel : ObservableObject
     // rather than silently baked into the velocity axis.
     [ObservableProperty]
     private string lsrInfo = string.Empty;
+
+    // The receiver ppm correction recorded in the file(s) behind the current chart (issue #32).
+    [ObservableProperty]
+    private string ppmInfo = string.Empty;
+
+    // FrequencyHz/SamplingHz show the recorded (nominal) header values; the frequency and
+    // velocity axes use these instead - the same values corrected for the part of the ppm
+    // correction the tuner could not apply (FrequencyCorrection). Equal to them for files
+    // without a PPM card or with a whole-ppm correction.
+    private double _axisFrequencyHz;
+    private double _axisSamplingHz;
+
+    /// <summary>Sets the displayed file parameters and the axis values from one file set.</summary>
+    private void SetFileParameters(SpectrumCacheEntry entry)
+    {
+        ScanFftSize = entry.FftSize;
+        FrequencyHz = entry.CentFreqHz;
+        SamplingHz = entry.SampFreqHz;
+        Gain = entry.GainDb;
+        _axisFrequencyHz = entry.AxisCentFreqHz;
+        _axisSamplingHz = entry.AxisSampFreqHz;
+        PpmInfo = FrequencyCorrection.Describe(entry.PpmCorrection, entry.PpmHardware);
+    }
 
 
     [ObservableProperty]
@@ -576,10 +600,7 @@ public partial class VisualiseViewModel : ObservableObject
             return;
         CombinedFileCount = 1; // this view doesn't touch the capture file
         var baseline = LoadBaselineSpectra();
-        ScanFftSize = baseline.FftSize;
-        FrequencyHz = baseline.CentFreqHz;
-        SamplingHz = baseline.SampFreqHz;
-        Gain = baseline.GainDb;
+        SetFileParameters(baseline);
         FrameCount = baseline.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
@@ -616,7 +637,7 @@ public partial class VisualiseViewModel : ObservableObject
             baselineSpectrum = HiStreamingPipeline.ApplySmoothing(baselineSpectrum, SmoothingKind, SmoothingWindow);
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, _axisFrequencyHz, _axisSamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(baselineSpectrum) : baselineSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
@@ -627,10 +648,7 @@ public partial class VisualiseViewModel : ObservableObject
         if (CaptureFile is null)
             return;
         var capture = LoadCaptureSpectra();
-        ScanFftSize = capture.FftSize;
-        FrequencyHz = capture.CentFreqHz;
-        SamplingHz = capture.SampFreqHz;
-        Gain = capture.GainDb;
+        SetFileParameters(capture);
         FrameCount = capture.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
@@ -653,7 +671,7 @@ public partial class VisualiseViewModel : ObservableObject
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
 
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, _axisFrequencyHz, _axisSamplingHz);
         // Update the SpectrumViewModel with the new data
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(captureSpectrum) : captureSpectrum);
         SpectrumVm.YAxes[0].Name = UseDbScale ? "Power (dB)" : "Power";
@@ -692,7 +710,7 @@ public partial class VisualiseViewModel : ObservableObject
         string path = Path.Combine(dir, $"{baseName}_despike_debug.csv");
 
         int n = reference.Length;
-        double df = SamplingHz / n;
+        double df = _axisSamplingHz / n;
         int mid = n / 2;
 
         using (var writer = new StreamWriter(path, append: false))
@@ -702,7 +720,7 @@ public partial class VisualiseViewModel : ObservableObject
             // enabled for the run that populated them - see the doc comment above.
             for (int i = 0; i < n; i++)
             {
-                double freq = FrequencyHz + (i - mid) * df;
+                double freq = _axisFrequencyHz + (i - mid) * df;
                 string captureRaw = rawCaptureSpectrum is not null ? rawCaptureSpectrum[i].ToString("G6") : "";
                 string captureDespiked = captureSpectrum is not null ? captureSpectrum[i].ToString("G6") : "";
                 string baselineRaw = rawBaselineSpectrum is not null ? rawBaselineSpectrum[i].ToString("G6") : "";
@@ -735,6 +753,13 @@ public partial class VisualiseViewModel : ObservableObject
             throw new InvalidOperationException(
                 $"Baseline and capture FFT sizes do not match ({baselineMeta.FftSize} vs {captureMeta.FftSize}) - " +
                 "they must be recorded at the same FFT size to be combined.");
+
+        // Issue #32: the bandpass division is bin for bin, so both must have been tuned with
+        // the same crystal correction. A file without a PPM card (pre-#32) counts as 0.
+        if (!FrequencyCorrection.AreEqual(baselineMeta.PpmCorrection, captureMeta.PpmCorrection))
+            throw new InvalidOperationException(
+                $"Baseline and capture ppm corrections do not match ({FrequencyCorrection.Describe(baselineMeta.PpmCorrection, baselineMeta.PpmHardware)} vs " +
+                $"{FrequencyCorrection.Describe(captureMeta.PpmCorrection, captureMeta.PpmHardware)}) - capture a baseline with the same correction to combine them.");
     }
 
     private (double[] baselineSpectrum, double[] captureSpectrum, HiStreamingPipeline hi)  ProcessHiCore()
@@ -749,10 +774,7 @@ public partial class VisualiseViewModel : ObservableObject
         // --- 2. Validate metadata ---
         ValidateBaselineCaptureCompatibility(baseline, capture);
 
-        ScanFftSize = baseline.FftSize;
-        FrequencyHz = baseline.CentFreqHz;
-        SamplingHz = baseline.SampFreqHz;
-        Gain = baseline.GainDb;
+        SetFileParameters(baseline);
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
@@ -795,8 +817,8 @@ public partial class VisualiseViewModel : ObservableObject
         hi.Process(
             baselineSpectrum,
             captureSpectrum,
-            sampleRateHz: SamplingHz,
-            centerFreqHz: FrequencyHz,
+            sampleRateHz: _axisSamplingHz,
+            centerFreqHz: _axisFrequencyHz,
             lsrCorrectionKmPerSec: lsrCorrectionKmPerSec,
             despike: DespikeEnabled,
             despikeThresholdSigma: DespikeThresholdSigma,
@@ -828,7 +850,7 @@ public partial class VisualiseViewModel : ObservableObject
         var (_, _, hi) = ProcessHiCore();
 
         SpectrumVm.Mode = SpectrumMode.HiVelocity;
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, _axisFrequencyHz, _axisSamplingHz);
 
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.VelocityKmPerSec);
     }
@@ -838,7 +860,7 @@ public partial class VisualiseViewModel : ObservableObject
         var (_, _, hi) = ProcessHiCore();
 
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, _axisFrequencyHz, _axisSamplingHz);
 
         SpectrumVm.UpdateSpectrum(hi.HiSpectrum, hi.FrequencyHz);
     }
@@ -850,7 +872,7 @@ public partial class VisualiseViewModel : ObservableObject
         // RatioSpectrum (capture/baseline, before continuum subtraction) is strictly
         // positive, so - unlike HiSpectrum - a dB view is valid here.
         SpectrumVm.Mode = SpectrumMode.Ratio;
-        SpectrumVm.UpdateParameters(TargetFftSize, FrequencyHz, SamplingHz);
+        SpectrumVm.UpdateParameters(TargetFftSize, _axisFrequencyHz, _axisSamplingHz);
 
         var ratio = hi.RatioSpectrum;
         SpectrumVm.UpdateSpectrum(UseDbScale ? ToDb(ratio) : ratio, hi.FrequencyHz);
@@ -879,11 +901,8 @@ public partial class VisualiseViewModel : ObservableObject
 
         ValidateBaselineCaptureCompatibility(baseline, capture);
 
-        ScanFftSize = baseline.FftSize;
+        SetFileParameters(baseline);
         TargetFftSize = SkaoConstants.NumIntegrationBins;   // the reference's own fixed output bin count
-        FrequencyHz = baseline.CentFreqHz;
-        SamplingHz = baseline.SampFreqHz;
-        Gain = baseline.GainDb;
 
         var skao = new SkaoHiObservation();
         skao.ProcessAccumulated(
@@ -891,8 +910,8 @@ public partial class VisualiseViewModel : ObservableObject
             capture.SkaoBinnedPower!,
             baseline.SkaoFrames,
             capture.SkaoFrames,
-            SamplingHz,
-            FrequencyHz
+            _axisSamplingHz,
+            _axisFrequencyHz
         );
 
         FrameCount = $"{skao.BaselineFrameCount}/{skao.CaptureFrameCount}";
@@ -904,8 +923,8 @@ public partial class VisualiseViewModel : ObservableObject
         SpectrumVm.Mode = SpectrumMode.HiFrequency;
         SpectrumVm.UpdateParameters(
             hi.HiSpectrum.Length,   // trimmed to 206 channels (256 - 2*ChCut) - see SkaoHiPipelineProcessor.Process
-            FrequencyHz,
-            SamplingHz
+            _axisFrequencyHz,
+            _axisSamplingHz
         );
 
         SpectrumVm.UpdateSpectrum(

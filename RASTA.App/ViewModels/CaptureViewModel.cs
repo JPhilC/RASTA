@@ -423,7 +423,7 @@ public partial class CaptureViewModel : ObservableObject
     /// </summary>
     private async Task<(byte[] RawIq, ISdrDevice Device)> CaptureFileWithStallRetryAsync(
         ISdrDevice device, double frequencyHz, double sampleRateHz, double gainDb,
-        uint sampleCount, string statusText, CancellationToken ct)
+        double ppmCorrection, uint sampleCount, string statusText, CancellationToken ct)
     {
         for (int attempt = 0; ; attempt++)
         {
@@ -432,6 +432,8 @@ public partial class CaptureViewModel : ObservableObject
                 : $"{statusText} (retry {attempt}/{MaxStallRetries})";
 
             ClearChunkQueues();
+            // Every attempt, since a retry swaps in a freshly reopened device (which starts at 0 ppm).
+            device.SetPpmCorrection(FrequencyCorrection.HardwarePpm(ppmCorrection));
             await device.StartStreamingAsync(frequencyHz, sampleRateHz, gainDb, ct);
 
             _chunkWorkerCts = new CancellationTokenSource();
@@ -574,6 +576,11 @@ public partial class CaptureViewModel : ObservableObject
             IsSweepCaptureRunning = true;
 
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
+            // The calibration's ppm, like its gain: the baseline was captured with it, and the
+            // bandpass division is bin for bin (issue #32). Null (pre-#32 profile) means 0.
+            double ppmCorrection = _calibrationService.CurrentCalibration.PpmCorrection ?? 0.0;
+            if (!FrequencyCorrection.AreEqual(ppmCorrection, _optionsService.Options.SdrPpmCorrection))
+                _logger.Warn($"Sweep uses the calibration's ppm correction ({ppmCorrection:+0.00;-0.00;0}), not the current setting ({_optionsService.Options.SdrPpmCorrection:+0.00;-0.00;0}) - capture a new baseline to change it.");
             fftSize = _calibrationService.CurrentCalibration.FftSize;
             int filesPerPoint = ActivePlan.FilesPerPoint;
             int targetIndex = 0;
@@ -593,8 +600,8 @@ public partial class CaptureViewModel : ObservableObject
             SpectrumVm.Mode = SpectrumMode.HiFrequency;
             SpectrumVm.UpdateParameters(fftSize, frequencyHz, sampleRateHz);
 
-            _liveSampleRateHz = sampleRateHz;
-            _liveCenterFreqHz = frequencyHz;
+            _liveSampleRateHz = FrequencyCorrection.Apply(sampleRateHz, FrequencyCorrection.ResidualPpm(ppmCorrection));
+            _liveCenterFreqHz = FrequencyCorrection.Apply(frequencyHz, FrequencyCorrection.ResidualPpm(ppmCorrection));
 
             // Marks when actual capturing began (after mount/device setup above), used
             // to measure real average time-per-point for refining EstimatedCompletionTime
@@ -688,7 +695,7 @@ public partial class CaptureViewModel : ObservableObject
                     // Streams, stops streaming, and retries this same file on an SDR stall.
                     byte[] rawIq;
                     (rawIq, device) = await CaptureFileWithStallRetryAsync(
-                        device, frequencyHz, sampleRateHz, gainDb, sampleCount,
+                        device, frequencyHz, sampleRateHz, gainDb, ppmCorrection, sampleCount,
                         $"Capturing pos {targetIndex + 1} file {i + 1}", ct);
 
                     System.Diagnostics.Debug.WriteLine($"CaptureSweepAsync: captured {rawIq.Length} bytes in {(DateTime.Now - captureStartTime).TotalSeconds:F2} seconds");
@@ -712,7 +719,8 @@ public partial class CaptureViewModel : ObservableObject
                         RaDeg = target.Mode == CoordinateMode.Equatorial ? target.RightAscensionHours * 15.0 : null,
                         DecDeg = target.Mode == CoordinateMode.Equatorial ? target.DeclinationDeg : null,
                         AzDeg = target.Mode == CoordinateMode.AltAz ? target.AzimuthDeg : null,
-                        AltDeg = target.Mode == CoordinateMode.AltAz ? target.ElevationDeg : null
+                        AltDeg = target.Mode == CoordinateMode.AltAz ? target.ElevationDeg : null,
+                        PpmCorrection = ppmCorrection
                     };
 
                     // -----------------------------
@@ -902,6 +910,7 @@ public partial class CaptureViewModel : ObservableObject
             IsQuickCaptureRunning = true;
 
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
+            double ppmCorrection = _calibrationService.CurrentCalibration.PpmCorrection ?? 0.0;
             fftSize = _calibrationService.CurrentCalibration.FftSize;
             calibrationBaselineSpectrum = _calibrationService.CurrentCalibration.BaselineSpectrum;
             // No CapturePlan behind Quick Capture (see CanQuickCapture), so there's no
@@ -917,8 +926,8 @@ public partial class CaptureViewModel : ObservableObject
             SpectrumVm.Mode = SpectrumMode.HiFrequency;
             SpectrumVm.UpdateParameters(fftSize, frequencyHz, sampleRateHz);
 
-            _liveSampleRateHz = sampleRateHz;
-            _liveCenterFreqHz = frequencyHz;
+            _liveSampleRateHz = FrequencyCorrection.Apply(sampleRateHz, FrequencyCorrection.ResidualPpm(ppmCorrection));
+            _liveCenterFreqHz = FrequencyCorrection.Apply(frequencyHz, FrequencyCorrection.ResidualPpm(ppmCorrection));
 
             _liveAccumulator = new HiStreamingAccumulator(fftSize);
             _liveLeftover = Array.Empty<byte>();
@@ -929,7 +938,7 @@ public partial class CaptureViewModel : ObservableObject
             // -----------------------------
             byte[] rawIq;
             (rawIq, device) = await CaptureFileWithStallRetryAsync(
-                device, frequencyHz, sampleRateHz, gainDb, sampleCount,
+                device, frequencyHz, sampleRateHz, gainDb, ppmCorrection, sampleCount,
                 "Quick capture: capturing", ct);
 
             string fullPath = FitsPathBuilder.BuildSweepFilePath(_optionsService.Options.CaptureFolder, "quick", startTime, frequencyHz, currentTarget.ToString(), 1, 1);
@@ -950,7 +959,8 @@ public partial class CaptureViewModel : ObservableObject
                 RaDeg = currentTarget.Mode == CoordinateMode.Equatorial ? currentTarget.RightAscensionHours * 15.0 : null,
                 DecDeg = currentTarget.Mode == CoordinateMode.Equatorial ? currentTarget.DeclinationDeg : null,
                 AzDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.AzimuthDeg : null,
-                AltDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.ElevationDeg : null
+                AltDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.ElevationDeg : null,
+                PpmCorrection = ppmCorrection
             };
 
             // -----------------------------

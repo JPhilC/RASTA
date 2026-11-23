@@ -234,6 +234,8 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="5"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -260,6 +262,12 @@
                        ToolTip="What the always-on baseline cleaning found on the last combined chart: how many narrow spurs were detected in the baseline, and how many bins were interpolated away in both the baseline and the capture. With Comb Mask ticked, also the fitted comb spacing and how many teeth there are per period." />
                     <TextBox Grid.Column="14" MinWidth="100"
                      Text="{Binding BaselineSpurInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+
+                    <TextBlock Grid.Column="16" VerticalAlignment="Center"
+                       Text="PPM" FontWeight="Bold"
+                       ToolTip="The receiver crystal correction recorded in the file(s): the whole-ppm part was set in the tuner when capturing, and any fractional remainder is corrected on the frequency and velocity axes here. Frequency and Sampling show the values as recorded. 'not recorded (0)' means a file from before the correction existed." />
+                    <TextBox Grid.Column="18" MinWidth="80"
+                     Text="{Binding PpmInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center"
                        Text="Frames" FontWeight="Bold" />
                     <TextBox Grid.Row="2" Grid.Column="2"  Width="100"

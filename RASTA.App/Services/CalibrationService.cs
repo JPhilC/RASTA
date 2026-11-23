@@ -66,6 +66,7 @@ namespace RASTA.App.Services
             double sampleRateHz,
             TimeSpan dwell,
             int fftSize,
+            double ppmCorrection,
             Action<string, double>? progress,
             CancellationToken ct)
         {
@@ -75,6 +76,7 @@ namespace RASTA.App.Services
                 sampleRateHz,
                 dwell,
                 fftSize,
+                ppmCorrection,
                 progress,
                 ct);
         }
@@ -91,6 +93,7 @@ namespace RASTA.App.Services
             double frequencyHz,
             double sampleRateHz,
             int fftSize,
+            double ppmCorrection,
             string deviceId)
         {
             var profile = new CalibrationProfile
@@ -100,6 +103,7 @@ namespace RASTA.App.Services
                 SampleRateHz = sampleRateHz,
                 FftSize = fftSize,
                 GainDb = gainDb,
+                PpmCorrection = ppmCorrection,
                 DeviceId = deviceId,
                 BaselineSpectrum = Array.Empty<double>()
             };
@@ -121,6 +125,7 @@ namespace RASTA.App.Services
             double gainDb,
             TimeSpan baselineDwell,
             int fftSize,
+            double ppmCorrection,
             ColdSkyCandidate location,
             double siteLatitudeDeg,
             double siteLongitudeDeg,
@@ -135,6 +140,7 @@ namespace RASTA.App.Services
                 gainDb,
                 baselineDwell,
                 fftSize,
+                ppmCorrection,
                 location,
                 siteLatitudeDeg,
                 siteLongitudeDeg,

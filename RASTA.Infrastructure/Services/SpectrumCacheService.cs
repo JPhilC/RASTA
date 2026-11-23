@@ -31,6 +31,24 @@ namespace RASTA.Infrastructure.Services
         public double GainDb { get; set; }
         public double LsrCorrectionKmPerSec { get; set; }
 
+        // Receiver ppm correction, as FitsFileMetaData holds it (issue #32). Null (no PPM card,
+        // and every entry cached before #32) means none, so the axis is the nominal one.
+        public double? PpmCorrection { get; set; }
+        public int? PpmHardware { get; set; }
+
+        /// <summary>The part of PpmCorrection still to apply to the frequency axis.</summary>
+        [JsonIgnore]
+        public double ResidualPpm =>
+            PpmCorrection is double ppm ? RASTA.Core.Sdr.FrequencyCorrection.ResidualPpm(ppm, PpmHardware) : 0.0;
+
+        /// <summary>True centre frequency for the frequency/velocity axis (CentFreqHz corrected for ResidualPpm).</summary>
+        [JsonIgnore]
+        public double AxisCentFreqHz => RASTA.Core.Sdr.FrequencyCorrection.Apply(CentFreqHz, ResidualPpm);
+
+        /// <summary>True sample rate for the frequency axis (SampFreqHz corrected for ResidualPpm).</summary>
+        [JsonIgnore]
+        public double AxisSampFreqHz => RASTA.Core.Sdr.FrequencyCorrection.Apply(SampFreqHz, ResidualPpm);
+
         // Recorded pointing, exactly as FitsFileMetaData holds it (whichever pair the
         // capture's CoordinateMode didn't produce is null) - what MosaicProcessor needs to
         // place a position without reopening its FITS file.
@@ -69,6 +87,10 @@ namespace RASTA.Infrastructure.Services
         /// 2: added the recorded pointing (RaDeg/DecDeg/AzDeg/AltDeg) for the Mosaic tab.
         /// 3: LSR correction fixed (diurnal sign, elliptical orbit, J2000 axes) - issue #21.
         /// 4: AltAz captures' RA/Dec reconstructed as J2000, not of-date; FITS EQUINOX honoured - issue #38.
+        ///
+        /// Not bumped for issue #32's PpmCorrection/PpmHardware: an entry cached before them
+        /// deserializes them as null, which is exactly right for every file that existed then
+        /// (none had a PPM card), and any file written since is a new cache key anyway.
         /// </summary>
         public const int PipelineVersion = 4;
 

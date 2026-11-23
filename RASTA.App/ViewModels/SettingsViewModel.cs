@@ -40,6 +40,23 @@ namespace RASTA.App.ViewModels
             DishDiameterM = _optionsService.Options.DishDiameterM;
             FocalLengthM = _optionsService.Options.FocalLengthM;
             FallbackMountEquatorialSystem = _optionsService.Options.FallbackMountEquatorialSystem;
+            PpmCorrection = _optionsService.Options.SdrPpmCorrection;
+        }
+
+        // -------------------------------
+        // Receiver ppm correction (issue #32)
+        // -------------------------------
+        // Persisted. Applied by Calibrate Device Gain / Capture Baseline and recorded on the
+        // resulting CalibrationProfile; captures then use the profile's value (like its gain),
+        // so a changed setting takes effect once a new baseline is captured.
+        // -------------------------------
+
+        [ObservableProperty]
+        private double ppmCorrection;
+
+        partial void OnPpmCorrectionChanged(double value)
+        {
+            _optionsService.Options.SdrPpmCorrection = value;
         }
 
         // -------------------------------

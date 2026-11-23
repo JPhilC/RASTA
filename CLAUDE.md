@@ -854,7 +854,18 @@ every file: origin, data format, center freq, sample rate, FFT size, gain, dwell
 site lat/lon/elevation, and pointing in **both** RA/Dec and Az/Alt (whichever the active
 `CoordinateMode` didn't produce directly is left null — reconstructing it later needs the stored
 site+time via `AstronomyUtils`). RA/Dec is always J2000, marked by `RADESYS`/`EQUINOX` (see
-"RA/Dec is J2000 everywhere inside RASTA" above). `FitsPathBuilder` lays files out under the user's configured
+"RA/Dec is J2000 everywhere inside RASTA" above). **Receiver ppm correction** (issue #32,
+`RASTA.Core/Sdr/FrequencyCorrection`): the whole-ppm part goes to the tuner
+(`ISdrDevice.SetPpmCorrection`, stored and applied on the next tune; `RtlSdrDevice` skips the
+librtlsdr call when the value is unchanged, since librtlsdr errors on that), the fractional residual
+is corrected on the axis by scaling both centre frequency and sample rate. The setting
+(`UserOptions.SdrPpmCorrection`, Prepare's Calibration Settings) is used by the two calibration
+steps and recorded on `CalibrationProfile.PpmCorrection`; captures use the *profile's* value, like
+its gain, and set it before every stream attempt (a stall-retry reopens the device at 0). FITS
+carries `PPM`/`PPM_HW`; `FitsFileMetaData`/`SpectrumCacheEntry.AxisCentFreqHz`/`AxisSampFreqHz` are
+what Visualise/Mosaic feed to the pipeline (the displayed Frequency/Sampling stay as recorded), and
+both refuse a baseline/capture pair with different ppm. A file with no `PPM` card means 0.
+`FitsPathBuilder` lays files out under the user's configured
 capture folder as `{freqMHz}MHz/{yyyy-MM-dd}/{prefix}_....fits`; multi-file dwell points
 (`CapturePlan.FilesPerPoint > 1`) get an `_{index}of{total}.fits` suffix via
 `FitsPathBuilder.BuildSweepFilePath`.

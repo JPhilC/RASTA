@@ -224,6 +224,8 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <!-- ========================= -->
             <!--  CALIBRATION SETTINGS   -->
@@ -266,6 +268,29 @@
                                         ValidatesOnDataErrors=True}"
                          Width="50" Margin="5,0,0,5"
                          IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="PPM Correction"
+                       ToolTip="The RTL-SDR's crystal frequency error in parts per million (0 for TCXO dongles). The whole-ppm part is set in the tuner and the rest is corrected on the frequency axis. 1 ppm is 1.42 kHz at 1420 MHz, about 0.3 km/s. Used when calibrating and recorded on the calibration and in every FITS file; captures use the calibration's value, so a new value takes effect once a new baseline is captured."/>
+            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding PpmCorrection,
+                                        UpdateSourceTrigger=LostFocus,
+                                        ValidatesOnDataErrors=True}"
+                         Width="50" HorizontalAlignment="Left" Margin="5,0,0,5"
+                         IsEnabled="{Binding IsCalibrationRunning, Converter={StaticResource BooleanInverterConverter}}"/>
+
+            <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
+                       Text="{Binding PpmCalibrationNote}" TextWrapping="Wrap" Margin="0,0,0,5">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="Gray"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPpmCalibrationMismatch}" Value="True">
+                                <Setter Property="Foreground" Value="DarkOrange"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
         </Grid>
 

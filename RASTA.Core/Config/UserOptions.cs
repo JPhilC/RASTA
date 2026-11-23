@@ -50,6 +50,11 @@ namespace RASTA.Core.Config
         [ObservableProperty]
         private double focalLengthM = 0.56; // RASTA's own reference antenna: f/D = 0.4
 
+        // Receiver crystal correction in ppm (issue #32) - see RASTA.Core.Sdr.FrequencyCorrection.
+        // Used by the calibration steps; captures use the value recorded on the calibration.
+        [ObservableProperty]
+        private double sdrPpmCorrection;
+
         // Which RA/Dec system to assume for a mount whose driver reports equOther or doesn't
         // implement EquatorialSystem at all (issue #38). JNow is the usual amateur-mount choice.
         [ObservableProperty]

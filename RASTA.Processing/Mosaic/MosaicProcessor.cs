@@ -1,3 +1,4 @@
+using RASTA.Core.Sdr;
 using RASTA.Core.Processing;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
@@ -218,11 +219,12 @@ namespace RASTA.Processing.Mosaic
 
                     if (captureMeta.FftSize != scanFftSize ||
                         captureMeta.SampFreqHz != baseline.SampFreqHz ||
-                        captureMeta.CentFreqHz != baseline.CentFreqHz)
+                        captureMeta.CentFreqHz != baseline.CentFreqHz ||
+                        !FrequencyCorrection.AreEqual(captureMeta.PpmCorrection, baseline.PpmCorrection))
                     {
                         throw new InvalidOperationException(
-                            $"Capture group '{label}' has a different FFT size, sample rate, or center " +
-                            "frequency than the baseline.");
+                            $"Capture group '{label}' has a different FFT size, sample rate, center " +
+                            "frequency or ppm correction than the baseline.");
                     }
 
                     double[] capturePower = HiStreamingPipeline.ApplyBaselineSpurCleaning(captureMeta.AveragedPower!, spurReport, combMask);
@@ -234,7 +236,7 @@ namespace RASTA.Processing.Mosaic
                     double lsrCorrectionKmPerSec = captureMeta.LsrCorrectionKmPerSec;
 
                     var pipeline = new HiStreamingPipeline();
-                    pipeline.Process(baselinePower, capturePower, captureMeta.SampFreqHz, captureMeta.CentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma, cleanBaselineSpurs: false);
+                    pipeline.Process(baselinePower, capturePower, captureMeta.AxisSampFreqHz, captureMeta.AxisCentFreqHz, lsrCorrectionKmPerSec, despike: despike, despikeThresholdSigma: despikeThresholdSigma, cleanBaselineSpurs: false);
 
                     // Every position's FrequencyHz/VelocityKmPerSec axis agrees on FFT size/
                     // sample rate/center frequency (validated above), so any one of them is a
