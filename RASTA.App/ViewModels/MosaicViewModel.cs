@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Helpers;
 using RASTA.Core.Astro;
+using RASTA.Core.Sdr;
 using RASTA.Core.Storage;
 using RASTA.Core.Telescope;
 using RASTA.Processing.Dsp;
@@ -20,7 +21,8 @@ namespace RASTA.App.ViewModels;
 /// not the full HiSpectrum (which the DataGrid has no use for).
 /// </summary>
 public record MosaicPositionSummary(
-    string Label, string Coordinates, double LineStrengthDb, double PeakVelocityKmPerSec, int FileCount);
+    string Label, string Coordinates, double LineStrengthDb, double PeakVelocityKmPerSec, int FileCount,
+    string Clipping, bool IsClipped);
 
 /// <summary>
 /// Which MosaicPosition metric the "3D Surface" tab renders as height/colour - see
@@ -544,9 +546,9 @@ public partial class MosaicViewModel : ObservableObject
             BuildGrids(result);
             BuildPositionsSummary(result);
 
-            StatusSummary = result.PositionsFromCache > 0
+            StatusSummary = (result.PositionsFromCache > 0
                 ? $"{result.Positions.Count} position(s) processed ({result.PositionsFromCache} from cache)."
-                : $"{result.Positions.Count} position(s) processed.";
+                : $"{result.Positions.Count} position(s) processed.") + DescribeClipping(result);
             GenerationStatus = "Completed";
         }
         catch (OperationCanceledException)
@@ -917,6 +919,21 @@ public partial class MosaicViewModel : ObservableObject
         SurfaceLegendImage = HeatmapImageBuilder.BuildLegendStrip(200);
     }
 
+    /// <summary>
+    /// " N position(s) clipped." / " Baseline clipped (x%)." for the status line, or empty
+    /// when nothing measured over AdcClipping.MaxAcceptableFraction (issue #33).
+    /// </summary>
+    private static string DescribeClipping(MosaicResult result)
+    {
+        string text = string.Empty;
+        if (AdcClipping.IsClipped(result.BaselineClipFraction))
+            text += $" Baseline clipped ({AdcClipping.Percent(result.BaselineClipFraction!.Value)}).";
+        int clipped = result.Positions.Count(p => AdcClipping.IsClipped(p.ClipFraction));
+        if (clipped > 0)
+            text += $" {clipped} position(s) clipped - see the Clipping column.";
+        return text;
+    }
+
     private void BuildPositionsSummary(MosaicResult result)
     {
         Positions.Clear();
@@ -929,7 +946,9 @@ public partial class MosaicViewModel : ObservableObject
                 _ => "n/a"
             };
             Positions.Add(new MosaicPositionSummary(
-                p.Label, coords, p.LineStrengthDb, p.PeakVelocityKmPerSec, p.SourceFiles.Count));
+                p.Label, coords, p.LineStrengthDb, p.PeakVelocityKmPerSec, p.SourceFiles.Count,
+                IsLabSurveySource ? "n/a" : AdcClipping.Describe(p.ClipFraction),
+                AdcClipping.IsClipped(p.ClipFraction)));
         }
     }
 

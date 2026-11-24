@@ -636,6 +636,10 @@ public partial class CaptureViewModel : ObservableObject
             await _mount.SetTrackingAsync(true);
         }
 
+        // Files written with the ADC clipping (issue #33): kept, but listed once the sweep
+        // ends rather than interrupting an unattended run with a dialog per file.
+        var clippedFiles = new List<string>();
+
         _sweepCts = new CancellationTokenSource();
         var ct = _sweepCts.Token;
         try
@@ -787,7 +791,8 @@ public partial class CaptureViewModel : ObservableObject
                         DecDeg = target.Mode == CoordinateMode.Equatorial ? target.DeclinationDeg : null,
                         AzDeg = target.Mode == CoordinateMode.AltAz ? target.AzimuthDeg : null,
                         AltDeg = target.Mode == CoordinateMode.AltAz ? target.ElevationDeg : null,
-                        PpmCorrection = ppmCorrection
+                        PpmCorrection = ppmCorrection,
+                        ClipFraction = AdcClipping.Fraction(rawIq)
                     };
 
                     // -----------------------------
@@ -799,6 +804,13 @@ public partial class CaptureViewModel : ObservableObject
                     _fitsFileWriter.WriteRawIq(fullPath, rawIq, meta);
 
                     EndProgress();
+
+                    if (AdcClipping.IsClipped(meta.ClipFraction))
+                    {
+                        string fileName = System.IO.Path.GetFileName(fullPath);
+                        clippedFiles.Add($"{fileName}: {AdcClipping.Percent(meta.ClipFraction!.Value)}");
+                        _logger.Warn($"ADC clipping in {fileName}: {AdcClipping.Percent(meta.ClipFraction!.Value)} of raw I/Q samples at the rail (gain {gainDb:0.0} dB).");
+                    }
 
                 }
 
@@ -876,6 +888,20 @@ public partial class CaptureViewModel : ObservableObject
             IsSweepCaptureRunning = false;
             IsBusy = false;
         }
+
+        if (clippedFiles.Count > 0)
+        {
+            _statusBar.CaptureStatus += $" - {clippedFiles.Count} file(s) clipped";
+            const int maxListed = 15;
+            string list = string.Join(Environment.NewLine, clippedFiles.Take(maxListed));
+            if (clippedFiles.Count > maxListed)
+                list += $"{Environment.NewLine}… and {clippedFiles.Count - maxListed} more (see the log).";
+            MessageBox.Show(
+                $"{clippedFiles.Count} file(s) were captured with more than {AdcClipping.Percent(AdcClipping.MaxAcceptableFraction)} " +
+                $"of raw I/Q samples at the ADC rail, so the receiver was overloading at those positions. The files were kept and " +
+                $"are flagged on the Visualise and Mosaic tabs; treat their spectra with care.{Environment.NewLine}{Environment.NewLine}{list}",
+                "ADC Clipping", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     /// <summary>
@@ -943,6 +969,7 @@ public partial class CaptureViewModel : ObservableObject
         }
 
         DateTime startTime = DateTime.UtcNow;
+        string? clippedMessage = null; // issue #33, shown once the capture has fully stopped
 
         TargetPoint currentTarget;
         if (PendingQuickCaptureTarget is { } pendingTarget)
@@ -1027,7 +1054,8 @@ public partial class CaptureViewModel : ObservableObject
                 DecDeg = currentTarget.Mode == CoordinateMode.Equatorial ? currentTarget.DeclinationDeg : null,
                 AzDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.AzimuthDeg : null,
                 AltDeg = currentTarget.Mode == CoordinateMode.AltAz ? currentTarget.ElevationDeg : null,
-                PpmCorrection = ppmCorrection
+                PpmCorrection = ppmCorrection,
+                ClipFraction = AdcClipping.Fraction(rawIq)
             };
 
             // -----------------------------
@@ -1040,7 +1068,20 @@ public partial class CaptureViewModel : ObservableObject
 
             EndProgress();
 
-            _statusBar.CaptureStatus = "Quick capture complete";
+            if (AdcClipping.IsClipped(meta.ClipFraction))
+            {
+                string fileName = System.IO.Path.GetFileName(fullPath);
+                clippedMessage =
+                    $"{AdcClipping.Percent(meta.ClipFraction!.Value)} of raw I/Q samples in {fileName} were at the ADC rail " +
+                    $"(limit {AdcClipping.Percent(AdcClipping.MaxAcceptableFraction)}), so the receiver was overloading at " +
+                    "this position. The file was kept and is flagged on the Visualise and Mosaic tabs; treat its spectrum with care.";
+                _logger.Warn($"ADC clipping in {fileName}: {AdcClipping.Percent(meta.ClipFraction!.Value)} of raw I/Q samples at the rail (gain {gainDb:0.0} dB).");
+                _statusBar.CaptureStatus = "Quick capture complete - clipped";
+            }
+            else
+            {
+                _statusBar.CaptureStatus = "Quick capture complete";
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1061,6 +1102,9 @@ public partial class CaptureViewModel : ObservableObject
             IsBusy = false;
             IsQuickCaptureRunning = false;
         }
+
+        if (clippedMessage is not null)
+            MessageBox.Show(clippedMessage, "ADC Clipping", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     // Cancels a running Quick Capture. As with CancelSweep, cancellation unwinds

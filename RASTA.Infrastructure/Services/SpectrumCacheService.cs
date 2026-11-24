@@ -36,6 +36,11 @@ namespace RASTA.Infrastructure.Services
         public double? PpmCorrection { get; set; }
         public int? PpmHardware { get; set; }
 
+        // Fraction of raw I/Q bytes at the ADC rail, measured over every byte that went in
+        // (issue #33; AdcClipping). Measured from the data, not read from CLIPFRAC, so files
+        // captured before #33 get a value too. Null for an entry cached before #33.
+        public double? ClipFraction { get; set; }
+
         /// <summary>The part of PpmCorrection still to apply to the frequency axis.</summary>
         [JsonIgnore]
         public double ResidualPpm =>
@@ -91,6 +96,9 @@ namespace RASTA.Infrastructure.Services
         /// Not bumped for issue #32's PpmCorrection/PpmHardware: an entry cached before them
         /// deserializes them as null, which is exactly right for every file that existed then
         /// (none had a PPM card), and any file written since is a new cache key anyway.
+        /// Nor for issue #33's ClipFraction: an older entry reads it as null and Visualise/Mosaic
+        /// show "not measured" until the files are regenerated, rather than reprocessing every
+        /// cached session to add it.
         /// </summary>
         public const int PipelineVersion = 4;
 

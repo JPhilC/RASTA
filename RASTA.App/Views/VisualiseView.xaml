@@ -289,6 +289,23 @@
                        ToolTip="Where the chart on screen got its averaged spectra from. 'Cache' means nothing was read from the raw IQ files - the averaged spectrum of each file was saved the first time it was processed and reused. 'Raw IQ' means everything was read and averaged from the FITS files. 'Cache + raw IQ' means one side (typically the baseline) was cached and the other was not. Only the slow per-file averaging is cached; Spectrum Mode, Target FFT Size, Smooth, Despike and Show dB are always re-applied, so changing any of them is near-instant and never shows an out-of-date result." />
                     <TextBox Grid.Row="2" Grid.Column="14"  Width="100"
                      Text="{Binding ChartSource, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="16" VerticalAlignment="Center"
+                       Text="Clipping" FontWeight="Bold"
+                       ToolTip="Fraction of the file's raw I/Q samples at the ADC rail (0 or 255), measured over every sample that went into the chart. Over 0.050% the receiver was overloading and the spectrum may be distorted. 'not measured' means the file was cached before this check existed - Regenerate (No Cache) measures it." />
+                    <TextBox Grid.Row="2" Grid.Column="18" MinWidth="80"
+                     Text="{Binding ClipInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ClipWarning}" Value="True">
+                                        <Setter Property="Foreground" Value="Firebrick"/>
+                                        <Setter Property="FontWeight" Value="Bold"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
                 </Grid>
 
                 <StackPanel Grid.Row="10" Grid.Column="14" VerticalAlignment="Top">

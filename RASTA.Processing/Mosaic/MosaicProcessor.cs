@@ -15,6 +15,8 @@ namespace RASTA.Processing.Mosaic
     /// baseline, plus the recorded pointing (whichever pair FitsFileMetaData actually has -
     /// Equatorial and AltAz are mutually exclusive per file, same ambiguity GridBuilder has
     /// always assumed is uniform across one session) and the source files it came from.
+    /// ClipFraction is the capture's measured ADC clipping (issue #33; AdcClipping) - null
+    /// when not measured (a LAB Survey profile, or a cache entry from before #33).
     /// </summary>
     public record MosaicPosition(
         string Label,
@@ -26,7 +28,8 @@ namespace RASTA.Processing.Mosaic
         double[] HiSpectrum,
         double LineStrengthDb,
         double PeakVelocityKmPerSec,
-        IReadOnlyList<string> SourceFiles);
+        IReadOnlyList<string> SourceFiles,
+        double? ClipFraction = null);
 
     /// <summary>
     /// Every position in a mosaic session shares the same frequency/velocity axis (baseline
@@ -45,6 +48,9 @@ namespace RASTA.Processing.Mosaic
         /// Survey session, which has no FFT step to cache.
         /// </summary>
         public int PositionsFromCache { get; init; }
+
+        /// <summary>The baseline's measured ADC clipping (issue #33); null if not measured.</summary>
+        public double? BaselineClipFraction { get; init; }
     }
 
     /// <summary>
@@ -287,7 +293,8 @@ namespace RASTA.Processing.Mosaic
                         pipeline.HiSpectrum,
                         lineStrengthDb,
                         peakVelocityKmPerSec,
-                        files);
+                        files,
+                        captureMeta.ClipFraction);
 
                     // Interlocked, not g-based: completion order is whatever the scheduler
                     // happens to finish, not necessarily 0,1,2... - a plain (g+1)/groups.Count
@@ -316,7 +323,8 @@ namespace RASTA.Processing.Mosaic
                 velocityAxis ?? Array.Empty<double>(),
                 positions)
             {
-                PositionsFromCache = fromCacheCount
+                PositionsFromCache = fromCacheCount,
+                BaselineClipFraction = baseline.ClipFraction
             };
         }
 

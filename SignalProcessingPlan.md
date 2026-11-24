@@ -559,6 +559,12 @@ yet. Ordered roughly by value for effort.
   and rejects a calibration capture with more than 0.1% clipped samples. Work here: compute the
   fraction for baseline and sweep/Quick captures, warn or reject, and record it in the FITS
   header. Small and independent.
+  **Done (2026-11-24):** `RASTA.Core/Sdr/AdcClipping` (rail bytes 0/255 only, limit 0.05% — kept
+  stricter than H1-HUNTER's ≤3/≥252 and 0.1%) is shared by the gain sweep, the baseline (refused
+  over the limit, nothing written: `BaselineClippedException`), and sweep/Quick captures (kept,
+  logged, one warning per sweep, FITS `CLIPFRAC`). `CachedSpectrumLoader` measures it from the
+  raw IQ itself, so Visualise (Clipping field) and Mosaic (Clipping column, status line) show it
+  for old files too once re-read; entries cached before #33 show "not measured".
 - **Hot/cold (Y-factor) calibration to Kelvin (#34).** Capture cold sky, then a hot load (the ground, or
   an absorber over the feed) at air temperature:
   `Y = median(P_hot / P_cold)` over line-free channels,

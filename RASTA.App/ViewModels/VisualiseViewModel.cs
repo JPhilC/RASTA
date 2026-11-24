@@ -132,6 +132,24 @@ public partial class VisualiseViewModel : ObservableObject
     [ObservableProperty]
     private string ppmInfo = string.Empty;
 
+    // Measured ADC clipping of the file(s) behind the current chart (issue #33), e.g.
+    // "Baseline 0.001%, capture 0.310% - clipped". ClipWarning is true when either is over
+    // AdcClipping.MaxAcceptableFraction, to highlight the field.
+    [ObservableProperty]
+    private string clipInfo = string.Empty;
+
+    [ObservableProperty]
+    private bool clipWarning;
+
+    private void SetClipInfo(SpectrumCacheEntry? baseline, SpectrumCacheEntry? capture)
+    {
+        if (baseline is not null && capture is not null)
+            ClipInfo = $"Baseline {AdcClipping.Describe(baseline.ClipFraction)}, capture {AdcClipping.Describe(capture.ClipFraction)}";
+        else
+            ClipInfo = AdcClipping.Describe((baseline ?? capture)?.ClipFraction);
+        ClipWarning = AdcClipping.IsClipped(baseline?.ClipFraction) || AdcClipping.IsClipped(capture?.ClipFraction);
+    }
+
     // FrequencyHz/SamplingHz show the recorded (nominal) header values; the frequency and
     // velocity axes use these instead - the same values corrected for the part of the ppm
     // correction the tuner could not apply (FrequencyCorrection). Equal to them for files
@@ -601,6 +619,7 @@ public partial class VisualiseViewModel : ObservableObject
         CombinedFileCount = 1; // this view doesn't touch the capture file
         var baseline = LoadBaselineSpectra();
         SetFileParameters(baseline);
+        SetClipInfo(baseline, null);
         FrameCount = baseline.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
@@ -649,6 +668,7 @@ public partial class VisualiseViewModel : ObservableObject
             return;
         var capture = LoadCaptureSpectra();
         SetFileParameters(capture);
+        SetClipInfo(null, capture);
         FrameCount = capture.AveragedFrames.ToString();
 
         if (TargetFftSize == 0)
@@ -775,6 +795,7 @@ public partial class VisualiseViewModel : ObservableObject
         ValidateBaselineCaptureCompatibility(baseline, capture);
 
         SetFileParameters(baseline);
+        SetClipInfo(baseline, capture);
 
         if (TargetFftSize == 0)
             TargetFftSize = ScanFftSize;   // default to no downscaling
@@ -902,6 +923,7 @@ public partial class VisualiseViewModel : ObservableObject
         ValidateBaselineCaptureCompatibility(baseline, capture);
 
         SetFileParameters(baseline);
+        SetClipInfo(baseline, capture);
         TargetFftSize = SkaoConstants.NumIntegrationBins;   // the reference's own fixed output bin count
 
         var skao = new SkaoHiObservation();
