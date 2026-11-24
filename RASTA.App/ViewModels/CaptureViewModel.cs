@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Input;
 using RASTA.App.Helpers;
 using RASTA.App.Services;
+using RASTA.Core.Calibration;
 using RASTA.Core.Capture;
 using RASTA.Core.Processing;
 using RASTA.Core.Sdr;
@@ -49,8 +50,40 @@ public partial class CaptureViewModel : ObservableObject
                 OnPropertyChanged(nameof(PlanName));
                 OnPropertyChanged(nameof(CanCaptureSweep));
                 OnPropertyChanged(nameof(CanDriftCapture));
+                UpdateCalibrationMismatch();
             }
         }
+    }
+
+    // Differences between the loaded calibration and the selected plan (issue #3), shown
+    // under the plan selector and confirmed in CaptureSweepAsync before a sweep starts.
+    private IReadOnlyList<CalibrationMismatch> _calibrationMismatches = Array.Empty<CalibrationMismatch>();
+
+    public string CalibrationMismatchText => string.Join(Environment.NewLine, _calibrationMismatches.Select(m => m.Message));
+
+    public bool HasCalibrationMismatch => _calibrationMismatches.Count > 0;
+
+    public bool HasCalibrationMismatchWarning => CalibrationPlanCheck.HasWarnings(_calibrationMismatches);
+
+    private IReadOnlyList<CalibrationMismatch> CheckCalibrationAgainstPlan()
+    {
+        var calibration = _calibrationService.CurrentCalibration;
+        if (_activePlan is null || calibration is null || calibration.BaselineSpectrum.Length == 0)
+            return Array.Empty<CalibrationMismatch>();
+
+        return CalibrationPlanCheck.Check(
+            calibration,
+            _activePlan,
+            _optionsService.Options.SdrPpmCorrection,
+            _sdrDeviceService.GetDevice()?.DeviceId);
+    }
+
+    private void UpdateCalibrationMismatch()
+    {
+        _calibrationMismatches = CheckCalibrationAgainstPlan();
+        OnPropertyChanged(nameof(CalibrationMismatchText));
+        OnPropertyChanged(nameof(HasCalibrationMismatch));
+        OnPropertyChanged(nameof(HasCalibrationMismatchWarning));
     }
 
     public string PlanName => _activePlan?.FriendlyName ?? "No Plan";
@@ -171,6 +204,17 @@ public partial class CaptureViewModel : ObservableObject
         _sdrState.PropertyChanged += SdrState_PropertyChanged;
         _ = _device; // subscribe OnChunk to whatever device is open right now
 
+        _calibrationService.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CalibrationService.CurrentCalibration))
+                UpdateCalibrationMismatch();
+        };
+        _optionsService.Options.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(_optionsService.Options.SdrPpmCorrection))
+                UpdateCalibrationMismatch();
+        };
+
         LoadAvailablePlans();
     }
 
@@ -289,6 +333,11 @@ public partial class CaptureViewModel : ObservableObject
         if (e.PropertyName == nameof(SdrState.SelectedDevice))
         {
             LoadAvailablePlans();
+        }
+
+        if (e.PropertyName is nameof(SdrState.SelectedDevice) or nameof(SdrState.IsConnected))
+        {
+            UpdateCalibrationMismatch();
         }
     }
 
@@ -511,6 +560,25 @@ public partial class CaptureViewModel : ObservableObject
             return;
         }
 
+        // Issue #3: the baseline is divided into every capture bin for bin, so a calibration
+        // taken at a different frequency/sample rate/receiver (or a ppm setting changed since)
+        // must be confirmed before the sweep runs, not discovered in Visualise afterwards.
+        UpdateCalibrationMismatch();
+        if (HasCalibrationMismatchWarning)
+        {
+            var answer = MessageBox.Show(
+                "The loaded calibration does not match this plan:" + Environment.NewLine + Environment.NewLine +
+                CalibrationMismatchText + Environment.NewLine + Environment.NewLine +
+                "Run the sweep anyway?",
+                "Calibration does not match plan",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+                return;
+            _logger.Warn($"Sweep '{ActivePlan.FriendlyName}' started despite calibration mismatch: {string.Join(" | ", _calibrationMismatches.Select(m => m.Message))}");
+        }
+
         DateTime startTime = DateTime.UtcNow;
         EstimatedCompletionTime = null; // clear any stale estimate from a previous run
 
@@ -578,9 +646,8 @@ public partial class CaptureViewModel : ObservableObject
             double gainDb = _calibrationService.CurrentCalibration.GainDb;
             // The calibration's ppm, like its gain: the baseline was captured with it, and the
             // bandpass division is bin for bin (issue #32). Null (pre-#32 profile) means 0.
+            // A difference from the current setting was confirmed above (CalibrationPlanCheck).
             double ppmCorrection = _calibrationService.CurrentCalibration.PpmCorrection ?? 0.0;
-            if (!FrequencyCorrection.AreEqual(ppmCorrection, _optionsService.Options.SdrPpmCorrection))
-                _logger.Warn($"Sweep uses the calibration's ppm correction ({ppmCorrection:+0.00;-0.00;0}), not the current setting ({_optionsService.Options.SdrPpmCorrection:+0.00;-0.00;0}) - capture a new baseline to change it.");
             fftSize = _calibrationService.CurrentCalibration.FftSize;
             int filesPerPoint = ActivePlan.FilesPerPoint;
             int targetIndex = 0;
