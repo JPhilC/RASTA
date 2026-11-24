@@ -9,7 +9,7 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="5"/>
+            <RowDefinition Height="Auto" MinHeight="5"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="*"/>
@@ -33,6 +33,23 @@
                      Width="140" HorizontalAlignment="Left" VerticalContentAlignment="Center" IsReadOnly="True" Margin="0,0,5,0"
                      Visibility="{Binding EstimatedCompletionTime, Converter={StaticResource NullToVisibilityConverter}}"/>
         </StackPanel>
+        <!-- Issue #3: the loaded calibration differs from the selected plan. -->
+        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4"
+                   Text="{Binding CalibrationMismatchText}"
+                   TextWrapping="Wrap" Margin="0,5,0,5"
+                   Visibility="{Binding HasCalibrationMismatch, Converter={StaticResource BooleanToVisibilityConverter}}"
+                   ToolTip="The sweep tunes to the plan's centre frequency and sample rate but uses the calibration's gain, FFT size, ppm correction and baseline. Capture a new baseline on the Prepare view to match the plan.">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="Gray"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasCalibrationMismatchWarning}" Value="True">
+                            <Setter Property="Foreground" Value="DarkOrange"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
         <Button Grid.Row="0" Grid.Column="2"
                 HorizontalAlignment="Left"
                 Content="Begin Sweep" Width="130" Height="30"

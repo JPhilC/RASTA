@@ -834,6 +834,16 @@ stream in during a capture) runs on `HiStreamingAccumulator`/`HiStreamingPipelin
 calibration baseline, reassembling arbitrary-sized USB streaming chunks into fftSize-aligned frames
 first (`ProcessChunk`'s leftover-byte buffer) — raw async buffer chunks are *not* aligned to fftSize.
 
+**Calibration/plan mismatch warning** (issue #3, `RASTA.Core/Calibration/CalibrationPlanCheck`): a
+sweep tunes to the *plan's* centre frequency and sample rate but takes gain, FFT size, ppm correction
+and the baseline from the *calibration*, so `CalibrationPlanCheck.Check` compares the two. Centre
+frequency, sample rate, receiver (`DeviceId`) and a ppm setting changed since the baseline (the sweep
+keeps using the profile's ppm, see #32) are warnings; a different plan FFT size is only a note (the
+calibration's is used, harmlessly). `CaptureViewModel` shows them under the plan selector
+(`CalibrationMismatchText`, orange when any is a warning, refreshed on plan/calibration/ppm/device
+change) and `CaptureSweepAsync` asks Yes/No (default No) before sweeping with any warning, logging the
+override. Quick Capture uses only calibration values, so it isn't checked.
+
 `CaptureSweepAsync` always switches mount tracking on before a slew, regardless of the plan's own
 `TrackingEnabled` checkbox — this mount's ASCOM driver rejects a slew outright while tracking is off,
 which previously surfaced as a hard error the instant a sweep began if tracking hadn't already been
