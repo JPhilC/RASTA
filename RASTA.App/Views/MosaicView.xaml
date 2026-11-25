@@ -459,6 +459,23 @@
                     <DataGridTextColumn Header="Line Strength" Binding="{Binding LineStrengthDb, StringFormat=F1}" Width="Auto"/>
                     <DataGridTextColumn Header="Velocity (km/s)" Binding="{Binding PeakVelocityKmPerSec, StringFormat=F1}" Width="Auto"/>
                     <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="Auto"/>
+                    <DataGridTextColumn Header="Clipping" Binding="{Binding Clipping}" Width="Auto">
+                        <DataGridTextColumn.HeaderStyle>
+                            <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+                                <Setter Property="ToolTip" Value="Fraction of the capture's raw I/Q samples at the ADC rail (0 or 255). Over 0.050% the receiver was overloading at that position - the spectrum may be distorted. 'not measured' means the position was cached before this check existed; Regenerate (No Cache) measures it."/>
+                            </Style>
+                        </DataGridTextColumn.HeaderStyle>
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsClipped}" Value="True">
+                                        <Setter Property="Foreground" Value="Firebrick"/>
+                                        <Setter Property="FontWeight" Value="Bold"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>

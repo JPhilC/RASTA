@@ -28,12 +28,6 @@ namespace RASTA.Processing.Calibration
         // keeps a switching transient from biasing that gain's averaged spectrum.
         private const double GainSettleTimeSec = 0.005;
 
-        // Maximum fraction of raw I/Q bytes allowed at the ADC rail (0 or 255 for the
-        // RTL-SDR's 8-bit samples) before a gain is considered to be overloading the
-        // front end. A few rail hits are expected from ordinary Gaussian noise; this is
-        // for detecting real saturation, not zero-tolerance.
-        private const double SaturationFractionThreshold = 0.0005; // 0.05%
-
         private sealed record GainTrial(
             double Gain,
             double SaturationFraction,
@@ -95,7 +89,7 @@ namespace RASTA.Processing.Calibration
                 // Real ADC-saturation check on the raw I/Q bytes: samples pinned at the
                 // rails mean the front end is overloaded at this gain, regardless of what
                 // the resulting spectrum looks like.
-                double saturationFraction = ComputeSaturationFraction(rawIq);
+                double saturationFraction = AdcClipping.Fraction(rawIq);
 
                 // Average the power spectrum across every fftSize frame in this trial's
                 // capture (not just the first one), so flatness/spur/slope reflect this
@@ -132,7 +126,7 @@ namespace RASTA.Processing.Calibration
             // Saturation is a hard requirement, not something to trade off against
             // flatness: any gain that measurably overloads the ADC is disqualified before
             // scoring even starts.
-            var candidates = gainTrials.Where(t => t.SaturationFraction <= SaturationFractionThreshold).ToList();
+            var candidates = gainTrials.Where(t => !AdcClipping.IsClipped(t.SaturationFraction)).ToList();
             if (candidates.Count == 0)
             {
                 // Every gain saturated against the terminator (shouldn't normally happen) -
@@ -206,6 +200,14 @@ namespace RASTA.Processing.Calibration
                 pct => progressCallback?.Invoke($"Capturing cold-sky baseline at {gainDb} dB", pct)
                 ).ConfigureAwait(false);
 
+            // The gain was chosen against a terminator; real sky through the antenna and LNA
+            // (interference, a hot pointing) can clip at that same gain. A clipped baseline
+            // would distort every spectrum divided by it, so refuse it before anything is
+            // written - no "base" file is left behind for Visualise/Mosaic to pick up.
+            double clipFraction = AdcClipping.Fraction(baselineRawIq);
+            if (AdcClipping.IsClipped(clipFraction))
+                throw new BaselineClippedException(clipFraction, gainDb);
+
             // save the baseline to a FITS file
             string filePath = FitsPathBuilder.BuildCalibrationFilePath(baseFolder, "base", startTime, frequencyHz, gainDb);
 
@@ -226,7 +228,8 @@ namespace RASTA.Processing.Calibration
                 DecDeg = location.DeclinationDeg,
                 AzDeg = location.AzimuthDeg,
                 AltDeg = location.ElevationDeg,
-                PpmCorrection = ppmCorrection
+                PpmCorrection = ppmCorrection,
+                ClipFraction = clipFraction
             };
 
             _fitsFileWriter.WriteRawIq(filePath, baselineRawIq, meta);
@@ -271,28 +274,6 @@ namespace RASTA.Processing.Calibration
                 BaselineDecDeg = location.DeclinationDeg,
                 BaselineGalacticLatitudeDeg = location.GalacticLatitudeDeg
             };
-        }
-
-        /// <summary>
-        /// Fraction of raw I/Q bytes sitting at the ADC rail (0 or 255 for the RTL-SDR's
-        /// unsigned 8-bit samples). This is the direct hardware measure of front-end
-        /// overload - unlike inspecting the derived spectrum, it can't be fooled by a
-        /// single strong spur that never actually saturated anything.
-        /// </summary>
-        private static double ComputeSaturationFraction(byte[] rawIq)
-        {
-            if (rawIq.Length == 0)
-                return 0.0;
-
-            int saturated = 0;
-            for (int i = 0; i < rawIq.Length; i++)
-            {
-                byte v = rawIq[i];
-                if (v == 0 || v == 255)
-                    saturated++;
-            }
-
-            return (double)saturated / rawIq.Length;
         }
 
         private static double Normalize(double value, double min, double max) =>

@@ -47,6 +47,12 @@ namespace RASTA.Core.Storage
         /// <summary>Whole ppm actually set in the tuner (FITS PPM_HW); null when not recorded.</summary>
         public int? PpmHardware { get; set; }
 
+        /// <summary>
+        /// Fraction of raw I/Q bytes at the ADC rail when this file was captured (FITS CLIPFRAC,
+        /// issue #33; see AdcClipping). Null for files written before #33.
+        /// </summary>
+        public double? ClipFraction { get; set; }
+
         /// <summary>The part of PpmCorrection the tuner did not apply; 0 when none was recorded.</summary>
         public double ResidualPpm =>
             PpmCorrection is double ppm ? FrequencyCorrection.ResidualPpm(ppm, PpmHardware) : 0.0;
@@ -85,6 +91,8 @@ namespace RASTA.Core.Storage
                 hdu.AddValue("PPM", ppm, "Receiver freq correction (ppm)");
                 hdu.AddValue("PPM_HW", PpmHardware ?? FrequencyCorrection.HardwarePpm(ppm), "Part set in tuner (ppm); rest on axis");
             }
+            if (ClipFraction is double clip)
+                hdu.AddValue("CLIPFRAC", clip, "Fraction of I/Q bytes at the ADC rail");
 
         }
 
@@ -156,6 +164,7 @@ namespace RASTA.Core.Storage
             meta.Equinox = header.FindCard("EQUINOX") != null ? header.GetDoubleValue("EQUINOX") : null;
             meta.PpmCorrection = header.FindCard("PPM") != null ? header.GetDoubleValue("PPM") : null;
             meta.PpmHardware = header.FindCard("PPM_HW") != null ? header.GetIntValue("PPM_HW") : null;
+            meta.ClipFraction = header.FindCard("CLIPFRAC") != null ? header.GetDoubleValue("CLIPFRAC") : null;
             return meta;
         }
     }

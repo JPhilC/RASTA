@@ -449,8 +449,8 @@ etc.) can be resumed at whichever step it got to instead of starting over:
 2. **Calibrate Device Gain** (`CalibrateGainCommand`, gated on `IsConnectedSdr` — no mount needed) —
    runs `Calibrator.RunGainSweepAsync`: for each SDR-supported gain, capture raw IQ against a terminator
    on the SAWbird H1+ LNA input, hard-reject any gain where raw I/Q bytes show real ADC saturation
-   (`ComputeSaturationFraction` — a fraction-of-samples-at-the-rail check on the raw bytes, not a
-   spectral-domain proxy; threshold `SaturationFractionThreshold` = 0.05%), then score survivors on a
+   (`RASTA.Core/Sdr/AdcClipping` — a fraction-of-samples-at-the-rail check on the raw bytes, not a
+   spectral-domain proxy; limit `AdcClipping.MaxAcceptableFraction` = 0.05%), then score survivors on a
    full-buffer-averaged power spectrum's flatness/spur-count/slope (each metric min-max normalized
    across candidates before weighting, so the weights are meaningful). A short settle period
    (`GainSettleTimeSec`) is discarded at the start of each trial so a gain-switching transient doesn't
@@ -875,6 +875,13 @@ its gain, and set it before every stream attempt (a stall-retry reopens the devi
 carries `PPM`/`PPM_HW`; `FitsFileMetaData`/`SpectrumCacheEntry.AxisCentFreqHz`/`AxisSampFreqHz` are
 what Visualise/Mosaic feed to the pipeline (the displayed Frequency/Sampling stay as recorded), and
 both refuse a baseline/capture pair with different ppm. A file with no `PPM` card means 0.
+**ADC clipping** (issue #33, `RASTA.Core/Sdr/AdcClipping`, fraction of raw bytes at 0/255, limit
+0.05%): a clipped cold-sky baseline is refused before anything is written
+(`BaselineClippedException`, shown by `PrepareViewModel` after the mount is home); sweep/Quick
+captures are kept but warned about (one dialog at the end of a sweep) and carry FITS `CLIPFRAC`.
+`CachedSpectrumLoader` measures `SpectrumCacheEntry.ClipFraction` from the raw IQ itself (old
+files too; entries cached before #33 read null = "not measured", no `PipelineVersion` bump) for
+Visualise's Clipping field and Mosaic's Clipping column/status line.
 `FitsPathBuilder` lays files out under the user's configured
 capture folder as `{freqMHz}MHz/{yyyy-MM-dd}/{prefix}_....fits`; multi-file dwell points
 (`CapturePlan.FilesPerPoint > 1`) get an `_{index}of{total}.fits` suffix via

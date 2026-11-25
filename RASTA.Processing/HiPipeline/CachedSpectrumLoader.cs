@@ -98,6 +98,7 @@ namespace RASTA.Processing.HiPipeline
             entry.LsrCorrectionKmPerSec = meta.ComputeLsrCorrectionKmPerSec();
             entry.PpmCorrection = meta.PpmCorrection;
             entry.PpmHardware = meta.PpmHardware;
+            entry.ClipFraction = RASTA.Core.Sdr.AdcClipping.Fraction(iq);
 
             string status = $"Processing {label}…";
             progress?.Invoke(status, 0.0);

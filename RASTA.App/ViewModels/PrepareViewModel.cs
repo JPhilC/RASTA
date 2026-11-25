@@ -619,6 +619,7 @@ public partial class PrepareViewModel : ViewModelBase
 
         _calibrationCts = new CancellationTokenSource();
         bool baselineCaptured = false;
+        string? clippedMessage = null;
 
         try
         {
@@ -727,6 +728,13 @@ public partial class PrepareViewModel : ViewModelBase
             _statusBar.CaptureStatus = "Cancelled.";
             _logger.Info("Baseline capture cancelled by user.");
         }
+        catch (BaselineClippedException ex)
+        {
+            // Issue #33: refused, not failed - shown once the mount is home (below).
+            _statusBar.CaptureStatus = "Baseline refused: ADC clipping.";
+            _logger.Warn(ex.Message);
+            clippedMessage = ex.Message;
+        }
         catch (Exception ex)
         {
             _statusBar.CaptureStatus = "Failed.";
@@ -769,6 +777,10 @@ public partial class PrepareViewModel : ViewModelBase
             IsCalibrationRunning = false;
             _statusBar.IsCaptureInProgress = false;
         }
+
+        if (clippedMessage is not null)
+            System.Windows.MessageBox.Show(clippedMessage, "Baseline Refused",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
     }
 
     /// <summary>
