@@ -20,7 +20,9 @@ namespace RASTA.App.Views
         public ColdSkyCandidateRow(ColdSkyCandidate candidate, int index)
         {
             Candidate = candidate;
-            Label = $"Option {index + 1} — {CompassDirection(candidate.AzimuthDeg)}";
+            // Elevation leads the heading: higher pointings pick up less ground spillover and
+            // ground-based RFI (issue #16), so it's the first thing to compare.
+            Label = $"Option {index + 1} — Alt {candidate.ElevationDeg:F0}°, {CompassDirection(candidate.AzimuthDeg)}";
             AzAltText = $"Az {candidate.AzimuthDeg:F1}°, Alt {candidate.ElevationDeg:F1}°";
 
             double raHours = candidate.RightAscensionHours;
@@ -64,6 +66,7 @@ namespace RASTA.App.Views
         private void DisplayCandidates(IReadOnlyList<ColdSkyCandidate> candidates)
         {
             CandidateList.ItemsSource = candidates
+                .OrderByDescending(c => c.ElevationDeg)
                 .Select((c, i) => new ColdSkyCandidateRow(c, i))
                 .ToList();
         }
