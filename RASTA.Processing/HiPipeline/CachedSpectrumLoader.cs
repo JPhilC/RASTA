@@ -77,10 +77,11 @@ namespace RASTA.Processing.HiPipeline
 
             FitsFileMetaData meta;
             byte[] iq;
+            IReadOnlyList<int> segmentLengths;
             lock (FitsReadLock)
             {
                 ct.ThrowIfCancellationRequested();
-                (meta, iq) = _fitsFileIo.ReadCombinedRawIq(files, progress);
+                (meta, iq, segmentLengths) = _fitsFileIo.ReadCombinedRawIq(files, progress);
             }
 
             // Keep whichever product an existing entry already holds (e.g. the Hann average
@@ -113,36 +114,24 @@ namespace RASTA.Processing.HiPipeline
             }
             else
             {
-                // Average the same way HiStreamingAccumulator/Calibrator do: SKAO-normalized
-                // power per fftSize frame, arithmetic mean. Always at the file's native
-                // resolution - Target FFT Size re-binning happens later, on the averaged
-                // spectrum, via SpectrumBinner (see its remarks for why shrinking the raw IQ
-                // before the FFT - the old approach - was actually a bug, not a downscale).
-                int fftSize = meta.FftSize;
-                int bytesPerFrame = fftSize * 2;
-                int totalFrames = bytesPerFrame > 0 ? iq.Length / bytesPerFrame : 0;
-                if (totalFrames == 0)
+                // Average the same way Calibrator and the live Capture spectrum do: SKAO-
+                // normalized Hann power per frame, frames half-overlapped and restarted at
+                // each file boundary (OverlappedFrames, issue #22), arithmetic mean. Always
+                // at the file's native resolution - Target FFT Size re-binning happens later,
+                // on the averaged spectrum, via SpectrumBinner (see its remarks for why
+                // shrinking the raw IQ before the FFT - the old approach - was actually a
+                // bug, not a downscale).
+                if (meta.FftSize <= 0)
+                    throw new InvalidOperationException($"The {label} file has no valid FFT size.");
+
+                var average = OverlappedFrames.AveragePower(
+                    iq, meta.FftSize, _fftEngine, out int frames, segmentLengths,
+                    progress: fraction => progress?.Invoke(status, fraction), ct: ct);
+                if (frames == 0)
                     throw new InvalidOperationException($"The {label} file contains no complete FFT frames.");
 
-                var sum = new double[fftSize];
-                var chunk = new byte[bytesPerFrame];
-                for (int f = 0; f < totalFrames; f++)
-                {
-                    ct.ThrowIfCancellationRequested();
-
-                    Buffer.BlockCopy(iq, f * bytesPerFrame, chunk, 0, bytesPerFrame);
-                    var spectrum = _fftEngine.ComputeSkAoPower(chunk, fftSize);
-                    for (int i = 0; i < fftSize; i++)
-                        sum[i] += spectrum[i];
-
-                    progress?.Invoke(status, (double)(f + 1) / totalFrames);
-                }
-
-                for (int i = 0; i < fftSize; i++)
-                    sum[i] /= totalFrames;
-
-                entry.AveragedPower = sum;
-                entry.AveragedFrames = totalFrames;
+                entry.AveragedPower = average;
+                entry.AveragedFrames = frames;
             }
 
             progress?.Invoke(status, 1.0);

@@ -61,12 +61,15 @@ namespace RASTA.Core.Storage
         /// implementation.
         ///
         /// Each file's IQ is trimmed to a whole number of its own native FFT frames before
-        /// being appended, so a frame extracted later by the caller's chunking loop can
-        /// never straddle the boundary between two separate (and physically discontinuous)
-        /// captures. All files must agree on FFT size, sample rate, and center frequency;
-        /// DwellTimeSec on the returned metadata is the sum across every file combined.
+        /// being appended, so an end-to-end frame can never straddle the boundary between
+        /// two separate (and physically discontinuous) captures. Half-overlapped frames
+        /// (RASTA.Processing's OverlappedFrames, issue #22) could, so SegmentLengths returns
+        /// each file's trimmed byte length, in order, for the caller to restart its frame
+        /// sequence at each boundary. All files must agree on FFT size, sample rate, and
+        /// center frequency; DwellTimeSec on the returned metadata is the sum across every
+        /// file combined.
         /// </summary>
-        public (FitsFileMetaData Meta, byte[] RawIq) ReadCombinedRawIq(
+        public (FitsFileMetaData Meta, byte[] RawIq, IReadOnlyList<int> SegmentLengths) ReadCombinedRawIq(
             IReadOnlyList<string> filePaths,
             Action<string, double>? progressCallback = null)
         {
@@ -129,7 +132,7 @@ namespace RASTA.Core.Storage
                 offset += buf.Length;
             }
 
-            return (combinedMeta!, combined);
+            return (combinedMeta!, combined, buffers.Select(b => b.Length).ToList());
         }
 
         public (FitsFileMetaData Meta, byte[] RawIq) ReadRawIq(string filePath)

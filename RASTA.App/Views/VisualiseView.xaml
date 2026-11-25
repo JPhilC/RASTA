@@ -269,7 +269,8 @@
                     <TextBox Grid.Column="18" MinWidth="80"
                      Text="{Binding PpmInfo, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center"
-                       Text="Frames" FontWeight="Bold" />
+                       Text="Frames" FontWeight="Bold"
+                       ToolTip="FFT frames averaged (baseline/capture). Frames overlap by half, so this is about twice the number of independent frames. SKAO TTRT uses non-overlapping frames." />
                     <TextBox Grid.Row="2" Grid.Column="2"  Width="100"
                      Text="{Binding FrameCount, Mode=OneWay}" HorizontalAlignment="Left" IsReadOnly="True"/>
 
