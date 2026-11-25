@@ -25,7 +25,7 @@
                    Margin="0,0,0,5"/>
 
         <TextBlock Grid.Row="1"
-                   Text="These positions are clear of the Galactic plane (low HI emission) and spread across the sky - pick whichever is conveniently unobstructed. If none look workable, use Recalculate for a fresh set of suggestions."
+                   Text="These positions are clear of the Galactic plane (low HI emission), as high as the sky allows, and spread across the sky. They are listed highest first - higher positions pick up less ground spillover and ground-based interference, so pick the highest one that is unobstructed. If none look workable, use Recalculate for a fresh set of suggestions."
                    Foreground="#BBBBBB"
                    TextWrapping="Wrap"
                    Margin="0,0,0,15"/>

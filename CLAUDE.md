@@ -462,10 +462,16 @@ etc.) can be resumed at whichever step it got to instead of starting over:
    already be started or loaded — **and** the mount connected, since it needs to slew) — prompts to
    reconnect the antenna, then computes 4 candidate "cold sky" positions via `ColdSkyLocator.FindCandidates`
    (a static, pure algorithm in `RASTA.Processing/Calibration/` — scans an Az/El grid above the horizon
-   limit, converts each point to Galactic l/b via `AstronomyUtils.EquatorialToGalactic`, keeps only
-   points clear of the HI-rich Galactic plane at the coldest `|b|` threshold that still yields enough
-   candidates, then greedily picks `count` maximizing minimum azimuth separation — spread widely so
-   there's a decent chance one is conveniently unobstructed from wherever the mount sits). These show
+   limit (15° azimuth × 5° elevation, up to 80°), converts each point to Galactic l/b via
+   `AstronomyUtils.EquatorialToGalactic`, filters through `SelectionTiers` — (min `|b|`, min elevation)
+   pairs tried in order until at least `count` distinct azimuths survive — then greedily picks `count`
+   maximizing minimum azimuth separation, highest point per direction). Elevation is part of the choice
+   since issue #16: on 2026-11-08 a cold but low baseline (Az 225°/Alt 45°) carried a ~30-spur RFI comb
+   and extra ground spillover. The tiers treat `|b|` ≥ 30° as cold enough that elevation wins (Alt ≥ 50°
+   → 40° → 30° → anything, all before accepting `|b|` < 30°); below that `|b|` wins again. The cost is
+   azimuth spread: when only one part of the sky is both cold and high, all four candidates can sit
+   within ~60° of azimuth — Recalculate (which excludes them) is the way out. Candidates are returned,
+   and listed in the picker, highest first, with elevation in each heading. These show
    in `ColdSkySelectionWindow` (a modal `Window`, not a `MessageBox` — the one other place this app
    needed a genuinely custom dialog); the mount then slews there (`SlewToRaDecAsync`/`SlewToAzAltAsync`,
    chosen from the connected mount's live `_mount.Mode`, not a plan). `CaptureBaselineAsync` then loops:
