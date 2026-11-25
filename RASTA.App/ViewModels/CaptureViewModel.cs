@@ -394,25 +394,16 @@ public partial class CaptureViewModel : ObservableObject
 
         // Raw streaming chunks arrive at whatever size the USB async buffer produced -
         // not aligned to fftSize. Stitch them onto any leftover from the previous chunk
-        // and slice off every complete fftSize-aligned frame before computing power, so
-        // frames line up the same way they do when chunking a full FITS capture.
-        int bytesPerFrame = fftSize * 2;
-
+        // and slice off every complete half-overlapped frame before computing power, so
+        // frames line up the same way they do when averaging a full FITS capture
+        // (OverlappedFrames, issue #22). The leftover starts at the next frame's start,
+        // i.e. it keeps the second half of the last frame processed.
         var combined = new byte[_liveLeftover.Length + chunk.Length];
         Buffer.BlockCopy(_liveLeftover, 0, combined, 0, _liveLeftover.Length);
         Buffer.BlockCopy(chunk, 0, combined, _liveLeftover.Length, chunk.Length);
 
-        int usableFrames = combined.Length / bytesPerFrame;
-        int usableBytes = usableFrames * bytesPerFrame;
-
-        for (int f = 0; f < usableFrames; f++)
-        {
-            var frame = new byte[bytesPerFrame];
-            Buffer.BlockCopy(combined, f * bytesPerFrame, frame, 0, bytesPerFrame);
-
-            var power = _fftEngine.ComputeSkAoPower(frame, fftSize);
-            _liveAccumulator.AddCaptureFrame(power);
-        }
+        int frames = OverlappedFrames.ForEachPowerSpectrum(combined, fftSize, _fftEngine, _liveAccumulator.AddCaptureFrame);
+        int usableBytes = frames * OverlappedFrames.HopBytes(fftSize);
 
         int remainderLength = combined.Length - usableBytes;
         _liveLeftover = new byte[remainderLength];

@@ -418,6 +418,24 @@ it through `HiStreamingPipeline.Process` (e.g. `VisualiseViewModel.ProcessBaseli
 must call the now-public `HiStreamingPipeline.FftShift` themselves before plotting, or a receiver
 DC/LO-leakage spike ends up misplaced at the edge of the frequency axis instead of the center.
 
+**Frames overlap by half** (issue #22, Phase 2 of `SignalProcessingPlan.md`): every Hann-windowed
+average — `CachedSpectrumLoader` (Visualise/Mosaic), `Calibrator`'s gain trials and cold-sky baseline,
+and `CaptureViewModel.ProcessChunk`'s live spectrum — steps frames by `fftSize/2` samples via
+`HiPipeline/OverlappedFrames` (Welch's method), not end to end. The Hann window all but ignores each
+frame's edge samples; overlapping puts them mid-frame in the next one, cutting per-bin scatter by
+~1.35× on synthetic noise for the same capture (`OverlappedFramesTests`), mean level unchanged. A
+multi-file dwell point must not get a frame spanning two files, so `FitsFileIo.ReadCombinedRawIq`
+also returns each file's byte length (`SegmentLengths`) and `OverlappedFrames.FrameOffsets` restarts
+the half-step sequence at each boundary. The live path keeps the second half of its last frame as
+the leftover for the next chunk. `SpectrumCacheEntry.AveragedFrames` (Visualise's Frames field)
+therefore counts overlapped frames, about twice the independent ones. The SKAO path
+(`AccumulateBinnedPower`) stays unwindowed and end to end to match the reference.
+`PipelineVersion` 5. Reference snapshot `phase2-after` vs `phase3-clean` (the previous pipeline):
+line-free rms lower at all 27 positions, ~1.1–1.2× at the clean ones and barely changed at the RFI-
+dominated northern ones (Dec 60–80), whose noise isn't the per-frame kind averaging reduces. Peak
+velocities are unchanged at 21 positions; the other 6 had two near-equal peaks or a broad top, so
+the maximum moved (e.g. RA22/Dec15: 17.6 at +7 km/s became 16.6 at −84 km/s).
+
 **`RASTA.Processing/IfAverage/*` has been removed.** It was a signal-averaging chain (median filter
 → RFI detector → intermediate/long-term *moving-average* → background subtract/divide → dB
 conversion → Savitzky-Golay) ported from Daniel M. Kamiński's SDR AVE plugin for SDR#. Comparing it

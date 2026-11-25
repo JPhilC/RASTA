@@ -62,7 +62,11 @@ namespace RASTA.Infrastructure.Services
         public double? AzDeg { get; set; }
         public double? AltDeg { get; set; }
 
-        /// <summary>Hann-windowed IFftEngine.ComputeSkAoPower, averaged over AveragedFrames native frames.</summary>
+        /// <summary>
+        /// Hann-windowed IFftEngine.ComputeSkAoPower, averaged over AveragedFrames native-size
+        /// frames. Since issue #22 those frames overlap by half, so AveragedFrames is roughly
+        /// twice the number of independent frames.
+        /// </summary>
         public double[]? AveragedPower { get; set; }
         public int AveragedFrames { get; set; }
 
@@ -92,6 +96,7 @@ namespace RASTA.Infrastructure.Services
         /// 2: added the recorded pointing (RaDeg/DecDeg/AzDeg/AltDeg) for the Mosaic tab.
         /// 3: LSR correction fixed (diurnal sign, elliptical orbit, J2000 axes) - issue #21.
         /// 4: AltAz captures' RA/Dec reconstructed as J2000, not of-date; FITS EQUINOX honoured - issue #38.
+        /// 5: Hann average over half-overlapped frames (OverlappedFrames) - issue #22.
         ///
         /// Not bumped for issue #32's PpmCorrection/PpmHardware: an entry cached before them
         /// deserializes them as null, which is exactly right for every file that existed then
@@ -100,7 +105,7 @@ namespace RASTA.Infrastructure.Services
         /// show "not measured" until the files are regenerated, rather than reprocessing every
         /// cached session to add it.
         /// </summary>
-        public const int PipelineVersion = 4;
+        public const int PipelineVersion = 5;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {

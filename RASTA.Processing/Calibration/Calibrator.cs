@@ -95,19 +95,15 @@ namespace RASTA.Processing.Calibration
                 // capture (not just the first one), so flatness/spur/slope reflect this
                 // gain's actual receiver response rather than a single noisy periodogram.
                 // Uses the same SKAO-normalized power + accumulator as the baseline build,
-                // so trials are scored consistently with how the chosen baseline is built.
+                // so trials are scored consistently with how the chosen baseline is built
+                // (half-overlapped frames, OverlappedFrames - issue #22).
                 int totalFrames = rawIq.Length / bytesPerFrame;
                 int skip = Math.Min(settleFrames, Math.Max(totalFrames - 1, 0));
 
                 var trialAcc = new HiStreamingAccumulator(fftSize);
-                for (int f = skip; f < totalFrames; f++)
-                {
-                    var chunk = new byte[bytesPerFrame];
-                    Buffer.BlockCopy(rawIq, f * bytesPerFrame, chunk, 0, bytesPerFrame);
-
-                    var spectrum = _fftEngine.ComputeSkAoPower(chunk, fftSize);
-                    trialAcc.AddBaselineFrame(spectrum);
-                }
+                OverlappedFrames.ForEachPowerSpectrum(
+                    rawIq, fftSize, _fftEngine, trialAcc.AddBaselineFrame,
+                    startOffset: skip * bytesPerFrame, ct: ct);
 
                 if (trialAcc.BaselineFrames == 0)
                     throw new InvalidOperationException(
@@ -237,20 +233,11 @@ namespace RASTA.Processing.Calibration
             progressCallback?.Invoke("Calculating baseline", 0.9);
 
             // Build the averaged baseline the same way HiStreamingPipeline will later
-            // build the observation's averaged capture spectrum (SKAO-normalized power,
-            // chunked into fftSize frames, arithmetic mean) so the two are directly
-            // comparable when HiStreamingPipeline.Process combines them.
+            // build the observation's averaged capture spectrum (SKAO-normalized Hann power,
+            // half-overlapped fftSize frames, arithmetic mean - OverlappedFrames, issue #22)
+            // so the two are directly comparable when HiStreamingPipeline.Process combines them.
             var accumulator = new HiStreamingAccumulator(fftSize);
-
-            int bytesPerChunk = fftSize * 2; // adjust if your IQ format differs
-            for (int offset = 0; offset + bytesPerChunk <= baselineRawIq.Length; offset += bytesPerChunk)
-            {
-                var chunk = new byte[bytesPerChunk];
-                Buffer.BlockCopy(baselineRawIq, offset, chunk, 0, bytesPerChunk);
-
-                var spectrum = _fftEngine.ComputeSkAoPower(chunk, fftSize);
-                accumulator.AddBaselineFrame(spectrum);
-            }
+            OverlappedFrames.ForEachPowerSpectrum(baselineRawIq, fftSize, _fftEngine, accumulator.AddBaselineFrame, ct: ct);
 
             var baselineSpectrum = accumulator.GetBaselineAverage();
 
